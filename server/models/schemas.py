@@ -1,11 +1,33 @@
-from pydantic import BaseModel
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
+
+Language = Literal["javascript", "python", "java", "cpp", "typescript"]
+Severity = Literal["critical", "medium", "low"]
+Category = Literal["security", "logic", "performance", "style", "best_practice"]
 
 
 class ReviewRequest(BaseModel):
-    code: str
-    language: str
+    code: str = Field(..., min_length=1, max_length=3000)
+    language: Language
+
+
+class Issue(BaseModel):
+    line: int = 0
+    severity: Severity = "low"
+    category: Category = "best_practice"
+    issue: str = ""
+    fix_suggestion: str = "No specific suggestion available"
+    confidence: float = 0.5
+    needs_human_review: bool = False
 
 
 class ReviewResponse(BaseModel):
-    issues: list = []
+    issues: list[Issue] = []
     summary: str = ""
+
+
+class ExplainRequest(BaseModel):
+    issue: dict
+    code_context: str
+    language: str
