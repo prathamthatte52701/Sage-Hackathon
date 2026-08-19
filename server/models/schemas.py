@@ -31,3 +31,17 @@ class ExplainRequest(BaseModel):
     issue: dict
     code_context: str
     language: str
+
+
+class FindingReasoning(BaseModel):
+    findingConfirmed: bool = True
+    severity: Literal["critical", "high", "medium", "low"] = "medium"
+    reasoning: str = "AI reasoning unavailable"
+    impact: str = ""
+    recommendation: str = ""
+    suggestedFix: str = ""
+    confidence: float = 0.0
+
+
+class FindingReasonRequest(BaseModel):
+    finding_index: int

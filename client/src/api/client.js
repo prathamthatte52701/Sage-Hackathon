@@ -64,4 +64,22 @@ export async function uploadProject(file, sessionId, onUploadProgress) {
   }
 }
 
+export async function analyzeProject(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/analyze`, null, { timeout: 60000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Project analysis failed. Please try again."));
+  }
+}
+
+export async function scoreProject(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/score`, null, { timeout: 60000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Scoring failed. Please try again."));
+  }
+}
+
 export default api;

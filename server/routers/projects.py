@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import zipfile
 from io import BytesIO
 from pathlib import PurePosixPath
@@ -7,7 +9,10 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from db.mongo import get_project, save_project, update_project
+from models.schemas import FindingReasonRequest, FindingReasoning
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
+from services.groq_client import GroqUnavailableError, call_groq
+from services.prompt_builder import build_finding_reasoning_prompt
 from services.scoring import compute_score
 
 router = APIRouter()
@@ -230,3 +235,119 @@ async def score_project_by_id(project_id: str):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_SCORE_ERROR_RESPONSE)
+
+
+def _extract_json(raw_text: str):
+    """Try direct json.loads, then fall back to extracting {...} substring."""
+    try:
+        return json.loads(raw_text)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _extract_code_snippet(files: list, file_path: str, line: int) -> str:
+    """Lines [line-5, line+5] (1-indexed, clamped) from the matching file's content.
+
+    Falls back to the finding's own evidence string if the file isn't found or
+    has no stored content — never send empty context to the LLM, never crash.
+    """
+    entry = next((f for f in files if f.get("path") == file_path), None)
+    content = entry.get("content") if entry else None
+    if not content:
+        return ""
+
+    lines = content.splitlines()
+    if not lines:
+        return ""
+
+    start = max(0, (line - 1) - 5)
+    end = min(len(lines), (line - 1) + 5 + 1)
+    return "\n".join(lines[start:end])
+
+
+def _build_finding_reasoning(raw: dict) -> FindingReasoning:
+    """Coerce/drop bad-typed fields instead of crashing, same pattern as _build_issue."""
+    data = dict(raw) if isinstance(raw, dict) else {}
+
+    if not isinstance(data.get("findingConfirmed"), bool):
+        data.pop("findingConfirmed", None)
+
+    confidence = data.get("confidence")
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        data.pop("confidence", None)
+
+    for field in ("severity", "reasoning", "impact", "recommendation", "suggestedFix"):
+        if field in data and not isinstance(data[field], str):
+            data.pop(field, None)
+
+    if data.get("severity") not in ("critical", "high", "medium", "low"):
+        data.pop("severity", None)
+
+    return FindingReasoning(**{k: v for k, v in data.items() if k in FindingReasoning.model_fields})
+
+
+_REASON_ERROR_RESPONSE = {"error": "Could not reason about this finding, please try again"}
+
+
+@router.post("/projects/{project_id}/findings/reason", response_model=FindingReasoning)
+async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        findings = project.get("findings", [])
+        if payload.finding_index < 0 or payload.finding_index >= len(findings):
+            return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
+
+        finding = findings[payload.finding_index]
+
+        code_snippet = _extract_code_snippet(project.get("files", []), finding.get("file", ""), finding.get("line", 0))
+        if not code_snippet:
+            code_snippet = finding.get("evidence", "")
+
+        file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
+        language = (file_entry or {}).get("language") or "unknown"
+
+        prompt = build_finding_reasoning_prompt(finding, code_snippet, language)
+        messages = [{"role": "user", "content": prompt}]
+
+        result = FindingReasoning()
+        try:
+            raw = await call_groq(messages)
+            parsed = _extract_json(raw)
+
+            if parsed is None:
+                retry_messages = [
+                    {
+                        "role": "user",
+                        "content": prompt
+                        + "\n\nYour previous response was not valid JSON. Respond with ONLY the JSON object, nothing else.",
+                    }
+                ]
+                raw = await call_groq(retry_messages)
+                parsed = _extract_json(raw)
+
+            if parsed is not None:
+                result = _build_finding_reasoning(parsed)
+        except GroqUnavailableError:
+            result = FindingReasoning()
+
+        try:
+            findings[payload.finding_index]["reasoning"] = result.model_dump()
+            await update_project(project_id, {"findings": findings})
+        except Exception as exc:
+            print(f"[projects] failed to persist finding reasoning: {exc}")
+
+        return result
+    except Exception as exc:
+        print(f"[projects] unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_REASON_ERROR_RESPONSE)
