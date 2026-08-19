@@ -6,12 +6,14 @@ from pathlib import PurePosixPath
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
-from db.mongo import get_project, save_project
+from db.mongo import get_project, save_project, update_project
+from services.analyzer import SOURCE_LANGUAGES, analyze_project
 
 router = APIRouter()
 
 MAX_ZIP_SIZE = 20 * 1024 * 1024  # 20MB
 MAX_FILE_COUNT = 500
+MAX_CONTENT_SIZE = 100_000  # chars
 
 IGNORE_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", "coverage", ".cache"}
 
@@ -104,8 +106,16 @@ async def upload_project(file: UploadFile = File(...), session_id: str = Form(..
                     continue
 
                 info = zf.getinfo(name)
+                language = _guess_language(name)
+
+                content = None
+                if language in SOURCE_LANGUAGES:
+                    text = zf.read(name).decode("utf-8", errors="replace")
+                    if len(text) < MAX_CONTENT_SIZE:
+                        content = text
+
                 files_index.append(
-                    {"path": name, "language": _guess_language(name), "size": info.file_size}
+                    {"path": name, "language": language, "size": info.file_size, "content": content}
                 )
 
         warnings = [f"skipped {count} file(s) under {dirname}/" for dirname, count in ignored_counts.items()]
@@ -155,6 +165,7 @@ async def upload_project(file: UploadFile = File(...), session_id: str = Form(..
             "configs": [],
             "deploymentFiles": [],
             "findings": [],
+            "warnings": [],
         }
 
         project_id = await save_project(project_representation, session_id)
@@ -175,3 +186,27 @@ async def get_project_by_id(project_id: str):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_ERROR_RESPONSE)
+
+
+_ANALYZE_ERROR_RESPONSE = {"error": "Could not analyze this project, please try again"}
+
+
+@router.post("/projects/{project_id}/analyze")
+async def analyze_project_by_id(project_id: str):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        analyzed = analyze_project(project)
+
+        updates = {
+            key: analyzed.get(key, [])
+            for key in ("imports", "functions", "classes", "tests", "configs", "deploymentFiles", "findings", "warnings")
+        }
+        await update_project(project_id, updates)
+
+        return analyzed
+    except Exception as exc:
+        print(f"[projects] unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_ANALYZE_ERROR_RESPONSE)
