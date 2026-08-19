@@ -9,10 +9,10 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from db.mongo import get_project, save_project, update_project
-from models.schemas import FindingReasonRequest, FindingReasoning
+from models.schemas import FindingReasonRequest, FindingReasoning, FindingTransform
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.groq_client import GroqUnavailableError, call_groq
-from services.prompt_builder import build_finding_reasoning_prompt
+from services.prompt_builder import build_finding_reasoning_prompt, build_transform_prompt
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
 
@@ -365,3 +365,84 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_REASON_ERROR_RESPONSE)
+
+
+def _build_finding_transform(raw: dict) -> FindingTransform:
+    """Coerce/drop bad-typed fields instead of crashing, same pattern as _build_finding_reasoning."""
+    data = dict(raw) if isinstance(raw, dict) else {}
+
+    for field in ("original_snippet", "proposed_fix", "explanation"):
+        if field in data and not isinstance(data[field], str):
+            data.pop(field, None)
+
+    confidence = data.get("confidence")
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        data.pop("confidence", None)
+
+    return FindingTransform(**{k: v for k, v in data.items() if k in FindingTransform.model_fields})
+
+
+_TRANSFORM_ERROR_RESPONSE = {"error": "Could not generate a fix for this finding, please try again"}
+
+
+@router.post("/projects/{project_id}/findings/transform", response_model=FindingTransform)
+async def transform_finding(project_id: str, payload: FindingReasonRequest):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        findings = project.get("findings", [])
+        if payload.finding_index < 0 or payload.finding_index >= len(findings):
+            return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
+
+        finding = findings[payload.finding_index]
+
+        code_snippet = _extract_code_snippet(project.get("files", []), finding.get("file", ""), finding.get("line", 0))
+        if not code_snippet:
+            code_snippet = finding.get("evidence", "")
+
+        file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
+        language = (file_entry or {}).get("language") or "unknown"
+
+        standard_id = RULE_TO_STANDARD.get(finding.get("rule"))
+        matched_standards = [get_standard_by_id(standard_id)] if standard_id else []
+        if not matched_standards:
+            weight_category = FINDING_CATEGORY_MAP.get(finding.get("category"))
+            if weight_category:
+                matched_standards = get_standards_for(weight_category, language)[:2]
+
+        prompt = build_transform_prompt(finding, code_snippet, language, matched_standards)
+        messages = [{"role": "user", "content": prompt}]
+
+        result = FindingTransform()
+        try:
+            raw = await call_groq(messages)
+            parsed = _extract_json(raw)
+
+            if parsed is None:
+                retry_messages = [
+                    {
+                        "role": "user",
+                        "content": prompt
+                        + "\n\nYour previous response was not valid JSON. Respond with ONLY the JSON object, nothing else.",
+                    }
+                ]
+                raw = await call_groq(retry_messages)
+                parsed = _extract_json(raw)
+
+            if parsed is not None:
+                result = _build_finding_transform(parsed)
+        except GroqUnavailableError:
+            result = FindingTransform()
+
+        try:
+            findings[payload.finding_index]["transform"] = result.model_dump()
+            await update_project(project_id, {"findings": findings})
+        except Exception as exc:
+            print(f"[projects] failed to persist finding transform: {exc}")
+
+        return result
+    except Exception as exc:
+        print(f"[projects] unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_TRANSFORM_ERROR_RESPONSE)
