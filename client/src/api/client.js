@@ -40,4 +40,13 @@ export async function explainIssue(issue, codeContext, language) {
   }
 }
 
+export async function getHistory(sessionId) {
+  try {
+    const res = await api.get("/api/reviews/history", { params: { session_id: sessionId } });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load history. Please try again."));
+  }
+}
+
 export default api;

@@ -4,6 +4,7 @@ import CodeEditor, { MAX_CHARS } from "./components/CodeEditor";
 import ReviewButton from "./components/ReviewButton";
 import IssueList from "./components/IssueList";
 import ErrorBanner from "./components/ErrorBanner";
+import HistoryPanel from "./components/HistoryPanel";
 import useSessionId from "./hooks/useSessionId";
 import { reviewCode } from "./api/client";
 
@@ -14,6 +15,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const trimmed = code.trim();
   const overLimit = code.length > MAX_CHARS;
@@ -45,17 +47,31 @@ export default function App() {
       />
 
       <div className="relative mx-auto max-w-4xl px-6 py-12">
-        <header className="mb-10">
-          <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">
-            SW-06
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-50">
-            AI Code Reviewer &amp; Debug Assistant
-          </h1>
-          <p className="mt-2 text-sm text-zinc-500">
-            Paste your code, pick a language, and get an instant AI-powered review.
-          </p>
+        <header className="mb-10 flex items-start justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">
+              SW-06
+            </p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-50">
+              AI Code Reviewer &amp; Debug Assistant
+            </h1>
+            <p className="mt-2 text-sm text-zinc-500">
+              Paste your code, pick a language, and get an instant AI-powered review.
+            </p>
+          </div>
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+          >
+            History
+          </button>
         </header>
+
+        <HistoryPanel
+          sessionId={sessionId}
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+        />
 
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
