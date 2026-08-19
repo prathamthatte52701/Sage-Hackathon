@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from db.mongo import get_project, save_project, update_project
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
+from services.scoring import compute_score
 
 router = APIRouter()
 
@@ -210,3 +211,22 @@ async def analyze_project_by_id(project_id: str):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_ANALYZE_ERROR_RESPONSE)
+
+
+_SCORE_ERROR_RESPONSE = {"error": "Could not score this project, please try again"}
+
+
+@router.post("/projects/{project_id}/score")
+async def score_project_by_id(project_id: str):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        score = compute_score(project)
+        await update_project(project_id, {"compliance_score": score})
+
+        return score
+    except Exception as exc:
+        print(f"[projects] unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_SCORE_ERROR_RESPONSE)
