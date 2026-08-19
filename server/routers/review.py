@@ -4,7 +4,7 @@ import re
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from db.mongo import save_review
+from db.mongo import get_history, save_review
 from models.schemas import Issue, ReviewRequest, ReviewResponse
 from services.groq_client import GroqUnavailableError, call_groq
 from services.prompt_builder import build_review_prompt
@@ -122,3 +122,14 @@ async def review(payload: ReviewRequestIn):
     except Exception as exc:
         print(f"[review] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=ERROR_RESPONSE)
+
+
+@router.get("/reviews/history")
+async def history(session_id: str):
+    try:
+        return await get_history(session_id)
+    except Exception as exc:
+        print(f"[history] unhandled error: {exc}")
+        return JSONResponse(
+            status_code=500, content={"error": "Could not load history, please retry"}
+        )
