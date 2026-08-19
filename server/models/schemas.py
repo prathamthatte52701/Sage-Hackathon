@@ -41,6 +41,7 @@ class FindingReasoning(BaseModel):
     recommendation: str = ""
     suggestedFix: str = ""
     confidence: float = 0.0
+    citedStandards: list[dict] = []
 
 
 class FindingReasonRequest(BaseModel):

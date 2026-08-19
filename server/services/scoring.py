@@ -6,6 +6,21 @@ deterministic signal yet stay at 100 and say so explicitly in the breakdown,
 rather than faking a number.
 """
 
+from services.standards import get_standard_by_id
+
+# maps analyzer.py rule ids -> standards.py standard ids, so every deduction
+# can cite the real external source it's grounded in.
+RULE_TO_STANDARD = {
+    "hardcoded_secret": "SEC-01",
+    "sql_concat": "SEC-02",
+    "dangerous_eval": "SEC-03",
+    "subprocess_shell_true": "SEC-04",
+    "tls_verification_disabled": "SEC-05",
+    "unsafe_deserialization": "SEC-06",
+    "bare_except": "CQ-01",
+    "todo_marker": "CQ-02",
+}
+
 WEIGHTS = {
     "security": 0.20,
     "code_quality": 0.20,
@@ -38,6 +53,8 @@ def _score_from_findings(findings: list[dict], target_category: str) -> tuple[in
             continue
         amount = SEVERITY_DEDUCTION.get(f.get("severity"), 3)
         score = max(0, score - amount)
+        standard_id = RULE_TO_STANDARD.get(f.get("rule"))
+        standard = get_standard_by_id(standard_id) if standard_id else None
         deductions.append(
             {
                 "reason": f.get("message", ""),
@@ -45,6 +62,9 @@ def _score_from_findings(findings: list[dict], target_category: str) -> tuple[in
                 "file": f.get("file"),
                 "line": f.get("line"),
                 "rule": f.get("rule"),
+                "standard": {"id": standard["id"], "title": standard["title"], "evidenceSource": standard["evidenceSource"]}
+                if standard
+                else None,
             }
         )
     return score, deductions
@@ -68,8 +88,13 @@ def compute_score(project: dict) -> dict:
     testing_deductions = []
     if files and not tests:
         testing_score -= 40
+        std = get_standard_by_id("TEST-01")
         testing_deductions.append(
-            {"reason": "No test files detected in project", "amount": 40}
+            {
+                "reason": "No test files detected in project",
+                "amount": 40,
+                "standard": {"id": std["id"], "title": std["title"], "evidenceSource": std["evidenceSource"]},
+            }
         )
     categories["testing"] = {
         "score": max(0, testing_score),
@@ -82,13 +107,22 @@ def compute_score(project: dict) -> dict:
     prod_deductions = []
     if not deployment_files:
         prod_score -= 20
+        std = get_standard_by_id("PROD-01")
         prod_deductions.append(
-            {"reason": "No deployment configuration files found (e.g. Dockerfile)", "amount": 20}
+            {
+                "reason": "No deployment configuration files found (e.g. Dockerfile)",
+                "amount": 20,
+                "standard": {"id": std["id"], "title": std["title"], "evidenceSource": std["evidenceSource"]},
+            }
         )
     if not configs:
         prod_score -= 10
         prod_deductions.append(
-            {"reason": "No dependency manifest found (e.g. requirements.txt, package.json)", "amount": 10}
+            {
+                "reason": "No dependency manifest found (e.g. requirements.txt, package.json)",
+                "amount": 10,
+                "standard": None,
+            }
         )
     categories["production_readiness"] = {
         "score": max(0, prod_score),
