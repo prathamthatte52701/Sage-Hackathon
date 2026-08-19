@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -446,3 +447,94 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_TRANSFORM_ERROR_RESPONSE)
+
+
+_REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}
+
+_DERIVED_FIELDS = ("imports", "functions", "classes", "tests", "configs", "deploymentFiles", "findings", "warnings")
+
+
+def _finding_keys(findings: list[dict]) -> set[tuple]:
+    return {(f.get("file"), f.get("rule")) for f in findings}
+
+
+def _verification_note(before_project: dict) -> str:
+    # HONESTY RULE: this system never executes uploaded code, so it can never confirm
+    # runtime behavior — only static findings + score can shift. Keep that caveat first,
+    # always, no exceptions, no matter how good the after_score looks.
+    note = (
+        "No tests were executed — this system does not run code. This comparison "
+        "reflects static analysis findings and score only, not confirmed runtime behavior."
+    )
+    tests = before_project.get("tests") or []
+    if tests:
+        note += f" This project has {len(tests)} detected test file(s), but they were not run by this system."
+    return note
+
+
+@router.post("/projects/{project_id}/reanalyze")
+async def reanalyze_project(project_id: str, payload: FindingReasonRequest):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        findings = project.get("findings", [])
+        if payload.finding_index < 0 or payload.finding_index >= len(findings):
+            return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
+
+        finding = findings[payload.finding_index]
+        transform = finding.get("transform")
+        if not transform or not transform.get("proposed_fix"):
+            return JSONResponse(status_code=400, content={"error": "Generate a fix for this finding first"})
+
+        before_score = compute_score(project)
+
+        patched = copy.deepcopy(project)
+
+        file_entry = next((f for f in patched.get("files", []) if f.get("path") == finding.get("file")), None)
+        content = file_entry.get("content") if file_entry else None
+        if file_entry is None or content is None:
+            return JSONResponse(
+                status_code=400, content={"error": "Could not locate the original file content to apply the patch"}
+            )
+
+        original_snippet = transform.get("original_snippet", "")
+        if not original_snippet or original_snippet not in content:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Could not locate the original snippet in the file — it may have changed since the fix was generated"},
+            )
+        file_entry["content"] = content.replace(original_snippet, transform.get("proposed_fix", ""), 1)
+
+        for key in _DERIVED_FIELDS:
+            patched[key] = []
+
+        analyze_project(patched)
+        after_score = compute_score(patched)
+
+        before_keys = _finding_keys(project.get("findings", []))
+        after_keys = _finding_keys(patched.get("findings", []))
+
+        resolved_findings = [f for f in project.get("findings", []) if (f.get("file"), f.get("rule")) not in after_keys]
+        remaining_findings = [f for f in project.get("findings", []) if (f.get("file"), f.get("rule")) in after_keys]
+        new_findings = [f for f in patched.get("findings", []) if (f.get("file"), f.get("rule")) not in before_keys]
+
+        patched["compliance_score"] = after_score
+        patched.pop("_id", None)  # let Mongo assign a fresh id — this must be a separate document
+        session_id = project.get("session_id")
+        new_project_id = await save_project(patched, session_id)
+
+        return {
+            "new_project_id": new_project_id,
+            "before_score": before_score["overall_score"],
+            "after_score": after_score["overall_score"],
+            "resolved_findings": resolved_findings,
+            "remaining_findings": remaining_findings,
+            "new_findings": new_findings,
+            "behavior_verified": False,
+            "verification_note": _verification_note(project),
+        }
+    except Exception as exc:
+        print(f"[projects] unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_REANALYZE_ERROR_RESPONSE)

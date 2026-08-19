@@ -93,4 +93,15 @@ export async function transformFinding(projectId, findingIndex) {
   }
 }
 
+export async function reanalyzeProject(projectId, findingIndex) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/reanalyze`, {
+      finding_index: findingIndex,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not reanalyze the project. Please try again."));
+  }
+}
+
 export default api;

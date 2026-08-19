@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { explainIssue, transformFinding } from "../api/client";
+import { explainIssue, transformFinding, reanalyzeProject } from "../api/client";
+import ReanalysisResult from "./ReanalysisResult";
 
 const SEVERITY_STYLES = {
   critical: "bg-red-500/15 text-red-300 border-red-500/30",
@@ -43,6 +44,10 @@ export default function ProjectFindingCard({ finding, files, language, projectId
   const [fixLoading, setFixLoading] = useState(false);
   const [fixError, setFixError] = useState(null);
   const [fixFetched, setFixFetched] = useState(false);
+
+  const [reanalysis, setReanalysis] = useState(null);
+  const [reanalyzeLoading, setReanalyzeLoading] = useState(false);
+  const [reanalyzeError, setReanalyzeError] = useState(null);
 
   const severity = finding?.severity || "low";
 
@@ -92,6 +97,19 @@ export default function ProjectFindingCard({ finding, files, language, projectId
     const next = !fixExpanded;
     setFixExpanded(next);
     if (next && !fixFetched) fetchFix();
+  }
+
+  async function fetchReanalysis() {
+    setReanalyzeLoading(true);
+    setReanalyzeError(null);
+    try {
+      const data = await reanalyzeProject(projectId, findingIndex);
+      setReanalysis(data);
+    } catch (err) {
+      setReanalyzeError(err.message || "Could not reanalyze the project.");
+    } finally {
+      setReanalyzeLoading(false);
+    }
   }
 
   const confidence = typeof fix?.confidence === "number" ? fix.confidence : 0;
@@ -251,6 +269,41 @@ export default function ProjectFindingCard({ finding, files, language, projectId
                 <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-300">
                   ⚠ AI-generated suggestion — review before applying, not guaranteed correct.
                 </p>
+
+                <div>
+                  <button
+                    type="button"
+                    onClick={fetchReanalysis}
+                    disabled={reanalyzeLoading}
+                    className="text-xs font-medium text-indigo-400 transition hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {reanalysis ? "Reanalyze again ↻" : "Reanalyze with this fix →"}
+                  </button>
+                </div>
+
+                {reanalyzeLoading && (
+                  <div className="flex items-center gap-2 text-sm text-zinc-400">
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-600 border-t-indigo-400" />
+                    Reanalyzing with this fix applied...
+                  </div>
+                )}
+
+                {!reanalyzeLoading && reanalyzeError && (
+                  <div className="flex items-center justify-between gap-3 text-sm text-red-300">
+                    <span>{reanalyzeError}</span>
+                    <button
+                      type="button"
+                      onClick={fetchReanalysis}
+                      className="shrink-0 rounded border border-red-500/30 px-2 py-1 text-xs text-red-200 transition hover:bg-red-500/10"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {!reanalyzeLoading && !reanalyzeError && reanalysis && (
+                  <ReanalysisResult result={reanalysis} />
+                )}
               </div>
             )}
           </motion.div>
