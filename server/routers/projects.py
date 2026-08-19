@@ -13,7 +13,8 @@ from models.schemas import FindingReasonRequest, FindingReasoning
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.groq_client import GroqUnavailableError, call_groq
 from services.prompt_builder import build_finding_reasoning_prompt
-from services.scoring import compute_score
+from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
+from services.standards import get_standard_by_id, get_standards_for
 
 router = APIRouter()
 
@@ -317,7 +318,16 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
         file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
         language = (file_entry or {}).get("language") or "unknown"
 
-        prompt = build_finding_reasoning_prompt(finding, code_snippet, language)
+        # Prefer the rule's directly-mapped standard; the citation is attached
+        # server-side (not trusted from the LLM output) so it's always accurate.
+        standard_id = RULE_TO_STANDARD.get(finding.get("rule"))
+        matched_standards = [get_standard_by_id(standard_id)] if standard_id else []
+        if not matched_standards:
+            weight_category = FINDING_CATEGORY_MAP.get(finding.get("category"))
+            if weight_category:
+                matched_standards = get_standards_for(weight_category, language)[:2]
+
+        prompt = build_finding_reasoning_prompt(finding, code_snippet, language, matched_standards)
         messages = [{"role": "user", "content": prompt}]
 
         result = FindingReasoning()
@@ -338,6 +348,10 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
 
             if parsed is not None:
                 result = _build_finding_reasoning(parsed)
+                result.citedStandards = [
+                    {"id": s["id"], "title": s["title"], "evidenceSource": s["evidenceSource"]}
+                    for s in matched_standards
+                ]
         except GroqUnavailableError:
             result = FindingReasoning()
 
