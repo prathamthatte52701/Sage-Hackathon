@@ -46,3 +46,10 @@ class FindingReasoning(BaseModel):
 
 class FindingReasonRequest(BaseModel):
     finding_index: int
+
+
+class FindingTransform(BaseModel):
+    original_snippet: str = ""
+    proposed_fix: str = ""
+    explanation: str = "AI fix generation unavailable"
+    confidence: float = 0.0

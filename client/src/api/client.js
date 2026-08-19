@@ -82,4 +82,15 @@ export async function scoreProject(projectId) {
   }
 }
 
+export async function transformFinding(projectId, findingIndex) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/findings/transform`, {
+      finding_index: findingIndex,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not generate a fix. Please try again."));
+  }
+}
+
 export default api;

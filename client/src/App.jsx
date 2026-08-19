@@ -226,6 +226,7 @@ export default function App() {
               findings={analyzedProject.findings}
               files={analyzedProject.files}
               language={analyzedProject.project?.languages?.[0]}
+              projectId={projectId}
             />
           </motion.section>
         )}

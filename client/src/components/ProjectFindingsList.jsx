@@ -23,7 +23,7 @@ function toggle(set, value) {
   return next;
 }
 
-export default function ProjectFindingsList({ findings, files, language }) {
+export default function ProjectFindingsList({ findings, files, language, projectId }) {
   const [severityFilter, setSeverityFilter] = useState(new Set());
   const [categoryFilter, setCategoryFilter] = useState(new Set());
   const [pathFilter, setPathFilter] = useState("");
@@ -94,12 +94,15 @@ export default function ProjectFindingsList({ findings, files, language }) {
         <motion.div variants={container} initial="hidden" animate="show" className="flex flex-col gap-4">
           {filtered.map((finding, i) => {
             const fileEntry = (files ?? []).find((f) => f.path === finding?.file);
+            const findingIndex = (findings ?? []).indexOf(finding);
             return (
               <ProjectFindingCard
                 key={`${finding?.file ?? "x"}-${finding?.line ?? "x"}-${finding?.rule ?? i}-${i}`}
                 finding={finding}
                 files={files}
                 language={fileEntry?.language || language}
+                projectId={projectId}
+                findingIndex={findingIndex}
               />
             );
           })}
