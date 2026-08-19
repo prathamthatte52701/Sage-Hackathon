@@ -49,4 +49,19 @@ export async function getHistory(sessionId) {
   }
 }
 
+export async function uploadProject(file, sessionId, onUploadProgress) {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("session_id", sessionId);
+    const res = await api.post("/api/projects/upload", formData, {
+      timeout: 60000,
+      onUploadProgress,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Project upload failed. Please try again."));
+  }
+}
+
 export default api;

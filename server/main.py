@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import explain, review
+from routers import explain, projects, review
 
 app = FastAPI(title="AI Code Reviewer")
 
@@ -14,6 +14,7 @@ app.add_middleware(
 
 app.include_router(review.router, prefix="/api")
 app.include_router(explain.router, prefix="/api")
+app.include_router(projects.router, prefix="/api")
 
 
 @app.get("/health")

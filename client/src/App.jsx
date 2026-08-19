@@ -5,6 +5,7 @@ import ReviewButton from "./components/ReviewButton";
 import IssueList from "./components/IssueList";
 import ErrorBanner from "./components/ErrorBanner";
 import HistoryPanel from "./components/HistoryPanel";
+import ProjectUpload from "./components/ProjectUpload";
 import useSessionId from "./hooks/useSessionId";
 import { reviewCode } from "./api/client";
 
@@ -16,6 +17,8 @@ export default function App() {
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [mode, setMode] = useState("paste"); // "paste" | "upload"
+  const [projectData, setProjectData] = useState(null);
 
   const trimmed = code.trim();
   const overLimit = code.length > MAX_CHARS;
@@ -76,26 +79,128 @@ export default function App() {
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 backdrop-blur-sm">
-          <CodeEditor
-            code={code}
-            onCodeChange={setCode}
-            language={language}
-            onLanguageChange={setLanguage}
-          />
-
-          <div className="mt-5 flex items-center justify-between">
-            <p className="text-xs text-zinc-600">
-              {overLimit
-                ? "Code exceeds the 3,000 character limit."
-                : trimmed.length === 0
-                  ? "Paste some code to get started."
-                  : " "}
-            </p>
-            <ReviewButton onClick={handleReview} loading={loading} disabled={!canSubmit} />
+          <div className="mb-5 inline-flex rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
+            <button
+              type="button"
+              onClick={() => setMode("paste")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                mode === "paste"
+                  ? "bg-indigo-600 text-white shadow shadow-indigo-600/25"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Paste Code
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("upload")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                mode === "upload"
+                  ? "bg-indigo-600 text-white shadow shadow-indigo-600/25"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Upload Project
+            </button>
           </div>
+
+          {mode === "paste" ? (
+            <>
+              <CodeEditor
+                code={code}
+                onCodeChange={setCode}
+                language={language}
+                onLanguageChange={setLanguage}
+              />
+
+              <div className="mt-5 flex items-center justify-between">
+                <p className="text-xs text-zinc-600">
+                  {overLimit
+                    ? "Code exceeds the 3,000 character limit."
+                    : trimmed.length === 0
+                      ? "Paste some code to get started."
+                      : " "}
+                </p>
+                <ReviewButton onClick={handleReview} loading={loading} disabled={!canSubmit} />
+              </div>
+            </>
+          ) : (
+            <ProjectUpload sessionId={sessionId} onUploaded={setProjectData} />
+          )}
         </div>
 
-        {result && (
+        {mode === "upload" && projectData && (
+          <motion.section
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mt-8 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 backdrop-blur-sm"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-medium text-zinc-100">
+                {projectData.project?.project?.name || "Project"}
+              </h2>
+              <span className="text-xs text-zinc-500">
+                {projectData.project?.files?.length ?? 0} file
+                {(projectData.project?.files?.length ?? 0) === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            <div className="mb-5 flex flex-wrap gap-2 text-xs">
+              {projectData.project?.project?.projectType && (
+                <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-indigo-300">
+                  {projectData.project.project.projectType}
+                </span>
+              )}
+              {(projectData.project?.project?.languages ?? []).map((lang) => (
+                <span
+                  key={lang}
+                  className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-zinc-400"
+                >
+                  {lang}
+                </span>
+              ))}
+              {(projectData.project?.project?.frameworks ?? []).map((fw) => (
+                <span
+                  key={fw}
+                  className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-zinc-400"
+                >
+                  {fw}
+                </span>
+              ))}
+            </div>
+
+            {projectData.warnings?.length > 0 && (
+              <div className="mb-4 flex flex-col gap-1.5">
+                {projectData.warnings.map((w, i) => (
+                  <p
+                    key={i}
+                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300"
+                  >
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            <div className="max-h-72 overflow-y-auto rounded-lg border border-zinc-800">
+              {(projectData.project?.files ?? []).map((f, i) => (
+                <div
+                  key={f.path ?? i}
+                  className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-2 text-xs last:border-b-0"
+                >
+                  <span className="truncate font-mono text-zinc-300">{f.path}</span>
+                  <span className="flex shrink-0 gap-3 text-zinc-500">
+                    <span>{f.language}</span>
+                    <span>{f.size?.toLocaleString?.() ?? f.size} B</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </motion.section>
+        )}
+
+        {mode === "paste" && result && (
           <motion.section
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
