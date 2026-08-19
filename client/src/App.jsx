@@ -6,8 +6,11 @@ import IssueList from "./components/IssueList";
 import ErrorBanner from "./components/ErrorBanner";
 import HistoryPanel from "./components/HistoryPanel";
 import ProjectUpload from "./components/ProjectUpload";
+import ScanProgress from "./components/ScanProgress";
+import ProjectOverview from "./components/ProjectOverview";
+import ProjectFindingsList from "./components/ProjectFindingsList";
 import useSessionId from "./hooks/useSessionId";
-import { reviewCode } from "./api/client";
+import { reviewCode, analyzeProject, scoreProject } from "./api/client";
 
 export default function App() {
   const sessionId = useSessionId();
@@ -18,7 +21,61 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mode, setMode] = useState("paste"); // "paste" | "upload"
-  const [projectData, setProjectData] = useState(null);
+
+  // Upload-mode state machine: "idle" -> "analyzing" -> "results" (or an
+  // error at either the analyze or score stage, retryable without re-upload).
+  const [projectId, setProjectId] = useState(null);
+  const [uploadStage, setUploadStage] = useState("idle"); // "idle" | "analyzing" | "scoring" | "results"
+  const [analyzedProject, setAnalyzedProject] = useState(null);
+  const [projectScore, setProjectScore] = useState(null);
+  const [projectError, setProjectError] = useState(null);
+  const [failedStage, setFailedStage] = useState(null); // "analyzing" | "scoring"
+
+  // `from` lets a retry after a score-stage failure skip re-running analyze
+  // (already have analyzedProject) - it only re-attempts from where it broke.
+  async function runAnalyzeAndScore(id, from = "analyzing") {
+    setProjectError(null);
+    setFailedStage(null);
+    try {
+      let analyzed = analyzedProject;
+      if (from === "analyzing") {
+        setUploadStage("analyzing");
+        analyzed = await analyzeProject(id);
+        setAnalyzedProject(analyzed);
+      }
+
+      setUploadStage("scoring");
+      const scored = await scoreProject(id);
+      setProjectScore(scored);
+
+      setUploadStage("results");
+    } catch (err) {
+      setFailedStage(from);
+      setProjectError(err.message || "Something went wrong. Please try again.");
+    }
+  }
+
+  function handleUploaded(data) {
+    setProjectId(data?.project_id || null);
+    setAnalyzedProject(null);
+    setProjectScore(null);
+    setProjectError(null);
+    setFailedStage(null);
+    if (data?.project_id) runAnalyzeAndScore(data.project_id, "analyzing");
+  }
+
+  function retryProjectStage() {
+    if (projectId) runAnalyzeAndScore(projectId, failedStage || "analyzing");
+  }
+
+  function resetUpload() {
+    setProjectId(null);
+    setUploadStage("idle");
+    setAnalyzedProject(null);
+    setProjectScore(null);
+    setProjectError(null);
+    setFailedStage(null);
+  }
 
   const trimmed = code.trim();
   const overLimit = code.length > MAX_CHARS;
@@ -124,79 +181,52 @@ export default function App() {
                 <ReviewButton onClick={handleReview} loading={loading} disabled={!canSubmit} />
               </div>
             </>
+          ) : uploadStage === "idle" ? (
+            <ProjectUpload sessionId={sessionId} onUploaded={handleUploaded} />
           ) : (
-            <ProjectUpload sessionId={sessionId} onUploaded={setProjectData} />
+            <div className="flex flex-col gap-3">
+              <ScanProgress
+                stage={uploadStage === "results" ? "done" : uploadStage}
+                errorStage={failedStage}
+              />
+              {projectError && (
+                <div className="flex items-start justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                  <span className="flex-1">{projectError}</span>
+                  <button
+                    type="button"
+                    onClick={retryProjectStage}
+                    className="shrink-0 rounded border border-red-500/30 px-2 py-1 text-xs text-red-200 transition hover:bg-red-500/10"
+                  >
+                    Retry {failedStage === "scoring" ? "scoring" : "analysis"}
+                  </button>
+                </div>
+              )}
+              {uploadStage === "results" && (
+                <button
+                  type="button"
+                  onClick={resetUpload}
+                  className="self-start text-xs font-medium text-indigo-400 transition hover:text-indigo-300"
+                >
+                  ← Upload a different project
+                </button>
+              )}
+            </div>
           )}
         </div>
 
-        {mode === "upload" && projectData && (
+        {mode === "upload" && uploadStage === "results" && analyzedProject && projectScore && (
           <motion.section
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="mt-8 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 backdrop-blur-sm"
+            className="mt-8 flex flex-col gap-6"
           >
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-medium text-zinc-100">
-                {projectData.project?.project?.name || "Project"}
-              </h2>
-              <span className="text-xs text-zinc-500">
-                {projectData.project?.files?.length ?? 0} file
-                {(projectData.project?.files?.length ?? 0) === 1 ? "" : "s"}
-              </span>
-            </div>
-
-            <div className="mb-5 flex flex-wrap gap-2 text-xs">
-              {projectData.project?.project?.projectType && (
-                <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-indigo-300">
-                  {projectData.project.project.projectType}
-                </span>
-              )}
-              {(projectData.project?.project?.languages ?? []).map((lang) => (
-                <span
-                  key={lang}
-                  className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-zinc-400"
-                >
-                  {lang}
-                </span>
-              ))}
-              {(projectData.project?.project?.frameworks ?? []).map((fw) => (
-                <span
-                  key={fw}
-                  className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-zinc-400"
-                >
-                  {fw}
-                </span>
-              ))}
-            </div>
-
-            {projectData.warnings?.length > 0 && (
-              <div className="mb-4 flex flex-col gap-1.5">
-                {projectData.warnings.map((w, i) => (
-                  <p
-                    key={i}
-                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300"
-                  >
-                    {w}
-                  </p>
-                ))}
-              </div>
-            )}
-
-            <div className="max-h-72 overflow-y-auto rounded-lg border border-zinc-800">
-              {(projectData.project?.files ?? []).map((f, i) => (
-                <div
-                  key={f.path ?? i}
-                  className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-2 text-xs last:border-b-0"
-                >
-                  <span className="truncate font-mono text-zinc-300">{f.path}</span>
-                  <span className="flex shrink-0 gap-3 text-zinc-500">
-                    <span>{f.language}</span>
-                    <span>{f.size?.toLocaleString?.() ?? f.size} B</span>
-                  </span>
-                </div>
-              ))}
-            </div>
+            <ProjectOverview project={analyzedProject} score={projectScore} />
+            <ProjectFindingsList
+              findings={analyzedProject.findings}
+              files={analyzedProject.files}
+              language={analyzedProject.project?.languages?.[0]}
+            />
           </motion.section>
         )}
 
