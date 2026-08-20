@@ -35,7 +35,13 @@ def test_expanded_knowledge_base_has_detector_and_correctness_coverage():
 
 
 @pytest.mark.asyncio
-async def test_embedding_fails_clearly_without_provider():
+async def test_embedding_fails_clearly_without_provider(monkeypatch):
+    # This environment's .env intentionally sets EMBEDDING_PROVIDER (needed
+    # for the working RAG pipeline) -- override it for just this test so the
+    # "no provider configured" failure path is still exercised in isolation.
+    from knowledge import embeddings as embeddings_module
+
+    monkeypatch.setattr(embeddings_module, "EMBEDDING_PROVIDER", "")
     with pytest.raises(EmbeddingConfigurationError):
         await embed_text("hello")
 

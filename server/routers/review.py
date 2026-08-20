@@ -11,6 +11,7 @@ from models.schemas import FindingTransform, Issue, PasteFixRequest, ReviewReque
 from services.patching import build_patch_metadata
 from services.groq_client import GroqUnavailableError, call_groq
 from services.analyzers.rules import run_rules
+from services.grounding import ground_issues
 from services.prompt_builder import build_quality_review_prompt, build_transform_prompt
 
 router = APIRouter()
@@ -250,8 +251,26 @@ def detect_language(code: str, selected_language: str) -> dict:
 
 
 def build_paste_knowledge_query(code: str, language: str, deterministic_findings: list[Issue]) -> str:
+    """Pre-review query: built from deterministic findings (if any) + code
+    evidence, used to retrieve a small set of standards BEFORE the AI quality
+    review runs, so the reviewer knows what engineering risks to look for
+    instead of only decorating findings after the fact (see attach_issue_knowledge,
+    which runs post-hoc per finding — this is the pre-review counterpart)."""
     finding_terms = "\n".join(
         f"- {issue.category}: {issue.issue} line {issue.line}" for issue in deterministic_findings[:5]
+    )
+    compact_code = "\n".join(line.strip() for line in (code or "").splitlines() if line.strip())
+    return redact_sensitive_query_text(
+        "\n".join(
+            [
+                f"PASTE CODE REVIEW LANGUAGE: {language}",
+                "Retrieve standards that match the concrete code behavior below: validation of supplied values, numeric conversion, default branches, date handling, aggregation logic, zero/empty edge cases, error handling, and correctness.",
+                f"Deterministic findings:\n{finding_terms or '(none)'}",
+                "Code evidence excerpt:",
+                compact_code,
+            ]
+        ),
+        max_chars=1400,
     )
 
 
@@ -276,19 +295,6 @@ def build_issue_knowledge_query(issue: Issue, code: str, language: str) -> str:
             ]
         ),
         max_chars=1000,
-    )
-    compact_code = "\n".join(line.strip() for line in (code or "").splitlines() if line.strip())
-    return redact_sensitive_query_text(
-        "\n".join(
-            [
-                f"PASTE CODE REVIEW LANGUAGE: {language}",
-                "Retrieve standards that match the concrete code behavior below: validation of supplied values, numeric conversion, default branches, date handling, aggregation logic, zero/empty edge cases, error handling, and correctness.",
-                f"Deterministic findings:\n{finding_terms or '(none)'}",
-                "Code evidence excerpt:",
-                compact_code,
-            ]
-        ),
-        max_chars=1400,
     )
 
 
@@ -373,8 +379,12 @@ def _seed_matches_for_issue(issue: Issue) -> list[dict]:
         candidates.append((issue.rule, "Exact detector standard for this finding"))
         if issue.rule == "js_date_slice_without_validation":
             candidates.append(("API-GEN-001", "Finding evidence uses supplied values without visible validation"))
-    elif any(token in text for token in ("date", "slice", "invalid date", "malformed")):
-        candidates.append(("js_date_slice_without_validation", "Finding evidence is date parsing/validation related"))
+    elif any(token in text for token in (".slice(", ".substring(", ".substr(")) and "date" in text:
+        # Only inject the slicing-specific standard when the evidence actually
+        # shows a slice/substring call, not merely the word "date" — a plain
+        # date-validation finding with no slicing operation should not be
+        # matched against a standard about validating before slicing.
+        candidates.append(("js_date_slice_without_validation", "Finding evidence shows a slice/substring call on a date-like value"))
         if any(token in text for token in ("input", "validation", "supplied", "transaction", "malformed")):
             candidates.append(("API-GEN-001", "Finding evidence uses supplied values without visible validation"))
     else:
@@ -412,15 +422,34 @@ def _knowledge_records_for_issue_client(knowledge: dict | None) -> list[dict]:
     return records
 
 
+# Maps an Issue.category to the KB categories worth considering for it. Not
+# a strict 1:1 mapping -- an issue category can plausibly relate to more than
+# one KB category (e.g. a reliability issue is often also an architecture
+# concern). "correctness" and "api_design" are always eligible since almost
+# any finding can cite a validation/correctness standard.
+_ISSUE_TO_KB_CATEGORIES = {
+    "security": {"security"},
+    "performance": {"performance"},
+    "logic": {"correctness"},
+    "correctness": {"correctness"},
+    "reliability": {"reliability", "architecture"},
+    "database": {"database", "data_integrity"},
+    "data_integrity": {"data_integrity", "database"},
+    "api_design": {"api_design"},
+    "architecture": {"architecture", "reliability"},
+    "privacy": {"privacy", "security"},
+    "maintainability": {"maintainability"},
+    "production_readiness": {"production_readiness", "reliability"},
+    "best_practice": set(),
+    "style": set(),
+}
+
+
 def rerank_issue_knowledge(knowledge: dict, issue: Issue, query: str, top_k: int = 3) -> dict:
     evidence_tokens = _paste_tokens(query)
     selected = []
     seen = set()
-    allowed_categories = {"correctness", "api_design"}
-    if issue.category == "security":
-        allowed_categories.add("security")
-    if issue.category == "performance":
-        allowed_categories.add("performance")
+    allowed_categories = {"correctness", "api_design"} | _ISSUE_TO_KB_CATEGORIES.get(issue.category, set())
 
     for doc in _seed_matches_for_issue(issue):
         if (doc.get("category") or "") not in allowed_categories:
@@ -548,7 +577,22 @@ async def review(payload: ReviewRequestIn):
         deterministic = _deterministic_review_response(payload.code, effective_language)
         deterministic_issues = deterministic.deterministic_findings
 
-        messages = [{"role": "user", "content": build_quality_review_prompt(payload.code, effective_language, None)}]
+        # Pre-review RAG: retrieve a small set of relevant standards BEFORE the
+        # AI review runs, so the model knows what to check for instead of RAG
+        # only decorating findings after they already exist (attach_issue_knowledge
+        # below is the post-hoc, per-finding counterpart to this).
+        pre_review_knowledge = None
+        try:
+            pre_review_query = build_paste_knowledge_query(payload.code, effective_language, deterministic_issues)
+            pre_review_knowledge = await retrieve_knowledge(pre_review_query, language=effective_language, top_k=6)
+            pre_review_knowledge = rerank_paste_knowledge(pre_review_knowledge, pre_review_query, payload.code, top_k=4)
+        except Exception as exc:
+            print(f"[review] pre-review knowledge retrieval failed, continuing without it: {type(exc).__name__}")
+            pre_review_knowledge = None
+
+        messages = [
+            {"role": "user", "content": build_quality_review_prompt(payload.code, effective_language, pre_review_knowledge)}
+        ]
         parsed = None
         try:
             raw = await call_groq(messages)
@@ -594,6 +638,13 @@ async def review(payload: ReviewRequestIn):
             return response
 
         quality_issues, quality_summary = _build_quality_issues(parsed)
+        candidate_count = len(quality_issues)
+        # P0: mechanical source grounding. An AI candidate must not reach the
+        # user just because its JSON parsed — verify its evidence and claimed
+        # line actually exist in the source before accepting it.
+        quality_issues, rejected = ground_issues(quality_issues, payload.code)
+        if rejected:
+            print(f"[review] grounding rejected {len(rejected)}/{candidate_count} AI candidate(s): {rejected}")
         quality_issues = dedupe_quality_against_deterministic(quality_issues, deterministic_issues)
         deterministic_issues = await attach_issue_knowledge(deterministic_issues, payload.code, effective_language)
         quality_issues = await attach_issue_knowledge(quality_issues, payload.code, effective_language)

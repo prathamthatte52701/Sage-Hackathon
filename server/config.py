@@ -18,3 +18,11 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "")
 EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "0") or "0")
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "")
+
+# Minimum Atlas $vectorSearch cosine score for a semantic (non-exact-rule)
+# knowledge match to be considered relevant enough to use. Chosen from
+# observed score distribution on this KB (~100 records, all-MiniLM-L6-v2):
+# unrelated/nonsense queries still scored ~0.52-0.64, so there's no crisp
+# separation gap -- this threshold trades some weak-but-real matches for
+# fewer irrelevant ones, and is intentionally overridable per deployment/KB size.
+KNOWLEDGE_MIN_SCORE = float(os.getenv("KNOWLEDGE_MIN_SCORE", "0.55"))

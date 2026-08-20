@@ -71,7 +71,16 @@ def is_deployment_file(path: str) -> bool:
 
 
 def analyze_project(project: dict) -> dict:
-    warnings = project.setdefault("warnings", [])
+    # Reset analysis-derived fields before the loop below, which only ever
+    # appends. Without this, re-running analysis on a project that was
+    # already analyzed once (get_project returns the doc as stored, including
+    # whatever imports/functions/findings/etc a prior analyze call wrote)
+    # would append onto the existing lists and double every entry on each
+    # reanalysis instead of replacing them.
+    for key in ("imports", "functions", "classes", "apiEndpoints", "tests", "configs", "deploymentFiles", "findings", "warnings"):
+        project[key] = []
+
+    warnings = project["warnings"]
 
     for file_entry in project.get("files", []):
         path = file_entry["path"]
