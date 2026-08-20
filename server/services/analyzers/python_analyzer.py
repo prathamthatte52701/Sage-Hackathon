@@ -45,6 +45,32 @@ class PythonAnalyzer(LanguageAnalyzer):
             return []
         return [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
 
+    def extract_routes(self, content: str) -> list[dict]:
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            return []
+
+        routes = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call):
+                    continue
+                func = decorator.func
+                if not isinstance(func, ast.Attribute):
+                    continue
+                method = func.attr.upper()
+                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                    continue
+                if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
+                    continue
+                path = decorator.args[0].value
+                if isinstance(path, str):
+                    routes.append({"method": method, "path": path, "line": node.lineno, "handler": node.name})
+        return routes
+
     def parse_error_safe(self, content: str) -> str | None:
         try:
             ast.parse(content)

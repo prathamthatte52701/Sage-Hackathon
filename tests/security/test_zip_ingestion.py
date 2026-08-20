@@ -25,3 +25,21 @@ def test_zip_upload_builds_normalized_project():
     assert warnings == []
     assert project["files"][0]["path"] == "app.py"
     assert project["project"]["languages"] == ["python"]
+
+
+def test_zip_rejects_excessive_path_depth():
+    deep_path = "/".join([f"d{i}" for i in range(25)]) + "/app.py"
+    project, warnings, error = _project_from_zip_bytes(_zip_bytes({deep_path: "print(1)"}), "deep")
+    assert project is None
+    assert warnings is None
+    assert error["error"] == "ZIP contains unsafe file paths"
+
+
+def test_zip_extracts_manifest_dependencies():
+    project, warnings, error = _project_from_zip_bytes(
+        _zip_bytes({"requirements.txt": "fastapi==1.0\n# comment\nhttpx>=0.1\n"}),
+        "deps",
+    )
+    assert error is None
+    assert {"name": "fastapi", "version": "==1.0", "source": "requirements.txt"} in project["dependencies"]
+    assert {"name": "httpx", "version": ">=0.1", "source": "requirements.txt"} in project["dependencies"]
