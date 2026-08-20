@@ -152,12 +152,20 @@ async def generate_fix(
     return result
 
 
-async def answer_project_question(question: str, retrieved_context: list[dict]) -> dict:
-    """Used by codebase chat. Takes ALREADY-RETRIEVED context (services/retrieval.py)
-    — this function never decides what's relevant, retrieval already did that.
-    This function only reasons over what it's handed."""
+async def answer_project_question(
+    question: str,
+    retrieved_context: list[dict],
+    knowledge: dict | None = None,
+    semantic_context: list[dict] | None = None,
+) -> dict:
+    """Used by codebase chat. Takes ALREADY-RETRIEVED context (services/retrieval.py
+    for project files, knowledge/retrieval.py for engineering standards) — this
+    function never decides what's relevant, retrieval already did that. This
+    function only reasons over what it's handed. `knowledge` and
+    `semantic_context` are optional enrichment and may be None/empty without
+    changing behavior beyond a smaller prompt."""
     retrieved_paths = {f["path"] for f in retrieved_context}
-    prompt = build_chat_prompt(question, retrieved_context)
+    prompt = build_chat_prompt(question, retrieved_context, knowledge, semantic_context)
 
     result = {
         "answer": "AI answer unavailable — the model service could not be reached.",

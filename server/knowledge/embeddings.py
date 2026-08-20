@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 
 from config import EMBEDDING_API_KEY, EMBEDDING_API_URL, EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, EMBEDDING_PROVIDER
@@ -24,13 +26,25 @@ def _validate_embedding(vector: list[float]) -> list[float]:
 async def embed_text(text: str) -> list[float]:
     provider = EMBEDDING_PROVIDER.strip().lower()
     if provider in {"local_sentence_transformers", "sentence_transformers"}:
-        from services.embeddings import MODEL_NAME, generate_embedding
+        try:
+            from services.embeddings import MODEL_NAME, generate_embedding
+        except ModuleNotFoundError as exc:
+            if exc.name == "sentence_transformers":
+                raise EmbeddingConfigurationError(
+                    "Local embedding provider requires sentence-transformers to be installed"
+                ) from exc
+            raise
 
         if EMBEDDING_MODEL and EMBEDDING_MODEL != MODEL_NAME:
             raise EmbeddingConfigurationError(
                 f"EMBEDDING_MODEL={EMBEDDING_MODEL} does not match local model {MODEL_NAME}"
             )
-        return _validate_embedding(generate_embedding(text))
+        # model.encode() is synchronous and CPU-bound; calling it directly
+        # blocks the event loop long enough to break Starlette's
+        # BaseHTTPMiddleware (rate_limit_middleware) task group ("attached to
+        # a different loop" errors). Run it off-loop instead.
+        vector = await asyncio.to_thread(generate_embedding, text)
+        return _validate_embedding(vector)
 
     if provider not in {"openai_compatible", "openai"}:
         raise EmbeddingConfigurationError(

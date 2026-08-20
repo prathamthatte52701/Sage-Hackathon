@@ -1,12 +1,13 @@
 import asyncio
 
 from config import EMBEDDING_MODEL, KNOWLEDGE_COLLECTION
-from db.mongo import db
+from db.mongo import get_db
 from knowledge.embeddings import embed_text
 from knowledge.seed_data import KNOWLEDGE_RECORDS
 
 
 async def ingest() -> dict:
+    db = get_db()
     if db is None:
         raise RuntimeError("MONGO_URL must be configured before ingesting knowledge")
 
@@ -35,11 +36,7 @@ async def ingest() -> dict:
 
 
 def main() -> None:
-    # db/mongo.py binds AsyncIOMotorClient to the event loop active at import
-    # time; asyncio.run() would spin up a *new* loop and crash with a
-    # cross-loop Future error. Reuse the loop the module already bound to.
-    loop = asyncio.get_event_loop()
-    result = loop.run_until_complete(ingest())
+    result = asyncio.run(ingest())
     print(result)
 
 

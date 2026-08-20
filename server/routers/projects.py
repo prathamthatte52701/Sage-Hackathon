@@ -16,7 +16,7 @@ from knowledge.retrieval import retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
-from services.retrieval import retrieve_relevant_files
+from services.retrieval import retrieve_relevant_files, retrieve_semantic_project_context
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
 
@@ -659,6 +659,21 @@ async def reanalyze_project(project_id: str, payload: FindingReasonRequest):
 
 _CHAT_ERROR_RESPONSE = {"error": "Could not answer this question, please try again"}
 
+# Heuristic for "this question wants general engineering guidance" (production
+# readiness, security posture, architecture/scalability advice) vs. a plain
+# "where is X" lookup. Only guidance-shaped questions pay the extra knowledge
+# retrieval — a file lookup doesn't need production-readiness standards.
+_GUIDANCE_KEYWORDS = {
+    "production", "ready", "readiness", "secure", "security", "vulnerab", "scale",
+    "scalab", "architecture", "database", "deploy", "deployment", "improve",
+    "improvement", "best practice", "reliab", "performance", "risky", "risk",
+}
+
+
+def _looks_like_guidance_question(question: str) -> bool:
+    q = question.lower()
+    return any(keyword in q for keyword in _GUIDANCE_KEYWORDS)
+
 
 @router.post("/projects/{project_id}/chat")
 async def chat_about_project(project_id: str, payload: ChatRequest):
@@ -667,6 +682,8 @@ async def chat_about_project(project_id: str, payload: ChatRequest):
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
+        # Stage 1/2 (unchanged): deterministic keyword/import retrieval is the
+        # sole source of PROJECT EVIDENCE and always runs first.
         retrieved = retrieve_relevant_files(project, payload.question)
 
         if not retrieved:
@@ -677,9 +694,46 @@ async def chat_about_project(project_id: str, payload: ChatRequest):
                 "retrieved_files": [],
             }
 
-        result = await answer_project_question(payload.question, retrieved)
+        # Stage 3 (optional, additive): engineering knowledge for guidance-shaped
+        # questions, and cross-project semantic background context. Both are
+        # best-effort enrichment — retrieve_knowledge already fails to a
+        # deterministic fallback internally, and retrieve_semantic_project_context
+        # fails silently to []. Neither can break the chat response below.
+        knowledge = None
+        if _looks_like_guidance_question(payload.question):
+            try:
+                project_meta = project.get("project", {})
+                languages = project_meta.get("languages") or []
+                knowledge = await retrieve_knowledge(
+                    payload.question,
+                    language=languages[0] if languages else None,
+                    frameworks=project_meta.get("frameworks", []),
+                    top_k=3,
+                )
+            except Exception as exc:
+                print(f"[projects] chat knowledge retrieval failed, continuing without it: {exc}")
+                knowledge = None
 
-        return {**result, "retrieved_files": [f["path"] for f in retrieved]}
+        semantic_context = await retrieve_semantic_project_context(project, payload.question, top_k=2)
+
+        result = await answer_project_question(payload.question, retrieved, knowledge, semantic_context)
+
+        return {
+            **result,
+            "retrieved_files": [f["path"] for f in retrieved],
+            "knowledge_retrieval": (
+                {
+                    "mode": knowledge.get("mode"),
+                    "available": knowledge.get("available"),
+                    "record_count": len(knowledge.get("records", [])),
+                }
+                if knowledge
+                else None
+            ),
+            "semantic_project_context": [
+                {"name": p.get("name"), "similarity": round(p.get("similarity", 0), 3)} for p in semantic_context
+            ],
+        }
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_CHAT_ERROR_RESPONSE)
