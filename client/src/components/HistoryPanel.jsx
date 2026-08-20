@@ -4,12 +4,13 @@ import { getHistory } from "../api/client";
 
 const SEVERITY_DOT = {
   critical: "bg-red-500",
+  high: "bg-orange-500",
   medium: "bg-amber-500",
   low: "bg-blue-500",
 };
 
 function countBySeverity(issues) {
-  const counts = { critical: 0, medium: 0, low: 0 };
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const issue of issues || []) {
     if (counts[issue.severity] !== undefined) counts[issue.severity] += 1;
   }
@@ -104,8 +105,8 @@ export default function HistoryPanel({ sessionId, open, onClose }) {
                             </span>
                           )
                       )}
-                      {counts.critical + counts.medium + counts.low === 0 && (
-                        <span>{item.summary || "No significant issues found"}</span>
+                      {counts.critical + counts.high + counts.medium + counts.low === 0 && (
+                        <span>Review complete · no issues found</span>
                       )}
                     </div>
                   </div>

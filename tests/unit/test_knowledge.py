@@ -4,6 +4,7 @@ from knowledge.embeddings import EmbeddingConfigurationError, embed_text
 from knowledge import retrieval
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from knowledge.schema import KnowledgeRecord
+from knowledge.seed_data import KNOWLEDGE_RECORDS
 
 
 def test_knowledge_schema_generates_normalized_content():
@@ -19,6 +20,18 @@ def test_knowledge_schema_generates_normalized_content():
     )
     assert "Validate input" in record.normalized_content()
     assert record.language == ["any"]
+
+
+def test_expanded_knowledge_base_has_detector_and_correctness_coverage():
+    rule_ids = {record.rule_id for record in KNOWLEDGE_RECORDS}
+    categories = {record.category for record in KNOWLEDGE_RECORDS}
+
+    assert len(KNOWLEDGE_RECORDS) >= 80
+    assert "js_numeric_coercion_default" in rule_ids
+    assert "ssrf_untrusted_url" in rule_ids
+    assert "nosql_untrusted_filter" in rule_ids
+    assert "correctness" in categories
+    assert "testing" in categories
 
 
 @pytest.mark.asyncio
@@ -75,6 +88,28 @@ async def test_exact_knowledge_rule_outranks_semantic_matches(monkeypatch):
     assert result["available"] is True
     assert result["records"][0]["retrieval_method"] == "exact_rule"
     assert "hardcoded" in result["records"][0]["title"].lower()
+
+
+@pytest.mark.asyncio
+async def test_exact_detector_rule_id_retrieves_matching_detector_knowledge(monkeypatch):
+    monkeypatch.setattr(retrieval, "get_db", lambda: _FakeDb([
+        {"rule_id": "API-GEN-001", "title": "Validate external input", "score": 0.99}
+    ]))
+
+    async def fake_embed(text):
+        return [0.1, 0.2, 0.3]
+
+    monkeypatch.setattr(retrieval, "embed_text", fake_embed)
+
+    result = await retrieve_knowledge(
+        "Number(value) || 0",
+        language="javascript",
+        top_k=2,
+        exact_rule_id="js_numeric_coercion_default",
+    )
+
+    assert result["records"][0]["rule_id"] == "js_numeric_coercion_default"
+    assert result["records"][0]["retrieval_method"] == "exact_rule"
 
 
 @pytest.mark.asyncio

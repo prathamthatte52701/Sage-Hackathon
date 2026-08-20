@@ -166,7 +166,14 @@ def _fallback_records(
         seen.add(record.rule_id)
         if len(records) >= top_k:
             break
-    return {"mode": "deterministic_fallback", "available": False, "reason": reason, "records": records[:top_k]}
+    return {
+        "mode": "deterministic_fallback",
+        "available": False,
+        "reason": reason,
+        "records": records[:top_k],
+        "seed_record_count": len(KNOWLEDGE_RECORDS),
+        "indexed_record_count": None,
+    }
 
 
 def _merge_results(exact: list[dict], semantic: list[dict], top_k: int) -> list[dict]:
@@ -190,13 +197,19 @@ async def retrieve_knowledge(
     category: str | None = None,
     top_k: int = 4,
     exact_rule_id: str | None = None,
+    include_exact: bool = True,
 ) -> dict:
-    exact = _exact_records(query, language, frameworks, category, exact_rule_id)
+    exact = _exact_records(query, language, frameworks, category, exact_rule_id) if include_exact else []
     db = get_db()
     if db is None:
         return _fallback_records(language, frameworks, category, top_k, "mongodb_unavailable", exact)
 
     try:
+        try:
+            indexed_record_count = await db[KNOWLEDGE_COLLECTION].count_documents({})
+        except Exception:
+            indexed_record_count = None
+
         vector = await embed_text(query)
         pipeline = [
             {
@@ -237,6 +250,12 @@ async def retrieve_knowledge(
             f"[knowledge] mode=hybrid exact={len(exact)} semantic={len(semantic)} "
             f"top={method_ids} scores={[round(r.get('score'), 3) for r in records if isinstance(r.get('score'), (int, float))]}"
         )
-        return {"mode": "hybrid", "available": True, "records": records}
+        return {
+            "mode": "hybrid",
+            "available": True,
+            "records": records,
+            "seed_record_count": len(KNOWLEDGE_RECORDS),
+            "indexed_record_count": indexed_record_count,
+        }
     except (EmbeddingConfigurationError, EmbeddingProviderError, Exception) as exc:
         return _fallback_records(language, frameworks, category, top_k, f"vector_unavailable:{type(exc).__name__}", exact)
