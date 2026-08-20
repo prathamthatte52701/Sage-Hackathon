@@ -1,6 +1,6 @@
 import asyncio
 
-from db.mongo import db, hydrate_file_content
+from db.mongo import get_db, hydrate_file_content
 from services.embeddings import generate_embedding
 
 EMBEDDING_DIMENSIONS = 384
@@ -19,6 +19,7 @@ def _build_project_text(doc: dict) -> str:
 
 
 async def main():
+    db = get_db()
     if db is None:
         raise RuntimeError("MONGO_URL is not configured")
 
@@ -53,7 +54,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    # db/mongo.py binds AsyncIOMotorClient to the event loop active at import
-    # time; asyncio.run() spins up a *new* loop and crashes with a
-    # cross-loop Future error. Reuse the loop the module already bound to.
-    asyncio.get_event_loop().run_until_complete(main())
+    asyncio.run(main())

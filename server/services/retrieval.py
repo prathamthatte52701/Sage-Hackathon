@@ -27,8 +27,25 @@ CONTEXT_CHARS_PER_FILE = 1500
 # "riskiest file" / "most vulnerable" questions aren't answerable by keyword
 # overlap — that judgment lives in the findings list (severity per file), not
 # file content. Route these to a severity ranking instead of guessing.
-_RISK_WORDS = {"risk", "risky", "riskiest", "dangerous", "vulnerable", "insecure", "worst", "unsafe"}
+_RISK_WORDS = {
+    "risk",
+    "risky",
+    "riskiest",
+    "dangerous",
+    "vulnerable",
+    "vulnerability",
+    "vulnerabilities",
+    "insecure",
+    "security",
+    "secure",
+    "production",
+    "readiness",
+    "worst",
+    "unsafe",
+}
 _SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_DATABASE_WORDS = {"database", "databases", "db", "sqlite", "sql", "query", "queries"}
+_DATABASE_FILE_STEMS = {"db", "database", "database_client", "repository", "repositories", "models"}
 
 _SOURCE_EXT_RE = re.compile(r"\.(py|js|jsx|ts|tsx)$")
 STRUCTURAL_SCORE_WEIGHT = 0.5  # a structurally-related file scores lower than a real keyword hit
@@ -155,7 +172,16 @@ def _rank_by_finding_severity(project: dict, top_k: int) -> list[dict]:
 
 def retrieve_relevant_files(project: dict, question: str, top_k: int = 5) -> list[dict]:
     q_tokens = _tokens(question)
-    if not q_tokens:
+    question_lower = question.lower()
+    # _tokens() drops anything under 3 chars, so a short filename like
+    # "db.py" never becomes a token and q_tokens can end up empty even
+    # though the question names an exact file. Check for a literal path
+    # mention before the early-exit so "What does db.py do?" doesn't
+    # short-circuit to zero results.
+    has_literal_path_mention = any(
+        f.get("path") and f["path"].lower() in question_lower for f in project.get("files", [])
+    )
+    if not q_tokens and not has_literal_path_mention:
         return []
 
     if q_tokens & _RISK_WORDS:
@@ -175,7 +201,6 @@ def retrieve_relevant_files(project: dict, question: str, top_k: int = 5) -> lis
         imports_by_file.setdefault(i.get("file"), []).append(i.get("module", ""))
 
     files_by_path = {f.get("path"): f for f in project.get("files", [])}
-    question_lower = question.lower()
 
     scored = []
     for file_entry in project.get("files", []):
@@ -197,6 +222,17 @@ def retrieve_relevant_files(project: dict, question: str, top_k: int = 5) -> lis
         if content:
             content_lower = content.lower()
             score += sum(1 for t in q_tokens if t in content_lower)
+
+            # "database" intent often points at files named db.py or SQL code
+            # that does not literally contain the word "database". Without this
+            # boost, DATABASE_PASSWORD in config.py can outrank the actual DB
+            # access layer during demo chat.
+            path_stem = PurePosixPath(path).stem.lower()
+            if q_tokens & _DATABASE_WORDS:
+                if path_stem in _DATABASE_FILE_STEMS:
+                    score = max(score, 8)
+                if any(marker in content_lower for marker in ("sqlite3", "select ", "insert ", "update ", "delete ")):
+                    score = max(score, 7)
 
         # Stage 1's path score only tokenizes the filename stem, so a
         # question naming a full path ("app/services/db.py") can score 0
@@ -257,4 +293,86 @@ def retrieve_relevant_files(project: dict, question: str, top_k: int = 5) -> lis
                 )
 
     results.sort(key=lambda r: r["score"], reverse=True)
+    return results
+
+
+async def retrieve_semantic_project_context(project: dict, question: str, top_k: int = 2) -> list[dict]:
+    """Stage 3 (optional, additive): cross-project semantic context via the
+    `projects.embedding` vector search index. Project embeddings in this repo
+    are one vector per project (built from concatenated file text — see
+    generate_embeddings.py), not one per file. That means vector search here
+    can only ever surface *other* projects that are semantically similar to
+    the question — it cannot do file-level semantic retrieval within the
+    current project. Stage 1/2 above (retrieve_relevant_files) already own
+    that job precisely via keyword/import matching and remain the sole
+    source of PROJECT EVIDENCE for the current project.
+
+    Scoped to the current project's own session_id (when present) so one
+    user's uploaded projects don't surface into another user's chat, and the
+    current project itself is always excluded so this can't just rediscover
+    the document the caller already has.
+
+    Fails silently (returns []) on any error — no MONGO_URL, embedding model
+    unavailable, Atlas index down, bad ObjectId — so this optional enrichment
+    can never break the chat endpoint.
+    """
+    try:
+        import asyncio
+
+        from db.mongo import get_db
+        from services.embeddings import generate_embedding
+
+        db = get_db()
+        if db is None:
+            return []
+
+        current_id = project.get("_id")
+        session_id = project.get("session_id")
+
+        # model.encode() is synchronous/CPU-bound; running it directly on the
+        # event loop can starve Starlette's BaseHTTPMiddleware task group
+        # (rate_limit_middleware), so offload it like knowledge/embeddings.py does.
+        vector = await asyncio.to_thread(generate_embedding, question)
+        # Atlas index has no filter fields defined (only the vector path), so
+        # session/self scoping can't happen inside $vectorSearch itself —
+        # over-fetch and filter in Python instead.
+        overfetch = max(top_k * 5, 10)
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": "vector_index",
+                    "path": "embedding",
+                    "queryVector": vector,
+                    "numCandidates": max(50, overfetch * 10),
+                    "limit": overfetch,
+                }
+            },
+            {
+                "$project": {
+                    "_id": 1,
+                    "session_id": 1,
+                    "name": "$project.name",
+                    "projectType": "$project.projectType",
+                    "languages": "$project.languages",
+                    "overall_score": "$compliance_score.overall_score",
+                    "similarity": {"$meta": "vectorSearchScore"},
+                }
+            },
+        ]
+        candidates = await db.projects.aggregate(pipeline).to_list(length=overfetch)
+    except Exception:
+        return []
+
+    results = []
+    for c in candidates:
+        if str(c.get("_id")) == str(current_id):
+            continue
+        if session_id and c.get("session_id") != session_id:
+            continue
+        c["_id"] = str(c["_id"])
+        c.pop("session_id", None)
+        results.append(c)
+        if len(results) >= top_k:
+            break
+
     return results
