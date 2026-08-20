@@ -174,7 +174,7 @@ export default function App() {
               <div className="mt-5 flex items-center justify-between">
                 <p className="text-xs text-zinc-600">
                   {overLimit
-                    ? "Code exceeds the 3,000 character limit."
+                    ? `Code exceeds the ${MAX_CHARS.toLocaleString()} character limit.`
                     : trimmed.length === 0
                       ? "Paste some code to get started."
                       : " "}

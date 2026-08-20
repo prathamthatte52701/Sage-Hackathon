@@ -1,6 +1,6 @@
 import Editor from "@monaco-editor/react";
 
-export const MAX_CHARS = 3000;
+export const MAX_CHARS = 7000;
 
 export const LANGUAGES = [
   { value: "javascript", label: "JavaScript" },

@@ -21,8 +21,8 @@ from services.standards import get_standard_by_id, get_standards_for
 
 router = APIRouter()
 
-MAX_ZIP_SIZE = 20 * 1024 * 1024  # 20MB
-MAX_FILE_COUNT = 500
+MAX_ZIP_SIZE = 300 * 1024 * 1024  # 300MB
+MAX_FILE_COUNT = 2000
 MAX_CONTENT_SIZE = 100_000  # chars
 
 IGNORE_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", "coverage", ".cache"}
@@ -97,7 +97,7 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
     one of (project_representation, error_response) is None.
     """
     if len(raw_bytes) > MAX_ZIP_SIZE:
-        return None, None, {"error": "ZIP file exceeds the 20MB limit"}
+        return None, None, {"error": "ZIP file exceeds the 300MB limit"}
 
     buffer = BytesIO(raw_bytes)
     if not zipfile.is_zipfile(buffer):
