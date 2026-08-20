@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import re
 import zipfile
@@ -22,8 +23,10 @@ from services.standards import get_standard_by_id, get_standards_for
 router = APIRouter()
 
 MAX_ZIP_SIZE = 300 * 1024 * 1024  # 300MB
+MAX_UNCOMPRESSED_SIZE = 600 * 1024 * 1024  # archive-bomb guard
 MAX_FILE_COUNT = 2000
 MAX_CONTENT_SIZE = 100_000  # chars
+MAX_PATH_DEPTH = 20
 
 IGNORE_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", "coverage", ".cache"}
 
@@ -40,6 +43,23 @@ EXTENSION_LANGUAGE_MAP = {
     ".hpp": "cpp",
 }
 
+TEXT_MANIFEST_FILENAMES = {
+    "requirements.txt",
+    "pyproject.toml",
+    "package.json",
+    "setup.py",
+    "pom.xml",
+    "build.gradle",
+    ".env.example",
+    "tsconfig.json",
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "render.yaml",
+    "vercel.json",
+    "Procfile",
+}
+
 _ERROR_RESPONSE = {"error": "Could not process the uploaded project, please try again"}
 
 
@@ -51,7 +71,10 @@ def _guess_language(path: str) -> str:
 def _is_unsafe_path(name: str) -> bool:
     """Reject path traversal, absolute paths, and Windows drive-letter paths."""
     normalized = name.replace("\\", "/")
-    if ".." in PurePosixPath(normalized).parts:
+    parts = PurePosixPath(normalized).parts
+    if ".." in parts:
+        return True
+    if len(parts) > MAX_PATH_DEPTH:
         return True
     if normalized.startswith("/"):
         return True
@@ -62,6 +85,50 @@ def _is_unsafe_path(name: str) -> bool:
     if resolved == ".." or resolved.startswith(".." + os.sep) or not resolved.startswith("ROOT"):
         return True
     return False
+
+
+def _should_read_text(display_name: str, language: str) -> bool:
+    basename = PurePosixPath(display_name.replace("\\", "/")).name
+    return language in SOURCE_LANGUAGES or basename in TEXT_MANIFEST_FILENAMES
+
+
+def _extract_dependencies(files_index: list[dict]) -> list[dict]:
+    dependencies = []
+    seen = set()
+
+    def add(name: str, source: str, version: str = ""):
+        clean_name = name.strip()
+        if not clean_name or clean_name.startswith("#"):
+            return
+        key = (clean_name.lower(), source)
+        if key in seen:
+            return
+        seen.add(key)
+        dependencies.append({"name": clean_name, "version": version.strip(), "source": source})
+
+    for file_entry in files_index:
+        path = file_entry.get("path", "")
+        content = file_entry.get("content") or ""
+        basename = PurePosixPath(path.replace("\\", "/")).name
+        if basename == "requirements.txt":
+            for raw_line in content.splitlines():
+                line = raw_line.split("#", 1)[0].strip()
+                if not line or line.startswith(("-r ", "--")):
+                    continue
+                match = re.match(r"([A-Za-z0-9_.-]+)\s*([<>=!~].*)?$", line)
+                if match:
+                    add(match.group(1), path, match.group(2) or "")
+        elif basename == "package.json":
+            try:
+                package = json.loads(content)
+            except json.JSONDecodeError:
+                continue
+            for section in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                values = package.get(section)
+                if isinstance(values, dict):
+                    for name, version in values.items():
+                        add(str(name), f"{path}:{section}", str(version))
+    return dependencies
 
 
 def _is_ignored(name: str) -> bool:
@@ -112,6 +179,10 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
         if any(_is_unsafe_path(name) for name in names):
             return None, None, {"error": "ZIP contains unsafe file paths"}
 
+        total_uncompressed = sum(zf.getinfo(name).file_size for name in names)
+        if total_uncompressed > MAX_UNCOMPRESSED_SIZE:
+            return None, None, {"error": "ZIP uncompressed contents exceed the 600MB limit"}
+
         prefix = _strip_common_top_level(names) if strip_top_level else ""
 
         files_index = []
@@ -136,7 +207,7 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
             language = _guess_language(display_name)
 
             content = None
-            if language in SOURCE_LANGUAGES:
+            if _should_read_text(display_name, language):
                 text = zf.read(name).decode("utf-8", errors="replace")
                 if len(text) < MAX_CONTENT_SIZE:
                     content = text
@@ -183,7 +254,7 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
         },
         "files": files_index,
         "directories": sorted(directories),
-        "dependencies": [],
+        "dependencies": _extract_dependencies(files_index),
         "imports": [],
         "functions": [],
         "classes": [],
@@ -304,7 +375,18 @@ async def analyze_project_by_id(project_id: str):
 
         updates = {
             key: analyzed.get(key, [])
-            for key in ("imports", "functions", "classes", "tests", "configs", "deploymentFiles", "findings", "warnings")
+            for key in (
+                "dependencies",
+                "imports",
+                "functions",
+                "classes",
+                "apiEndpoints",
+                "tests",
+                "configs",
+                "deploymentFiles",
+                "findings",
+                "warnings",
+            )
         }
         await update_project(project_id, updates)
 
@@ -476,7 +558,17 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
 
 _REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}
 
-_DERIVED_FIELDS = ("imports", "functions", "classes", "tests", "configs", "deploymentFiles", "findings", "warnings")
+_DERIVED_FIELDS = (
+    "imports",
+    "functions",
+    "classes",
+    "apiEndpoints",
+    "tests",
+    "configs",
+    "deploymentFiles",
+    "findings",
+    "warnings",
+)
 
 
 def _finding_keys(findings: list[dict]) -> set[tuple]:

@@ -39,3 +39,28 @@ def test_javascript_route_and_function_extraction():
     assert {"file": "routes/users.js", "name": "createUser"} in analyzed["functions"]
     assert analyzed["apiEndpoints"][0]["method"] == "POST"
     assert analyzed["apiEndpoints"][0]["path"] == "/users"
+
+
+def test_python_fastapi_route_extraction():
+    project = {
+        "files": [
+            {
+                "path": "main.py",
+                "language": "python",
+                "content": "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef health():\n    return {'ok': True}\n",
+            }
+        ],
+        "imports": [],
+        "functions": [],
+        "classes": [],
+        "apiEndpoints": [],
+        "tests": [],
+        "configs": [],
+        "deploymentFiles": [],
+        "findings": [],
+        "warnings": [],
+    }
+    analyzed = analyze_project(project)
+    assert analyzed["apiEndpoints"][0]["method"] == "GET"
+    assert analyzed["apiEndpoints"][0]["path"] == "/health"
+    assert analyzed["apiEndpoints"][0]["handler"] == "health"

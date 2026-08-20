@@ -59,6 +59,17 @@ python -m knowledge.ingest
 
 Ingestion upserts by `rule_id + version`, creates metadata indexes, stores `content_hash`, `embedding_model`, and timestamps, and is safe to run repeatedly.
 
+## Project Embeddings
+
+`server/services/embeddings.py` uses `all-MiniLM-L6-v2` and returns 384-dimensional vectors. To backfill existing project documents after installing dependencies and confirming `MONGO_URL`:
+
+```bash
+cd server
+python generate_embeddings.py
+```
+
+The script hydrates GridFS-backed file content, skips projects that already have a 384-dimensional embedding, and stores the embedding on each `projects` document.
+
 ## Environment
 
 Copy `server/.env.example` and configure:
@@ -108,6 +119,12 @@ python -m pytest tests
 ```
 
 Current test files cover analyzer false positives/true positives, JS route extraction, ZIP path traversal, context expansion, scoring heuristics, knowledge schema validation, and retrieval fallback.
+
+In this execution environment, Python and `pip` were not available on PATH and the checked-in venv points at a missing interpreter, so backend tests could not be run here. The frontend production build was verified with:
+
+```bash
+npm.cmd --prefix client run build
+```
 
 ## Known Limitations
 
