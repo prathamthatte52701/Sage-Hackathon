@@ -98,8 +98,19 @@ async def test_paste_review_calls_knowledge_and_adds_quality_review(monkeypatch)
 
     assert calls
     assert all(call["language"] == "javascript" for call in calls)
-    assert all(call["top_k"] == 8 for call in calls)
-    assert any(call["exact_rule_id"] == "js_numeric_coercion_default" for call in calls)
+    # Phase 3 fix: a pre-review knowledge call (top_k=6, built from
+    # build_paste_knowledge_query) now runs BEFORE the AI review, in addition
+    # to the existing per-finding calls (top_k=8) that run after. Previously
+    # build_paste_knowledge_query was dead code with no return statement, so
+    # this call never happened at all -- RAG only ever decorated findings
+    # after the fact instead of informing the review itself.
+    pre_review_calls = [c for c in calls if c["query"].startswith("PASTE CODE REVIEW LANGUAGE:")]
+    finding_calls = [c for c in calls if c["query"].startswith("PASTE FINDING LANGUAGE:")]
+    assert len(pre_review_calls) == 1
+    assert pre_review_calls[0]["top_k"] == 6
+    assert finding_calls
+    assert all(call["top_k"] == 8 for call in finding_calls)
+    assert any(call["exact_rule_id"] == "js_numeric_coercion_default" for call in finding_calls)
     assert response.language_detection["mismatch"] is True
     deterministic_rules = {issue.issue for issue in response.deterministic_findings}
     assert deterministic_rules
@@ -173,6 +184,10 @@ export function fullName(user) {
                         "issue": "The function assumes user/name fields are present before calling trim.",
                         "fix_suggestion": "Validate user, firstName, and lastName before trimming.",
                         "confidence": 0.8,
+                        # Phase 6 grounding requires evidence that actually exists in the
+                        # source for an ai_quality finding to be accepted -- this fixture
+                        # previously had none, so the (correct) new grounding gate rejected it.
+                        "evidence": "user.firstName.trim()",
                     }
                 ],
                 "summary": "One evidence-backed quality concern found.",

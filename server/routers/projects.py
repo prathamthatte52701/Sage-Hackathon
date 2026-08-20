@@ -14,6 +14,7 @@ from db.mongo import get_project, save_project, update_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
+from services.project_review import run_ai_quality_review
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
 from services.patching import PatchError, apply_exact_replacement, make_unified_diff, safe_archive_path
@@ -374,6 +375,19 @@ async def analyze_project_by_id(project_id: str):
 
         analyzed = analyze_project(project)
 
+        # Phase 13: project analysis previously stopped at deterministic
+        # regex rules -- no AI quality review, no RAG, no grounding, making
+        # it meaningfully shallower than paste-code review. Run the same
+        # quality-review stage against this project's own source files,
+        # bounded/concurrency-limited so a large project doesn't trigger
+        # hundreds of uncontrolled Groq calls. A failure here degrades
+        # gracefully -- deterministic findings above are unaffected.
+        try:
+            coverage = await run_ai_quality_review(analyzed)
+            print(f"[projects] AI quality review coverage: {coverage}")
+        except Exception as exc:
+            print(f"[projects] AI quality review failed, continuing with deterministic findings only: {exc}")
+
         updates = {
             key: analyzed.get(key, [])
             for key in (
@@ -389,6 +403,7 @@ async def analyze_project_by_id(project_id: str):
                 "warnings",
             )
         }
+        updates["ai_review_coverage"] = analyzed.get("ai_review_coverage", {})
         await update_project(project_id, updates)
 
         return analyzed

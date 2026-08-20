@@ -40,11 +40,18 @@ def build_quality_review_prompt(code: str, language: str, knowledge: dict | None
 quality review of a pasted code snippet. You MUST respond with ONLY valid JSON.
 No markdown code blocks, no preamble, no explanation outside JSON.
 
-This is Layer 2 of review. Layer 1 deterministic detectors have already run.
-Do NOT repeat generic deterministic/security scanner output. Look only for
-correctness, data integrity, input validation, edge-case handling, reliability,
-maintainability, performance, and production-readiness concerns that are directly
-supported by the supplied snippet.
+This is Layer 2 of review. Layer 1 deterministic detectors have already run and
+caught known regex-shaped patterns. Do NOT re-report a finding those detectors
+already caught verbatim — but deterministic coverage is NOT complete, so do not
+skip a whole class of concern just because a scanner exists for part of it.
+Complement the deterministic layer; do not assume it already covers security.
+
+Consider, when relevant and supported by the snippet: correctness, security,
+authentication, authorization, API design, input validation, reliability, async
+failure handling, database/data integrity, concurrency/race conditions, caching,
+architecture, scalability, performance, external service reliability, privacy,
+prompt injection / AI boundary issues, resource bounds, maintainability, and
+production readiness.
 
 Retrieved engineering knowledge is GUIDANCE ONLY, not proof that this snippet has
 an issue. Do not report a problem merely because a standard exists. Every issue
@@ -54,6 +61,10 @@ expression, branch, function, or exact behavior visible in the snippet.
 If an aspect cannot be inferred from this pasted snippet, do not turn it into an
 issue. Use this phrase in the summary when relevant:
 "Insufficient evidence to assess this aspect from the supplied snippet."
+
+Returning zero issues is a valid, good outcome for clean code. Do not force a
+minimum number of findings, and do not manufacture a concern just to have
+something to report.
 
 This code is written in {language}. If the language label seems inconsistent with
 the snippet, still review the code evidence and mention the mismatch only if it
@@ -75,7 +86,7 @@ Schema (follow EXACTLY, do not add or remove fields):
     {{
       "line": <number>,
       "severity": "critical" | "medium" | "low",
-      "category": "security" | "logic" | "performance" | "style" | "best_practice",
+      "category": "security" | "logic" | "performance" | "style" | "best_practice" | "correctness" | "reliability" | "database" | "api_design" | "architecture" | "data_integrity" | "privacy" | "maintainability" | "production_readiness",
       "issue": "<short evidence-backed concern>",
       "fix_suggestion": "<concrete, actionable fix tied to the observed evidence>",
       "confidence": <number between 0 and 1>,

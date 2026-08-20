@@ -2,7 +2,7 @@ import re
 
 from pydantic import BaseModel
 
-from config import KNOWLEDGE_COLLECTION, KNOWLEDGE_VECTOR_INDEX
+from config import KNOWLEDGE_COLLECTION, KNOWLEDGE_MIN_SCORE, KNOWLEDGE_VECTOR_INDEX
 from db.mongo import get_db
 from knowledge.embeddings import EmbeddingConfigurationError, EmbeddingProviderError, embed_text
 from knowledge.seed_data import KNOWLEDGE_RECORDS
@@ -243,11 +243,15 @@ async def retrieve_knowledge(
             },
         ]
         docs = await db[KNOWLEDGE_COLLECTION].aggregate(pipeline).to_list(length=max(top_k, 8))
-        semantic = [_normalize_semantic_doc(doc) for doc in docs]
+        semantic_all = [_normalize_semantic_doc(doc) for doc in docs]
+        # Discard weak vector matches instead of accepting every top-k result --
+        # returning fewer, genuinely relevant records beats padding with noise.
+        semantic = [d for d in semantic_all if (d.get("score") or 0) >= KNOWLEDGE_MIN_SCORE]
+        discarded = len(semantic_all) - len(semantic)
         records = _merge_results(exact, semantic, top_k)
         method_ids = [r.get("knowledge_id") or r.get("rule_id") for r in records]
         print(
-            f"[knowledge] mode=hybrid exact={len(exact)} semantic={len(semantic)} "
+            f"[knowledge] mode=hybrid exact={len(exact)} semantic={len(semantic)} discarded_weak={discarded} "
             f"top={method_ids} scores={[round(r.get('score'), 3) for r in records if isinstance(r.get('score'), (int, float))]}"
         )
         return {

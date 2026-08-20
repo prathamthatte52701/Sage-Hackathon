@@ -42,12 +42,26 @@ SEVERITY_DEDUCTION = {
 }
 
 # analyzer.py's finding "category" values map onto these weight categories.
+# The AI quality review (services/project_review.py) can also produce
+# reliability/database/data_integrity/privacy/maintainability/correctness/
+# production_readiness findings (Issue schema, Phase 7) -- without an entry
+# here those real, grounded findings would be shown to the user but silently
+# not affect the score at all. Routed to the closest existing weighted
+# bucket rather than adding new WEIGHTS categories (smaller correction).
 FINDING_CATEGORY_MAP = {
     "security": "security",
     "best_practice": "code_quality",
     "api_design": "api_design",
     "architecture": "architecture",
     "performance": "performance",
+    "correctness": "code_quality",
+    "logic": "code_quality",
+    "reliability": "architecture",
+    "database": "code_quality",
+    "data_integrity": "code_quality",
+    "privacy": "security",
+    "maintainability": "code_quality",
+    "production_readiness": "production_readiness",
 }
 
 
@@ -89,8 +103,10 @@ def compute_score(project: dict) -> dict:
         score, deductions = _score_from_findings(findings, cat)
         categories[cat] = {"score": score, "weight": WEIGHTS[cat], "deductions": deductions}
 
-    architecture_score = 100
-    architecture_deductions = []
+    # architecture: file-structure heuristic below, PLUS any architecture-
+    # category findings (including "reliability", routed here by
+    # FINDING_CATEGORY_MAP) from AI quality review.
+    architecture_score, architecture_deductions = _score_from_findings(findings, "architecture")
     has_service_layer = any(
         "services" in f.get("path", "").replace("\\", "/").split("/") for f in files
     )
@@ -174,9 +190,10 @@ def compute_score(project: dict) -> dict:
         "deductions": testing_deductions,
     }
 
-    # production_readiness: heuristic — missing deployment config / dependency manifest
-    prod_score = 100
-    prod_deductions = []
+    # production_readiness: file-presence heuristic below, PLUS any
+    # production_readiness-category findings from AI quality review --
+    # combined so a finding-based signal isn't invisible to this category.
+    prod_score, prod_deductions = _score_from_findings(findings, "production_readiness")
     if not deployment_files:
         prod_score -= 20
         std = get_standard_by_id("PROD-01")
