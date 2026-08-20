@@ -4,6 +4,7 @@ pydantic
 python-dotenv
 httpx
 motor
+pymongo
 certifi
 python-multipart
 pytest
