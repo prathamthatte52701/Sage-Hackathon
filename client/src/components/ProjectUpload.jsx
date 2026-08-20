@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import ErrorBanner from "./ErrorBanner";
 import { uploadProject, importFromGithub } from "../api/client";
 
-const MAX_SIZE = 20 * 1024 * 1024;
+const MAX_SIZE = 300 * 1024 * 1024;
 
 // Drag-and-drop (or click-to-browse) ZIP uploader for project-level review,
 // plus a GitHub URL import that feeds the same onUploaded callback (both
@@ -46,7 +46,7 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
       return;
     }
     if (file.size > MAX_SIZE) {
-      setWarning("This file looks larger than 20MB - the server may reject it.");
+      setWarning("This file looks larger than 300MB - the server may reject it.");
     }
 
     setFileName(file.name);
@@ -146,7 +146,7 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
         <p className="text-sm text-zinc-300">
           {uploading ? "Uploading..." : "Drag & drop a .zip project here, or click to browse"}
         </p>
-        <p className="text-xs text-zinc-600">ZIP archives only, up to 20MB</p>
+        <p className="text-xs text-zinc-600">ZIP archives only, up to 300MB</p>
       </div>
 
       {uploading && (

@@ -8,7 +8,7 @@ Category = Literal["security", "logic", "performance", "style", "best_practice"]
 
 
 class ReviewRequest(BaseModel):
-    code: str = Field(..., min_length=1, max_length=3000)
+    code: str = Field(..., min_length=1, max_length=7000)
     language: Language
 
 
