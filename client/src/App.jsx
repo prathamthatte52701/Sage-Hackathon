@@ -9,6 +9,7 @@ import ProjectUpload from "./components/ProjectUpload";
 import ScanProgress from "./components/ScanProgress";
 import ProjectOverview from "./components/ProjectOverview";
 import ProjectFindingsList from "./components/ProjectFindingsList";
+import ProjectChat from "./components/ProjectChat";
 import useSessionId from "./hooks/useSessionId";
 import { reviewCode, analyzeProject, scoreProject } from "./api/client";
 
@@ -222,6 +223,7 @@ export default function App() {
             className="mt-8 flex flex-col gap-6"
           >
             <ProjectOverview project={analyzedProject} score={projectScore} />
+            <ProjectChat projectId={projectId} />
             <ProjectFindingsList
               findings={analyzedProject.findings}
               files={analyzedProject.files}

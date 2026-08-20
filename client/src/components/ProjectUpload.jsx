@@ -1,14 +1,13 @@
 import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import ErrorBanner from "./ErrorBanner";
-import { uploadProject } from "../api/client";
+import { uploadProject, importFromGithub } from "../api/client";
 
 const MAX_SIZE = 20 * 1024 * 1024;
 
-// Drag-and-drop (or click-to-browse) ZIP uploader for project-level review.
-// Validates client-side (extension + a soft size warning), then uploads with
-// a real progress bar driven by axios onUploadProgress. Hands the parsed
-// project payload back to the parent via onUploaded - no results rendering here.
+// Drag-and-drop (or click-to-browse) ZIP uploader for project-level review,
+// plus a GitHub URL import that feeds the same onUploaded callback (both
+// paths return the identical project representation shape from the backend).
 export default function ProjectUpload({ sessionId, onUploaded }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -17,6 +16,25 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
   const [error, setError] = useState(null);
   const [warning, setWarning] = useState(null);
   const [fileName, setFileName] = useState(null);
+
+  const [source, setSource] = useState("zip"); // "zip" | "github"
+  const [repoUrl, setRepoUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+
+  async function handleGithubImport(e) {
+    e.preventDefault();
+    if (!repoUrl.trim() || importing) return;
+    setError(null);
+    setImporting(true);
+    try {
+      const data = await importFromGithub(repoUrl.trim(), sessionId);
+      onUploaded?.(data);
+    } catch (err) {
+      setError(err.message || "Could not import this repository.");
+    } finally {
+      setImporting(false);
+    }
+  }
 
   async function handleFile(file) {
     if (!file) return;
@@ -57,6 +75,51 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="inline-flex w-fit rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
+        <button
+          type="button"
+          onClick={() => setSource("zip")}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            source === "zip" ? "bg-indigo-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          ZIP
+        </button>
+        <button
+          type="button"
+          onClick={() => setSource("github")}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            source === "github" ? "bg-indigo-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          GitHub
+        </button>
+      </div>
+
+      {source === "github" ? (
+        <form onSubmit={handleGithubImport} className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+              disabled={importing}
+              placeholder="owner/repo or https://github.com/owner/repo"
+              className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/50 focus:outline-none disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={!repoUrl.trim() || importing}
+              className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {importing ? "Importing..." : "Import"}
+            </button>
+          </div>
+          <p className="text-xs text-zinc-600">Public repositories only — no login required.</p>
+          <ErrorBanner message={error} onDismiss={() => setError(null)} />
+        </form>
+      ) : (
+      <>
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -109,6 +172,8 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
       )}
 
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
+      </>
+      )}
     </div>
   );
 }

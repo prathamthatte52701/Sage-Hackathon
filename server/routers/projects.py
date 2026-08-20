@@ -6,14 +6,16 @@ import zipfile
 from io import BytesIO
 from pathlib import PurePosixPath
 
+import httpx
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from db.mongo import get_project, save_project, update_project
-from models.schemas import FindingReasonRequest, FindingReasoning, FindingTransform
+from models.schemas import ChatRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.groq_client import GroqUnavailableError, call_groq
-from services.prompt_builder import build_finding_reasoning_prompt, build_transform_prompt
+from services.prompt_builder import build_chat_prompt, build_finding_reasoning_prompt, build_transform_prompt
+from services.retrieval import retrieve_relevant_files
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
 
@@ -76,105 +78,136 @@ def _derive_project_name(filename: str | None) -> str:
     return base or "unnamed-project"
 
 
+def _strip_common_top_level(names: list[str]) -> str:
+    """GitHub's zipball wraps everything in a single '{repo}-{sha}/' dir. Detect
+    and return that prefix (empty string if there isn't a single common one) so
+    callers can present normal-looking paths instead of a repo-specific wrapper.
+    """
+    tops = {name.split("/", 1)[0] for name in names if "/" in name}
+    if len(tops) == 1:
+        return next(iter(tops)) + "/"
+    return ""
+
+
+def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level: bool = False):
+    """Shared by ZIP upload and GitHub import: one normalized project
+    representation, one analysis pipeline downstream — never two.
+
+    Returns (project_representation, upload_warnings, error_response). Exactly
+    one of (project_representation, error_response) is None.
+    """
+    if len(raw_bytes) > MAX_ZIP_SIZE:
+        return None, None, {"error": "ZIP file exceeds the 20MB limit"}
+
+    buffer = BytesIO(raw_bytes)
+    if not zipfile.is_zipfile(buffer):
+        return None, None, {"error": "Uploaded file is not a valid ZIP archive"}
+
+    with zipfile.ZipFile(buffer) as zf:
+        names = zf.namelist()
+
+        if len(names) > MAX_FILE_COUNT:
+            return None, None, {"error": "ZIP contains too many files (max 500)"}
+
+        if any(_is_unsafe_path(name) for name in names):
+            return None, None, {"error": "ZIP contains unsafe file paths"}
+
+        prefix = _strip_common_top_level(names) if strip_top_level else ""
+
+        files_index = []
+        ignored_counts: dict[str, int] = {}
+
+        for name in names:
+            if name.endswith("/"):
+                continue  # directory entry
+
+            display_name = name[len(prefix):] if prefix and name.startswith(prefix) else name
+            if not display_name:
+                continue
+
+            if _is_ignored(display_name):
+                top_ignored = next(
+                    part for part in PurePosixPath(display_name.replace("\\", "/")).parts if part in IGNORE_DIRS
+                )
+                ignored_counts[top_ignored] = ignored_counts.get(top_ignored, 0) + 1
+                continue
+
+            info = zf.getinfo(name)
+            language = _guess_language(display_name)
+
+            content = None
+            if language in SOURCE_LANGUAGES:
+                text = zf.read(name).decode("utf-8", errors="replace")
+                if len(text) < MAX_CONTENT_SIZE:
+                    content = text
+
+            files_index.append(
+                {"path": display_name, "language": language, "size": info.file_size, "content": content}
+            )
+
+    warnings = [f"skipped {count} file(s) under {dirname}/" for dirname, count in ignored_counts.items()]
+
+    languages = sorted({f["language"] for f in files_index if f["language"] != "other"})
+
+    frameworks = set()
+    for f in files_index:
+        p = f["path"]
+        if p.endswith("package.json"):
+            frameworks.add("node")
+        if p.endswith("requirements.txt") or p.endswith("pyproject.toml"):
+            frameworks.add("python")
+        if p.endswith("pom.xml") or p.endswith("build.gradle"):
+            frameworks.add("java")
+
+    if not files_index:
+        project_type = "unknown"
+    elif len(languages) == 1:
+        project_type = languages[0]
+    else:
+        project_type = "multi-language"
+
+    directories = set()
+    for f in files_index:
+        parent = PurePosixPath(f["path"]).parent
+        if str(parent) != ".":
+            parts = parent.parts
+            for i in range(1, len(parts) + 1):
+                directories.add("/".join(parts[:i]))
+
+    project_representation = {
+        "project": {
+            "name": project_name,
+            "languages": languages,
+            "frameworks": sorted(frameworks),
+            "projectType": project_type,
+        },
+        "files": files_index,
+        "directories": sorted(directories),
+        "dependencies": [],
+        "imports": [],
+        "functions": [],
+        "classes": [],
+        "apiEndpoints": [],
+        "tests": [],
+        "configs": [],
+        "deploymentFiles": [],
+        "findings": [],
+        "warnings": [],
+    }
+
+    return project_representation, warnings, None
+
+
 @router.post("/projects/upload")
 async def upload_project(file: UploadFile = File(...), session_id: str = Form(...)):
     try:
         raw_bytes = await file.read()
 
-        if len(raw_bytes) > MAX_ZIP_SIZE:
-            return JSONResponse(status_code=400, content={"error": "ZIP file exceeds the 20MB limit"})
-
-        buffer = BytesIO(raw_bytes)
-        if not zipfile.is_zipfile(buffer):
-            return JSONResponse(status_code=400, content={"error": "Uploaded file is not a valid ZIP archive"})
-
-        with zipfile.ZipFile(buffer) as zf:
-            names = zf.namelist()
-
-            if len(names) > MAX_FILE_COUNT:
-                return JSONResponse(
-                    status_code=400, content={"error": "ZIP contains too many files (max 500)"}
-                )
-
-            if any(_is_unsafe_path(name) for name in names):
-                return JSONResponse(status_code=400, content={"error": "ZIP contains unsafe file paths"})
-
-            files_index = []
-            ignored_counts: dict[str, int] = {}
-
-            for name in names:
-                if name.endswith("/"):
-                    continue  # directory entry
-
-                if _is_ignored(name):
-                    top_ignored = next(
-                        part for part in PurePosixPath(name.replace("\\", "/")).parts if part in IGNORE_DIRS
-                    )
-                    ignored_counts[top_ignored] = ignored_counts.get(top_ignored, 0) + 1
-                    continue
-
-                info = zf.getinfo(name)
-                language = _guess_language(name)
-
-                content = None
-                if language in SOURCE_LANGUAGES:
-                    text = zf.read(name).decode("utf-8", errors="replace")
-                    if len(text) < MAX_CONTENT_SIZE:
-                        content = text
-
-                files_index.append(
-                    {"path": name, "language": language, "size": info.file_size, "content": content}
-                )
-
-        warnings = [f"skipped {count} file(s) under {dirname}/" for dirname, count in ignored_counts.items()]
-
-        languages = sorted({f["language"] for f in files_index if f["language"] != "other"})
-
-        frameworks = set()
-        for f in files_index:
-            p = f["path"]
-            if p.endswith("package.json"):
-                frameworks.add("node")
-            if p.endswith("requirements.txt") or p.endswith("pyproject.toml"):
-                frameworks.add("python")
-            if p.endswith("pom.xml") or p.endswith("build.gradle"):
-                frameworks.add("java")
-
-        if not files_index:
-            project_type = "unknown"
-        elif len(languages) == 1:
-            project_type = languages[0]
-        else:
-            project_type = "multi-language"
-
-        directories = set()
-        for f in files_index:
-            parent = PurePosixPath(f["path"]).parent
-            if str(parent) != ".":
-                parts = parent.parts
-                for i in range(1, len(parts) + 1):
-                    directories.add("/".join(parts[:i]))
-
-        project_representation = {
-            "project": {
-                "name": _derive_project_name(file.filename),
-                "languages": languages,
-                "frameworks": sorted(frameworks),
-                "projectType": project_type,
-            },
-            "files": files_index,
-            "directories": sorted(directories),
-            "dependencies": [],
-            "imports": [],
-            "functions": [],
-            "classes": [],
-            "apiEndpoints": [],
-            "tests": [],
-            "configs": [],
-            "deploymentFiles": [],
-            "findings": [],
-            "warnings": [],
-        }
+        project_representation, warnings, error = _project_from_zip_bytes(
+            raw_bytes, _derive_project_name(file.filename)
+        )
+        if error is not None:
+            return JSONResponse(status_code=400, content=error)
 
         project_id = await save_project(project_representation, session_id)
 
@@ -182,6 +215,67 @@ async def upload_project(file: UploadFile = File(...), session_id: str = Form(..
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_ERROR_RESPONSE)
+
+
+_GITHUB_URL_RE = re.compile(
+    r"^(?:https?://github\.com/)?([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/"
+    r"([A-Za-z0-9._-]+?)(?:\.git)?/?$"
+)
+
+_GITHUB_ERROR_RESPONSE = {"error": "Could not import this GitHub repository, please try again"}
+
+
+def _parse_github_repo(repo_url: str):
+    """Accepts 'owner/repo' or a github.com URL; rejects anything else (no
+    private-repo/OAuth complexity in scope, so only this narrow shape matters).
+    """
+    match = _GITHUB_URL_RE.match(repo_url.strip())
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+@router.post("/projects/github")
+async def import_from_github(payload: GithubImportRequest):
+    try:
+        parsed = _parse_github_repo(payload.repo_url)
+        if parsed is None:
+            return JSONResponse(
+                status_code=400, content={"error": "Enter a GitHub repo as 'owner/repo' or a github.com URL"}
+            )
+        owner, repo = parsed
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+                resp = await client.get(f"https://api.github.com/repos/{owner}/{repo}/zipball")
+        except httpx.RequestError:
+            return JSONResponse(status_code=400, content={"error": "Could not reach GitHub, please try again"})
+
+        if resp.status_code == 404:
+            return JSONResponse(
+                status_code=400, content={"error": "Repository not found — check it's public and the name is correct"}
+            )
+        if resp.status_code == 403:
+            return JSONResponse(
+                status_code=400, content={"error": "GitHub rate limit hit — try again in a minute, or use ZIP upload"}
+            )
+        if resp.status_code != 200:
+            return JSONResponse(status_code=400, content={"error": "GitHub declined this request, please try again"})
+
+        # Same normalized representation as ZIP upload — no separate GitHub
+        # analysis path. strip_top_level peels off zipball's '{repo}-{sha}/' wrapper.
+        project_representation, warnings, error = _project_from_zip_bytes(
+            resp.content, repo, strip_top_level=True
+        )
+        if error is not None:
+            return JSONResponse(status_code=400, content=error)
+
+        project_id = await save_project(project_representation, payload.session_id)
+
+        return {"project_id": project_id, "project": project_representation, "warnings": warnings}
+    except Exception as exc:
+        print(f"[projects] unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_GITHUB_ERROR_RESPONSE)
 
 
 @router.get("/projects/{project_id}")
@@ -538,3 +632,74 @@ async def reanalyze_project(project_id: str, payload: FindingReasonRequest):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_REANALYZE_ERROR_RESPONSE)
+
+
+_CHAT_ERROR_RESPONSE = {"error": "Could not answer this question, please try again"}
+
+
+def _build_chat_answer(raw: dict, retrieved_paths: set[str]) -> dict:
+    """Coerce/drop bad-typed fields; clamp cited_files to files actually retrieved
+    so the AI can't cite a file it was never shown."""
+    data = dict(raw) if isinstance(raw, dict) else {}
+
+    answer = data.get("answer")
+    if not isinstance(answer, str) or not answer:
+        answer = "No answer was returned."
+
+    cited = data.get("cited_files")
+    if not isinstance(cited, list):
+        cited = []
+    cited_files = [c for c in cited if isinstance(c, str) and c in retrieved_paths]
+
+    return {"answer": answer, "cited_files": cited_files}
+
+
+@router.post("/projects/{project_id}/chat")
+async def chat_about_project(project_id: str, payload: ChatRequest):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        retrieved = retrieve_relevant_files(project, payload.question)
+
+        if not retrieved:
+            return {
+                "answer": "This codebase doesn't appear to contain anything matching that question — "
+                "no files matched the terms used.",
+                "cited_files": [],
+                "retrieved_files": [],
+            }
+
+        retrieved_paths = {f["path"] for f in retrieved}
+        prompt = build_chat_prompt(payload.question, retrieved)
+        messages = [{"role": "user", "content": prompt}]
+
+        result = {
+            "answer": "AI answer unavailable — the model service could not be reached.",
+            "cited_files": [],
+        }
+        try:
+            raw = await call_groq(messages)
+            parsed = _extract_json(raw)
+
+            if parsed is None:
+                retry_messages = [
+                    {
+                        "role": "user",
+                        "content": prompt
+                        + "\n\nYour previous response was not valid JSON. Respond with ONLY the JSON object, nothing else.",
+                    }
+                ]
+                raw = await call_groq(retry_messages)
+                parsed = _extract_json(raw)
+
+            if parsed is not None:
+                result = _build_chat_answer(parsed, retrieved_paths)
+        except GroqUnavailableError:
+            pass
+
+        return {**result, "retrieved_files": [f["path"] for f in retrieved]}
+    except Exception as exc:
+        print(f"[projects] unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_CHAT_ERROR_RESPONSE)

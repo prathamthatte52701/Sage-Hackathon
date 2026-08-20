@@ -64,6 +64,19 @@ export async function uploadProject(file, sessionId, onUploadProgress) {
   }
 }
 
+export async function importFromGithub(repoUrl, sessionId) {
+  try {
+    const res = await api.post(
+      "/api/projects/github",
+      { repo_url: repoUrl, session_id: sessionId },
+      { timeout: 60000 }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not import this repository. Please try again."));
+  }
+}
+
 export async function analyzeProject(projectId) {
   try {
     const res = await api.post(`/api/projects/${projectId}/analyze`, null, { timeout: 60000 });
@@ -90,6 +103,15 @@ export async function transformFinding(projectId, findingIndex) {
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not generate a fix. Please try again."));
+  }
+}
+
+export async function chatAboutProject(projectId, question) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/chat`, { question }, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not answer that question. Please try again."));
   }
 }
 

@@ -48,6 +48,15 @@ class FindingReasonRequest(BaseModel):
     finding_index: int
 
 
+class GithubImportRequest(BaseModel):
+    repo_url: str = Field(..., min_length=1, max_length=300)
+    session_id: str
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=500)
+
+
 class FindingTransform(BaseModel):
     original_snippet: str = ""
     proposed_fix: str = ""
