@@ -11,7 +11,9 @@ from fastapi.responses import JSONResponse
 
 from db.mongo import get_project, save_project, update_project
 from models.schemas import ChatRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
+from knowledge.retrieval import retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
+from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
 from services.retrieval import retrieve_relevant_files
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
@@ -367,12 +369,9 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
 
         finding = findings[payload.finding_index]
 
-        code_snippet = _extract_code_snippet(project.get("files", []), finding.get("file", ""), finding.get("line", 0))
-        if not code_snippet:
-            code_snippet = finding.get("evidence", "")
-
-        file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
-        language = (file_entry or {}).get("language") or "unknown"
+        context = build_finding_context(project, finding)
+        code_snippet = context["snippet"] or finding.get("evidence", "")
+        language = context["language"]
 
         # Prefer the rule's directly-mapped standard; the citation is attached
         # server-side (not trusted from the LLM output) so it's always accurate.
@@ -383,10 +382,32 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
             if weight_category:
                 matched_standards = get_standards_for(weight_category, language)[:2]
 
-        result = await confirm_and_explain_finding(finding, code_snippet, language, matched_standards)
+        weight_category = FINDING_CATEGORY_MAP.get(finding.get("category"))
+        knowledge = await retrieve_knowledge(
+            f"{finding.get('message', '')}\n{finding.get('evidence', '')}",
+            language=language,
+            frameworks=project.get("project", {}).get("frameworks", []),
+            category=weight_category,
+        )
+
+        result = await confirm_and_explain_finding(
+            finding,
+            code_snippet,
+            language,
+            matched_standards,
+            related_files=context["related_files"],
+            knowledge=knowledge,
+        )
 
         try:
             findings[payload.finding_index]["reasoning"] = result.model_dump()
+            findings[payload.finding_index]["knowledge_retrieval"] = {
+                "mode": knowledge.get("mode"),
+                "available": knowledge.get("available"),
+                "record_count": len(knowledge.get("records", [])),
+                "rule_ids": [r.get("rule_id") for r in knowledge.get("records", [])],
+            }
+            findings[payload.finding_index]["related_files"] = [f["path"] for f in context["related_files"]]
             await update_project(project_id, {"findings": findings})
         except Exception as exc:
             print(f"[projects] failed to persist finding reasoning: {exc}")
@@ -413,12 +434,9 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
 
         finding = findings[payload.finding_index]
 
-        code_snippet = _extract_code_snippet(project.get("files", []), finding.get("file", ""), finding.get("line", 0))
-        if not code_snippet:
-            code_snippet = finding.get("evidence", "")
-
-        file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
-        language = (file_entry or {}).get("language") or "unknown"
+        context = build_finding_context(project, finding)
+        code_snippet = context["snippet"] or finding.get("evidence", "")
+        language = context["language"]
 
         standard_id = RULE_TO_STANDARD.get(finding.get("rule"))
         matched_standards = [get_standard_by_id(standard_id)] if standard_id else []
@@ -427,7 +445,22 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
             if weight_category:
                 matched_standards = get_standards_for(weight_category, language)[:2]
 
-        result = await generate_fix(finding, code_snippet, language, matched_standards)
+        weight_category = FINDING_CATEGORY_MAP.get(finding.get("category"))
+        knowledge = await retrieve_knowledge(
+            f"{finding.get('message', '')}\n{finding.get('evidence', '')}",
+            language=language,
+            frameworks=project.get("project", {}).get("frameworks", []),
+            category=weight_category,
+        )
+
+        result = await generate_fix(
+            finding,
+            code_snippet,
+            language,
+            matched_standards,
+            related_files=context["related_files"],
+            knowledge=knowledge,
+        )
 
         try:
             findings[payload.finding_index]["transform"] = result.model_dump()

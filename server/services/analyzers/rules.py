@@ -26,6 +26,7 @@ _RE_PICKLE = re.compile(r"pickle\.loads?\(")
 _RE_YAML_LOAD = re.compile(r"yaml\.load\((?!.*Loader=yaml\.SafeLoader)")
 _RE_UNSAFE_DESERIALIZE_JS = re.compile(r"node-serialize|\bunserialize\s*\(")
 _RE_TODO = re.compile(r"(?i)#\s*(TODO|FIXME)|//\s*(TODO|FIXME)")
+_NON_SECRET_CONTEXT = re.compile(r"(?i)(example|sample|dummy|fake|placeholder|documentation|test fixture)")
 
 # language-gated pattern tables for the 3 checks that only covered Python
 # before this — Java/C++ intentionally absent, out of scope.
@@ -66,19 +67,46 @@ def _findings_for_pattern(content: str, path: str, pattern: re.Pattern, rule: st
                 "category": category,
                 "message": message,
                 "evidence": _evidence(match),
+                "confidence": "medium",
+                "evidence_type": "deterministic_pattern",
             }
         )
     return findings
+
+
+def _is_comment_or_non_secret_context(content: str, match: re.Match) -> bool:
+    line_start = content.rfind("\n", 0, match.start()) + 1
+    line_end = content.find("\n", match.end())
+    if line_end == -1:
+        line_end = len(content)
+    line = content[line_start:line_end]
+    stripped = line.strip()
+    if stripped.startswith(("#", "//", "/*", "*")):
+        return True
+    nearby = content[max(0, line_start - 180): min(len(content), line_end + 180)]
+    return bool(_NON_SECRET_CONTEXT.search(nearby))
 
 
 def run_rules(path: str, language: str, content: str) -> list[dict]:
     findings = []
 
     # 1. hardcoded secret/credential — all languages
-    findings += _findings_for_pattern(
-        content, path, _RE_SECRET, "hardcoded_secret", "critical", "security",
-        "Hardcoded credential-like value found",
-    )
+    for match in _RE_SECRET.finditer(content):
+        if _is_comment_or_non_secret_context(content, match):
+            continue
+        findings.append(
+            {
+                "file": path,
+                "line": _line_of(content, match.start()),
+                "rule": "hardcoded_secret",
+                "severity": "critical",
+                "category": "security",
+                "message": "Hardcoded credential-like value found",
+                "evidence": _evidence(match),
+                "confidence": "medium",
+                "evidence_type": "deterministic_pattern",
+            }
+        )
 
     # 2. eval/exec — language-specific pattern
     if language == "python":

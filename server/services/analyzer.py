@@ -103,12 +103,24 @@ def analyze_project(project: dict) -> dict:
                 imports = analyzer.extract_imports(content)
                 functions = analyzer.extract_functions(content)
                 classes = analyzer.extract_classes(content)
+                routes = analyzer.extract_routes(content)
                 project["imports"].extend({"file": path, "module": m} for m in imports)
                 project["functions"].extend({"file": path, "name": n} for n in functions)
                 project["classes"].extend({"file": path, "name": n} for n in classes)
+                project["apiEndpoints"].extend({"file": path, **route} for route in routes)
         # languages with no registered analyzer (java, cpp, other): no extraction,
         # deterministic pattern rules below still run against their content.
 
         project["findings"].extend(run_rules(path, language, content))
 
+    # Deduplicate equivalent static findings across rules/analyzers.
+    seen = set()
+    deduped = []
+    for finding in project.get("findings", []):
+        key = (finding.get("file"), finding.get("line"), finding.get("rule"), finding.get("evidence"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(finding)
+    project["findings"] = deduped
     return project

@@ -21,6 +21,9 @@ class LanguageAnalyzer(ABC):
     @abstractmethod
     def extract_classes(self, content: str) -> list[str]: ...
 
+    def extract_routes(self, content: str) -> list[dict]:
+        return []
+
     def parse_error_safe(self, content: str) -> str | None:
         """Return an error message if the file couldn't be parsed, else None.
         Never raise - the caller must be able to skip this file and continue.
