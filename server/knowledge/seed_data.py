@@ -1023,3 +1023,78 @@ KNOWLEDGE_RECORDS = [
         content="Requires evidence of an actually large dependency/bundle, not a generic recommendation for every React app.",
     ),
 ]
+
+
+def _detector_record(
+    rule_id: str,
+    title: str,
+    category: str,
+    subcategory: str,
+    languages: list[str],
+    severity: str,
+    bad_pattern: str,
+    good_pattern: str,
+    detection_hint: str,
+    false_positive_guard: str,
+    recommendation: str,
+):
+    return KnowledgeRecord(
+        rule_id=rule_id,
+        title=title,
+        category=category,
+        subcategory=subcategory,
+        language=languages,
+        framework=["any"],
+        severity=severity,
+        description=title,
+        why_it_matters=f"{title} can create production security, correctness, reliability, or operability risk when the detector evidence is real.",
+        bad_patterns=[bad_pattern],
+        good_patterns=[good_pattern],
+        exceptions=[false_positive_guard],
+        detection_hints=[detection_hint],
+        fix_strategy=recommendation,
+        production_impact="Use the detector evidence as the source of truth; this knowledge record explains why the observed pattern matters and how to fix it safely.",
+        standards=[{"name": "Sage", "reference": f"detector:{rule_id}"}],
+        source_urls=[],
+        content=(
+            f"Principle: {title}. Warning signal: {detection_hint}. "
+            f"Failure signal: {bad_pattern}. Healthy signal: {good_pattern}. "
+            f"False-positive guard: {false_positive_guard}. Recommendation: {recommendation}"
+        ),
+    )
+
+
+KNOWLEDGE_RECORDS.extend(
+    [
+        _detector_record("os_system_call", "Avoid direct OS command execution APIs", "security", "command-injection", ["python"], "high", "os.system(request value)", "Use subprocess with argv list, shell=False, and allowlisted arguments.", "os.system/os.popen/commands.getoutput call", "Static admin scripts with fixed literal commands may be acceptable after review.", "Replace shell-string execution with fixed executable arguments and validation."),
+        _detector_record("spawn_shell_true", "Avoid Node spawn with shell enabled", "security", "command-injection", ["javascript", "typescript"], "high", "child_process.spawn(cmd, args, { shell: true })", "Use spawn with shell:false and fixed executable/argument boundaries.", "spawn/spawnSync configured with shell:true", "Build scripts using only fixed literals are lower risk but still deserve review.", "Disable shell mode and validate every user-influenced argument."),
+        _detector_record("nosql_untrusted_filter", "Do not pass request objects directly to NoSQL filters", "security", "nosql-injection", ["javascript", "typescript", "python"], "high", "User.find(req.body)", "Build an allowlisted filter from validated fields.", "find/update/delete call receives req.body/request.json directly", "Only fixed server-constructed filter objects are acceptable.", "Validate and allowlist filter fields before constructing the query."),
+        _detector_record("unsafe_archive_extract", "Contain archive extraction paths", "security", "archive-extraction", ["javascript", "typescript", "python"], "high", "ZipFile(...).extractall(dest)", "Validate every member path stays under the intended extraction directory.", "extractall/extractAllTo without visible containment checks", "Trusted developer-only archives in one-off scripts are lower risk.", "Normalize member paths and reject traversal/absolute paths before extraction."),
+        _detector_record("ssrf_untrusted_url", "Validate untrusted outbound request URLs", "security", "ssrf", ["javascript", "typescript", "python"], "high", "requests.get(request.args['url'])", "Allowlist hosts/schemes and block private/internal IP ranges.", "HTTP client URL comes directly from request input", "Fixed developer-controlled URLs are not SSRF evidence.", "Validate URL scheme, host, resolved IP range, and redirect behavior before making the request."),
+        _detector_record("xss_unsafe_html_sink", "Avoid assigning untrusted data to HTML sinks", "security", "xss", ["javascript", "typescript"], "high", "element.innerHTML = req.body.html", "Render text or sanitize HTML with an allowlist sanitizer.", "innerHTML/outerHTML assignment from request/location/props/state", "Static developer-authored HTML is not user-controlled.", "Replace raw HTML assignment with text rendering or sanitize with DOMPurify."),
+        _detector_record("react_dangerous_html", "Treat React dangerouslySetInnerHTML as a security boundary", "security", "frontend-xss", ["javascript", "typescript"], "medium", "dangerouslySetInnerHTML={{__html: html}}", "Only pass sanitized, trusted HTML into dangerouslySetInnerHTML.", "dangerouslySetInnerHTML usage", "Static CMS/admin-controlled HTML may be acceptable if sanitized upstream.", "Require a sanitization step or render as normal JSX/text."),
+        _detector_record("permissive_cors", "Avoid wildcard CORS on sensitive APIs", "security", "cors", ["javascript", "typescript", "python"], "medium", "cors({ origin: '*' })", "Restrict origins to the deployed frontend domains.", "CORS configured with wildcard origin", "Public read-only APIs may intentionally allow wildcard CORS.", "Set an explicit allowlist and review credential/cookie behavior."),
+        _detector_record("debug_config_enabled", "Disable debug/development configuration in production code", "production_readiness", "configuration", ["javascript", "typescript", "python"], "medium", "DEBUG=True or debug:true", "Use environment-specific config that defaults safely in production.", "debug/development flag enabled in source", "Local-only examples/tests may intentionally enable debug.", "Move debug mode behind explicit local environment configuration."),
+        _detector_record("weak_crypto_hash", "Avoid weak cryptographic hashes in security contexts", "security", "cryptography", ["javascript", "typescript", "python"], "medium", "md5(password) or sha1(token)", "Use modern algorithms such as SHA-256/HMAC for integrity or bcrypt/argon2 for passwords.", "MD5/SHA1 near password/token/secret/auth code", "Non-security checksums are not credential hashing evidence.", "Choose a fit-for-purpose modern primitive and document the security goal."),
+        _detector_record("insecure_random_secret", "Use cryptographic randomness for secrets", "security", "cryptography", ["javascript", "typescript", "python"], "medium", "Math.random() for reset token", "Use crypto.randomBytes/secrets.token_urlsafe.", "Math.random/random module near token/session/secret code", "UI randomness or sampling not used for security is not a finding.", "Use the platform cryptographic RNG for tokens, nonces, passwords, and reset codes."),
+        _detector_record("sensitive_logging", "Do not write secrets or credentials to logs", "security", "logging", ["javascript", "typescript", "python"], "medium", "logger.info(password)", "Log stable identifiers and redact sensitive fields.", "password/token/secret/api key passed to logger/console", "Logging a constant field name without the sensitive value may be acceptable.", "Redact or omit sensitive values before logging."),
+        _detector_record("blocking_call_in_async", "Avoid blocking operations inside async handlers", "performance", "async", ["javascript", "typescript", "python"], "medium", "time.sleep inside async def", "Use async equivalents or offload CPU/blocking work to a worker/thread.", "time.sleep/execSync/readFileSync inside async code", "Short startup scripts outside request paths are lower risk.", "Replace blocking calls with async APIs or explicit worker/thread offload."),
+        _detector_record("unsafe_tempfile", "Use safe temporary-file APIs", "security", "filesystem", ["javascript", "typescript", "python"], "medium", "tempfile.mktemp()", "Use NamedTemporaryFile/mkstemp or a safe temp library that opens atomically.", "predictable temp filename generation", "Generated names that are immediately opened atomically are safer.", "Create temporary files atomically with restrictive permissions."),
+        _detector_record("unsafe_redirect", "Validate user-controlled redirect targets", "security", "redirect", ["javascript", "typescript", "python"], "medium", "res.redirect(req.query.next)", "Allow only relative paths or allowlisted hosts.", "redirect target comes directly from request input", "Fixed server routes are not open redirect evidence.", "Normalize and allowlist redirect destinations."),
+        _detector_record("frontend_token_storage", "Avoid persistent browser storage for auth tokens", "security", "frontend-auth", ["javascript", "typescript"], "medium", "localStorage.setItem('token', token)", "Prefer HttpOnly cookies or in-memory token state.", "localStorage/sessionStorage stores token-like key", "Public non-sensitive keys are not auth tokens.", "Move sensitive auth tokens out of script-readable persistent storage."),
+        _detector_record("plaintext_password_handling", "Hash or verify passwords at the boundary", "security", "password-storage", ["javascript", "typescript", "python"], "high", "password = req.body.password", "Immediately verify against a slow hash or hash before storage.", "password read from request input without visible hashing/verification context", "Password comparison inside a framework auth helper may already be safe.", "Use framework password hashing/verification and avoid storing plaintext."),
+        _detector_record("js_numeric_coercion_default", "Validate numeric conversion instead of defaulting invalid values", "correctness", "input-coercion", ["javascript", "typescript"], "medium", "Number(value) || 0", "Check Number.isNaN and reject/report invalid values explicitly.", "Number(...) || 0", "A deliberate UI display fallback may be acceptable if not persisted or used for business logic.", "Separate parsing from fallback behavior and handle invalid input explicitly."),
+        _detector_record("js_date_slice_without_validation", "Validate date-like values before slicing", "correctness", "date-validation", ["javascript", "typescript"], "low", "tx.date.slice(0, 10)", "Parse and validate date strings before formatting.", ".date/.createdAt/.updatedAt .slice call", "A strongly typed Date/string invariant proven nearby lowers risk.", "Check type and date validity before slicing or formatting."),
+        _detector_record("js_zero_baseline_fallback", "Handle zero baselines explicitly", "correctness", "numeric-boundary", ["javascript", "typescript"], "low", "if (!previous) return 0", "Distinguish null/undefined from numeric zero.", "falsy guard on previous/baseline before percentage calculation", "If zero truly means absent by domain contract, document that invariant.", "Use explicit nullish checks and define zero-baseline semantics."),
+        _detector_record("js_unknown_type_default", "Reject unknown enum/type values explicitly", "correctness", "enum-validation", ["javascript", "typescript"], "low", "if (tx.type === 'credit') ... else ...", "Use switch/explicit branches and reject unknown values.", "single known type branch followed by catch-all else", "A preceding schema validation can make this safe.", "Validate enum values at the boundary and avoid silent default classification."),
+        _detector_record("TEST-GEN-002", "Add regression tests for fixed bugs", "testing", "regression", ["any"], "medium", "bug fix with no regression test", "Add a focused test that fails before the fix and passes after.", "changed bug-prone behavior with no nearby test", "Pure copy or text-only changes may not need regression tests.", "Capture the reported failure mode as a durable regression test."),
+        _detector_record("TEST-GEN-003", "Keep integration tests around external boundaries", "testing", "integration", ["any"], "medium", "API/database boundary changes with unit tests only", "Add integration coverage for route, DB, queue, or filesystem boundary behavior.", "boundary behavior changed without end-to-end/integration assertion", "Small pure functions may only need unit tests.", "Test the real boundary contract with realistic inputs and failure cases."),
+        _detector_record("OBS-GEN-003", "Emit metrics for critical production flows", "reliability", "metrics", ["any"], "medium", "no metric for queue lag/error rate", "Track latency, error rate, saturation, and business-critical counters.", "critical flow has logging only and no metric/alert signal", "Tiny internal scripts may not need metrics.", "Add metrics and alerts for failure modes operators must see."),
+        _detector_record("OBS-GEN-004", "Capture exceptions in error tracking", "reliability", "error-tracking", ["any"], "medium", "exceptions only printed to stdout", "Report unexpected exceptions to an error tracker with redaction.", "catch-all logs with no alert/error reporting path", "Local CLI tools may rely on process exit instead.", "Route unexpected errors to an error tracking/alerting system."),
+        _detector_record("REL-GEN-004", "Use circuit breakers or bulkheads for unreliable dependencies", "reliability", "failure-isolation", ["any"], "medium", "unbounded calls to a flaky dependency", "Set timeouts, retries, and circuit breaker/bulkhead isolation.", "critical path calls downstream dependency with no isolation", "Low-volume admin scripts may be acceptable.", "Bound and isolate dependency failure so it does not cascade."),
+        _detector_record("REL-GEN-005", "Clean up resources deterministically", "reliability", "resource-cleanup", ["any"], "medium", "open file/socket/session never closed", "Use context managers/finally/dispose hooks.", "resource acquired without visible close/dispose/finally", "Long-lived process-wide pools may intentionally stay open.", "Tie resource lifetime to a context manager or explicit cleanup path."),
+        _detector_record("API-GEN-008", "Publish and validate API contracts", "api_design", "documentation", ["any"], "low", "route behavior changed without OpenAPI/schema docs", "Keep OpenAPI/JSON Schema/docs aligned with handlers.", "API route lacks request/response contract documentation", "Private prototypes may defer formal docs briefly.", "Document request, response, errors, and auth requirements."),
+        _detector_record("DB-GEN-006", "Back up and restore production data", "database", "backup-restore", ["any"], "high", "no backup/restore plan for persistent data", "Automate backups and regularly test restores.", "persistent database introduced without backup evidence", "Ephemeral cache-only stores may not need backups.", "Define backup retention, encryption, restore testing, and ownership."),
+        _detector_record("FE-GEN-005", "Meet baseline accessibility requirements", "architecture", "frontend-accessibility", ["javascript", "typescript"], "medium", "clickable div without keyboard support", "Use semantic controls, labels, focus states, and keyboard access.", "interactive UI lacks semantic element/label/focus handling", "Pure decorative elements are not interactive controls.", "Use semantic HTML and test keyboard/screen-reader behavior."),
+    ]
+)

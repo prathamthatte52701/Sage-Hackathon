@@ -166,7 +166,7 @@ export default function ProjectFindingCard({ finding, files, language, projectId
           )}
           {finding?.knowledge_retrieval && (
             <span className="rounded border border-zinc-800 px-2 py-1">
-              Knowledge: {finding.knowledge_retrieval.mode}, {finding.knowledge_retrieval.record_count} record(s)
+              Engineering guidance available
             </span>
           )}
           {finding?.related_files?.length > 0 && (

@@ -27,6 +27,15 @@ export async function reviewCode(code, language, sessionId) {
   }
 }
 
+export async function generatePasteFix(code, language, issue) {
+  try {
+    const res = await api.post("/api/review/fix", { code, language, issue }, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not generate a fix. Please try again."));
+  }
+}
+
 export async function explainIssue(issue, codeContext, language) {
   try {
     const res = await api.post("/api/explain-bug", {
@@ -106,6 +115,17 @@ export async function transformFinding(projectId, findingIndex) {
   }
 }
 
+export async function reasonFinding(projectId, findingIndex) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/findings/reason`, {
+      finding_index: findingIndex,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not explain this finding. Please try again."));
+  }
+}
+
 export async function chatAboutProject(projectId, question) {
   try {
     const res = await api.post(`/api/projects/${projectId}/chat`, { question }, { timeout: 30000 });
@@ -124,6 +144,21 @@ export async function reanalyzeProject(projectId, findingIndex) {
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not reanalyze the project. Please try again."));
   }
+}
+
+export async function applyProjectFix(projectId, findingIndex) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/fixes/apply`, {
+      finding_index: findingIndex,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not apply this fix safely."));
+  }
+}
+
+export function fixedProjectZipUrl(projectId) {
+  return `${baseURL}/api/projects/${projectId}/download-fixed`;
 }
 
 export default api;

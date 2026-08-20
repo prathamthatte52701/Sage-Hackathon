@@ -8,14 +8,15 @@ from pathlib import PurePosixPath
 
 import httpx
 from fastapi import APIRouter, File, Form, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from db.mongo import get_project, save_project, update_project
-from models.schemas import ChatRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
+from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
+from services.patching import PatchError, apply_exact_replacement, make_unified_diff, safe_archive_path
 from services.retrieval import retrieve_relevant_files, retrieve_semantic_project_context
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
@@ -475,6 +476,7 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
             language=language,
             frameworks=project.get("project", {}).get("frameworks", []),
             category=weight_category,
+            exact_rule_id=finding.get("rule"),
         )
 
         result = await confirm_and_explain_finding(
@@ -506,6 +508,32 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
 
 
 _TRANSFORM_ERROR_RESPONSE = {"error": "Could not generate a fix for this finding, please try again"}
+
+
+def _enrich_transform(transform: FindingTransform, finding: dict, content: str | None = None) -> FindingTransform:
+    original = transform.original_snippet or transform.original_code
+    fixed = transform.proposed_fix or transform.fixed_code
+    diff = make_unified_diff(original, fixed, finding.get("file") or "file") if original and fixed else ""
+    can_apply = False
+    if content is not None and original and fixed:
+        try:
+            apply_exact_replacement(content, original, fixed)
+            can_apply = True
+        except PatchError:
+            can_apply = False
+    transform.finding_id = f"{finding.get('file', '')}:{finding.get('line', '')}:{finding.get('rule', '')}"
+    transform.rule_id = finding.get("rule", "")
+    transform.file = finding.get("file", "")
+    transform.line = int(finding.get("line") or 0)
+    transform.summary = transform.summary or (transform.explanation.split(".")[0] if transform.explanation else "Focused code change generated.")
+    transform.explanation_bullets = transform.explanation_bullets or [
+        part.strip("- ").strip() for part in (transform.explanation or "").split(".") if part.strip()
+    ][:4]
+    transform.original_code = original
+    transform.fixed_code = fixed
+    transform.diff = diff
+    transform.can_apply = can_apply
+    return transform
 
 
 @router.post("/projects/{project_id}/findings/transform", response_model=FindingTransform)
@@ -543,6 +571,7 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
             language=language,
             frameworks=project.get("project", {}).get("frameworks", []),
             category=weight_category,
+            exact_rule_id=finding.get("rule"),
         )
 
         result = await generate_fix(
@@ -553,6 +582,8 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
             related_files=context["related_files"],
             knowledge=knowledge,
         )
+        file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
+        result = _enrich_transform(result, finding, file_entry.get("content") if file_entry else None)
 
         try:
             findings[payload.finding_index]["transform"] = result.model_dump()
@@ -665,6 +696,109 @@ async def reanalyze_project(project_id: str, payload: FindingReasonRequest):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_REANALYZE_ERROR_RESPONSE)
+
+
+_APPLY_ERROR_RESPONSE = {"error": "Could not apply this fix safely"}
+_DOWNLOAD_ERROR_RESPONSE = {"error": "Could not create fixed ZIP"}
+
+
+@router.post("/projects/{project_id}/fixes/apply")
+async def apply_project_fix(project_id: str, payload: ApplyProjectFixRequest):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+        findings = project.get("findings", [])
+        if payload.finding_index < 0 or payload.finding_index >= len(findings):
+            return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
+
+        finding = findings[payload.finding_index]
+        transform = finding.get("transform") or {}
+        original = transform.get("original_snippet") or transform.get("original_code") or ""
+        fixed = transform.get("proposed_fix") or transform.get("fixed_code") or ""
+        if not original or not fixed:
+            return JSONResponse(status_code=400, content={"error": "Generate a fix before applying it"})
+
+        file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
+        if not file_entry or file_entry.get("content") is None:
+            return JSONResponse(status_code=400, content={"error": "Could not locate target file content"})
+
+        try:
+            applied = apply_exact_replacement(file_entry["content"], original, fixed)
+        except PatchError as exc:
+            finding["fix_state"] = "Conflict"
+            await update_project(project_id, {"findings": findings})
+            return JSONResponse(status_code=409, content={"error": str(exc)})
+
+        file_entry["content"] = applied.patched
+        finding["fix_state"] = "Applied"
+        finding["applied_patch"] = {
+            "file": finding.get("file"),
+            "original_code": original,
+            "fixed_code": fixed,
+            "diff": applied.diff,
+        }
+        project.setdefault("patches", [])
+        project["patches"].append(
+            {
+                "finding_index": payload.finding_index,
+                "rule_id": finding.get("rule"),
+                "file": finding.get("file"),
+                "diff": applied.diff,
+                "state": "Applied",
+            }
+        )
+
+        for key in _DERIVED_FIELDS:
+            project[key] = [] if key != "findings" else findings
+        analyze_project(project)
+        after_score = compute_score(project)
+        project["compliance_score"] = after_score
+        await update_project(project_id, {"files": project["files"], "findings": project["findings"], "patches": project.get("patches", []), "compliance_score": after_score})
+        return {
+            "status": "applied",
+            "file": finding.get("file"),
+            "modified_files": sorted({p.get("file") for p in project.get("patches", []) if p.get("file")}),
+            "after_score": after_score,
+            "verification": "Reanalyzed with static detectors after applying patch.",
+        }
+    except Exception as exc:
+        print(f"[projects] apply fix error: {exc}")
+        return JSONResponse(status_code=500, content=_APPLY_ERROR_RESPONSE)
+
+
+@router.get("/projects/{project_id}/download-fixed")
+async def download_fixed_project(project_id: str, filename: str | None = None):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file_entry in project.get("files", []):
+                path = safe_archive_path(file_entry.get("path", ""))
+                first = PurePosixPath(path).parts[0] if PurePosixPath(path).parts else ""
+                if first in IGNORE_DIRS or path.endswith((".env", ".pyc")):
+                    continue
+                content = file_entry.get("content")
+                if content is None:
+                    continue
+                zf.writestr(path, content)
+        buffer.seek(0)
+        project_name = project.get("project", {}).get("name") or "project"
+        safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", filename or f"{project_name}-sage-fixed.zip").strip("-")
+        if not safe_name.endswith(".zip"):
+            safe_name += ".zip"
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        )
+    except PatchError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except Exception as exc:
+        print(f"[projects] download fixed zip error: {exc}")
+        return JSONResponse(status_code=500, content=_DOWNLOAD_ERROR_RESPONSE)
 
 
 _CHAT_ERROR_RESPONSE = {"error": "Could not answer this question, please try again"}
