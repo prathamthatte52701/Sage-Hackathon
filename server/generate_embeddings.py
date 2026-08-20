@@ -53,4 +53,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # db/mongo.py binds AsyncIOMotorClient to the event loop active at import
+    # time; asyncio.run() spins up a *new* loop and crashes with a
+    # cross-loop Future error. Reuse the loop the module already bound to.
+    asyncio.get_event_loop().run_until_complete(main())

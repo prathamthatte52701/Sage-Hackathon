@@ -12,16 +12,20 @@ async def ingest() -> dict:
 
     collection = db[KNOWLEDGE_COLLECTION]
     await collection.create_index([("rule_id", 1), ("version", 1)], unique=True)
-    await collection.create_index([("category", 1), ("language", 1), ("framework", 1), ("severity", 1)])
+    # Mongo can't index two array fields together ("parallel arrays"), and
+    # both language and framework are arrays -- split into separate indexes.
+    await collection.create_index([("category", 1), ("language", 1), ("severity", 1)])
+    await collection.create_index([("framework", 1)])
 
     upserted = 0
     matched = 0
     for record in KNOWLEDGE_RECORDS:
         vector = await embed_text(record.normalized_content())
         doc = record.with_ingestion_metadata(vector, EMBEDDING_MODEL)
+        created_at = doc.pop("created_at")
         result = await collection.update_one(
             {"rule_id": record.rule_id, "version": record.version},
-            {"$set": doc, "$setOnInsert": {"created_at": doc["created_at"]}},
+            {"$set": doc, "$setOnInsert": {"created_at": created_at}},
             upsert=True,
         )
         upserted += 1 if result.upserted_id else 0
@@ -31,7 +35,11 @@ async def ingest() -> dict:
 
 
 def main() -> None:
-    result = asyncio.run(ingest())
+    # db/mongo.py binds AsyncIOMotorClient to the event loop active at import
+    # time; asyncio.run() would spin up a *new* loop and crash with a
+    # cross-loop Future error. Reuse the loop the module already bound to.
+    loop = asyncio.get_event_loop()
+    result = loop.run_until_complete(ingest())
     print(result)
 
 
