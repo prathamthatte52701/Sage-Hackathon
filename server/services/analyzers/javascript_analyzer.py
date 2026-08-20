@@ -11,6 +11,9 @@ from .base import LanguageAnalyzer
 
 _JS_IMPORT_RE = re.compile(r"import\s+.*?\s+from\s+['\"]([^'\"]+)['\"]")
 _JS_REQUIRE_RE = re.compile(r"require\(['\"]([^'\"]+)['\"]\)")
+_JS_FUNC_RE = re.compile(r"\bfunction\s+([A-Za-z_$][\w$]*)\s*\(|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>")
+_JS_CLASS_RE = re.compile(r"\bclass\s+([A-Za-z_$][\w$]*)\b")
+_JS_ROUTE_RE = re.compile(r"\b(?:app|router)\.(get|post|put|patch|delete)\s*\(\s*['\"]([^'\"]+)['\"]")
 
 
 class JavaScriptAnalyzer(LanguageAnalyzer):
@@ -26,7 +29,18 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
         return seen
 
     def extract_functions(self, content: str) -> list[str]:
-        return []
+        names = []
+        for match in _JS_FUNC_RE.finditer(content):
+            name = match.group(1) or match.group(2)
+            if name and name not in names:
+                names.append(name)
+        return names
 
     def extract_classes(self, content: str) -> list[str]:
-        return []
+        return list(dict.fromkeys(match.group(1) for match in _JS_CLASS_RE.finditer(content)))
+
+    def extract_routes(self, content: str) -> list[dict]:
+        return [
+            {"method": match.group(1).upper(), "path": match.group(2), "line": content[: match.start()].count("\n") + 1}
+            for match in _JS_ROUTE_RE.finditer(content)
+        ]

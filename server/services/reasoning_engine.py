@@ -104,12 +104,17 @@ async def _call_with_retry(prompt: str) -> dict | None:
 
 
 async def confirm_and_explain_finding(
-    finding: dict, code_context: str, language: str, standards: list[dict]
+    finding: dict,
+    code_context: str,
+    language: str,
+    standards: list[dict],
+    related_files: list[dict] | None = None,
+    knowledge: dict | None = None,
 ) -> FindingReasoning:
     """Takes a deterministic finding + relevant code + the standard(s) it maps
     to. Returns AI's confirm/explain/recommend judgment. Never invents a
     finding — always operates on a finding that already exists."""
-    prompt = build_finding_reasoning_prompt(finding, code_context, language, standards)
+    prompt = build_finding_reasoning_prompt(finding, code_context, language, standards, related_files, knowledge)
 
     result = FindingReasoning()
     try:
@@ -126,8 +131,15 @@ async def confirm_and_explain_finding(
     return result
 
 
-async def generate_fix(finding: dict, code_context: str, language: str, standards: list[dict]) -> FindingTransform:
-    prompt = build_transform_prompt(finding, code_context, language, standards)
+async def generate_fix(
+    finding: dict,
+    code_context: str,
+    language: str,
+    standards: list[dict],
+    related_files: list[dict] | None = None,
+    knowledge: dict | None = None,
+) -> FindingTransform:
+    prompt = build_transform_prompt(finding, code_context, language, standards, related_files, knowledge)
 
     result = FindingTransform()
     try:

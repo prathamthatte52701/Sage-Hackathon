@@ -19,6 +19,9 @@ RULE_TO_STANDARD = {
     "unsafe_deserialization": "SEC-06",
     "empty_exception_handler": "CQ-01",
     "todo_marker": "CQ-02",
+    "route_without_related_validation": "API-01",
+    "large_route_handler": "ARCH-01",
+    "possible_blocking_work": "PERF-01",
 }
 
 WEIGHTS = {
@@ -42,6 +45,9 @@ SEVERITY_DEDUCTION = {
 FINDING_CATEGORY_MAP = {
     "security": "security",
     "best_practice": "code_quality",
+    "api_design": "api_design",
+    "architecture": "architecture",
+    "performance": "performance",
 }
 
 
@@ -82,6 +88,72 @@ def compute_score(project: dict) -> dict:
     for cat in ("security", "code_quality"):
         score, deductions = _score_from_findings(findings, cat)
         categories[cat] = {"score": score, "weight": WEIGHTS[cat], "deductions": deductions}
+
+    architecture_score = 100
+    architecture_deductions = []
+    has_service_layer = any(
+        "services" in f.get("path", "").replace("\\", "/").split("/") for f in files
+    )
+    if len(project.get("apiEndpoints", [])) >= 5 and not has_service_layer:
+        architecture_score -= 15
+        std = get_standard_by_id("ARCH-01")
+        architecture_deductions.append(
+            {
+                "reason": "Multiple API endpoints detected but no service-layer files were found",
+                "amount": 15,
+                "standard": {"id": std["id"], "title": std["title"], "evidenceSource": std["evidenceSource"]},
+            }
+        )
+    categories["architecture"] = {
+        "score": max(0, architecture_score),
+        "weight": WEIGHTS["architecture"],
+        "deductions": architecture_deductions,
+    }
+
+    api_score = 100
+    api_deductions = []
+    if project.get("apiEndpoints", []) and not any(
+        token in (f.get("content") or "").lower()
+        for f in files
+        for token in ("pydantic", "joi", "zod", "express-validator", "validate")
+    ):
+        api_score -= 20
+        std = get_standard_by_id("API-01")
+        api_deductions.append(
+            {
+                "reason": "API endpoints detected but no obvious boundary validation library or middleware was found",
+                "amount": 20,
+                "standard": {"id": std["id"], "title": std["title"], "evidenceSource": std["evidenceSource"]},
+            }
+        )
+    categories["api_design"] = {
+        "score": max(0, api_score),
+        "weight": WEIGHTS["api_design"],
+        "deductions": api_deductions,
+    }
+
+    performance_score = 100
+    performance_deductions = []
+    blocking_markers = ("execsync", "readfilesync", "writefilesync", "sleep(", "time.sleep", "image.resize", "sharp(")
+    for file_entry in files:
+        content = (file_entry.get("content") or "").lower()
+        if any(marker in content for marker in blocking_markers):
+            performance_score -= 10
+            std = get_standard_by_id("PERF-01")
+            performance_deductions.append(
+                {
+                    "reason": "Potential blocking or expensive operation detected in source",
+                    "amount": 10,
+                    "file": file_entry.get("path"),
+                    "standard": {"id": std["id"], "title": std["title"], "evidenceSource": std["evidenceSource"]},
+                }
+            )
+            break
+    categories["performance"] = {
+        "score": max(0, performance_score),
+        "weight": WEIGHTS["performance"],
+        "deductions": performance_deductions,
+    }
 
     # testing: heuristic — no test files detected in a non-empty project is a real signal
     testing_score = 100
@@ -129,16 +201,6 @@ def compute_score(project: dict) -> dict:
         "weight": WEIGHTS["production_readiness"],
         "deductions": prod_deductions,
     }
-
-    # No deterministic signal yet for these — stay at 100, say so explicitly rather
-    # than faking a number. Honest > impressive.
-    for cat in ("architecture", "api_design", "performance"):
-        categories[cat] = {
-            "score": 100,
-            "weight": WEIGHTS[cat],
-            "deductions": [],
-            "note": "No deterministic checks implemented for this category yet — score is a placeholder, not a real assessment.",
-        }
 
     overall = sum(categories[cat]["score"] * WEIGHTS[cat] for cat in WEIGHTS)
 

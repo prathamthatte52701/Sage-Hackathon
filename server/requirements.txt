@@ -6,3 +6,6 @@ httpx
 motor
 certifi
 python-multipart
+pytest
+pytest-asyncio
+sentence-transformers

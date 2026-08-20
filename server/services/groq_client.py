@@ -9,9 +9,6 @@ COOLDOWN_SECONDS = 120
 TIMEOUT_SECONDS = 20
 MAX_ATTEMPTS = 3
 
-if not GROQ_API_KEYS:
-    raise RuntimeError("GROQ_KEYS not set in environment")
-
 _key_cycle = itertools.cycle(GROQ_API_KEYS)
 _cooldowns = {}  # key -> unix timestamp until which it's skipped
 
@@ -35,6 +32,9 @@ def _mark_cooldown(key):
 
 
 async def call_groq(messages: list[dict], temperature: float = 0.0) -> str:
+    if not GROQ_API_KEYS:
+        raise GroqUnavailableError("GROQ_KEYS not set in environment")
+
     last_error = None
     tried_keys = set()
 

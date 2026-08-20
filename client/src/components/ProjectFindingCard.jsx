@@ -13,6 +13,9 @@ const SEVERITY_STYLES = {
 const CATEGORY_LABELS = {
   security: "Security",
   best_practice: "Best Practice",
+  api_design: "API Design",
+  architecture: "Architecture",
+  performance: "Performance",
 };
 
 function severityStyle(severity) {
@@ -151,6 +154,27 @@ export default function ProjectFindingCard({ finding, files, language, projectId
         <pre className="mt-3 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 text-xs text-zinc-400">
           <code>{finding.evidence}</code>
         </pre>
+      )}
+
+      {(finding?.confidence || finding?.evidence_type || finding?.knowledge_retrieval || finding?.related_files?.length > 0) && (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-400">
+          {finding?.confidence && (
+            <span className="rounded border border-zinc-800 px-2 py-1">Confidence: {finding.confidence}</span>
+          )}
+          {finding?.evidence_type && (
+            <span className="rounded border border-zinc-800 px-2 py-1">Evidence: {finding.evidence_type}</span>
+          )}
+          {finding?.knowledge_retrieval && (
+            <span className="rounded border border-zinc-800 px-2 py-1">
+              Knowledge: {finding.knowledge_retrieval.mode}, {finding.knowledge_retrieval.record_count} record(s)
+            </span>
+          )}
+          {finding?.related_files?.length > 0 && (
+            <span className="rounded border border-zinc-800 px-2 py-1">
+              Related files: {finding.related_files.join(", ")}
+            </span>
+          )}
+        </div>
       )}
 
       <div className="mt-4 flex flex-wrap items-center gap-4">
