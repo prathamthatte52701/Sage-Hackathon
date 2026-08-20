@@ -1,6 +1,7 @@
-"""The 8 deterministic pattern rules, relocated unchanged from the old
-services/analyzer.py. Language-gating logic (which rules run for which
-language) is unchanged - only the home address changed.
+"""The 8 deterministic pattern rules. Python and JavaScript/TypeScript now
+have equal coverage on all 8; Java/C++ still only get the 3 language-neutral
+checks (secrets, SQL concat, TODO markers) - that's an accepted, explicit
+limitation, not something this pass fixes.
 """
 
 import re
@@ -9,6 +10,7 @@ _RE_SECRET = re.compile(r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"][^'
 _RE_EVAL_PY = re.compile(r"\b(eval|exec)\s*\(")
 _RE_EVAL_JS = re.compile(r"\beval\s*\(")
 _RE_BARE_EXCEPT = re.compile(r"^\s*except\s*:\s*$", re.MULTILINE)
+_RE_EMPTY_CATCH_JS = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
 # ponytail: spec's literal pattern (`...["'][^"'\n]*(\+|\{)`) only matches concatenation
 # where + is OUTSIDE the string (e.g. "..." + var) — it can't match an f-string brace
 # because that brace sits BEFORE the closing quote, not after it. Added a second
@@ -17,11 +19,31 @@ _RE_SQL_CONCAT = re.compile(
     r"(?i)(select|insert|update|delete)\b[^\"'\n]*([\"'][^\"'\n]*\+|\{[^{}\"'\n]*\}[^\"'\n]*[\"'])"
 )
 _RE_SUBPROCESS_SHELL = re.compile(r"subprocess\.\w+\([^)]*shell\s*=\s*True")
+_RE_SHELL_JS = re.compile(r"child_process\.(exec|execSync)\s*\(")
 _RE_TLS_PY = re.compile(r"verify\s*=\s*False")
 _RE_TLS_NODE = re.compile(r"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0")
 _RE_PICKLE = re.compile(r"pickle\.loads?\(")
 _RE_YAML_LOAD = re.compile(r"yaml\.load\((?!.*Loader=yaml\.SafeLoader)")
+_RE_UNSAFE_DESERIALIZE_JS = re.compile(r"node-serialize|\bunserialize\s*\(")
 _RE_TODO = re.compile(r"(?i)#\s*(TODO|FIXME)|//\s*(TODO|FIXME)")
+
+# language-gated pattern tables for the 3 checks that only covered Python
+# before this — Java/C++ intentionally absent, out of scope.
+EMPTY_CATCH_PATTERNS = {
+    "python": _RE_BARE_EXCEPT,
+    "javascript": _RE_EMPTY_CATCH_JS,
+    "typescript": _RE_EMPTY_CATCH_JS,
+}
+SHELL_INJECTION_PATTERNS = {
+    "python": _RE_SUBPROCESS_SHELL,
+    "javascript": _RE_SHELL_JS,
+    "typescript": _RE_SHELL_JS,
+}
+DESERIALIZATION_PATTERNS = {
+    "python": [_RE_PICKLE, _RE_YAML_LOAD],
+    "javascript": [_RE_UNSAFE_DESERIALIZE_JS],
+    "typescript": [_RE_UNSAFE_DESERIALIZE_JS],
+}
 
 
 def _line_of(content: str, start: int) -> int:
@@ -70,11 +92,12 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
             "Use of eval/exec on potentially untrusted input",
         )
 
-    # 3. bare except — python only
-    if language == "python":
+    # 3. empty / catch-all exception handling — python + js/ts
+    pattern = EMPTY_CATCH_PATTERNS.get(language)
+    if pattern:
         findings += _findings_for_pattern(
-            content, path, _RE_BARE_EXCEPT, "bare_except", "medium", "best_practice",
-            "Bare except clause silently swallows all exceptions",
+            content, path, pattern, "empty_exception_handler", "medium", "best_practice",
+            "Empty or catch-all exception handler silently swallows all errors",
         )
 
     # 4. SQL string concatenation — all languages
@@ -83,11 +106,12 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         "Possible SQL injection via string concatenation instead of parameterized query",
     )
 
-    # 5. subprocess shell=True — python only
-    if language == "python":
+    # 5. shell / command injection risk — python + js/ts
+    pattern = SHELL_INJECTION_PATTERNS.get(language)
+    if pattern:
         findings += _findings_for_pattern(
-            content, path, _RE_SUBPROCESS_SHELL, "subprocess_shell_true", "high", "security",
-            "subprocess call with shell=True risks command injection",
+            content, path, pattern, "subprocess_shell_true", "high", "security",
+            "Shell/subprocess call with an unsanitized command string risks command injection",
         )
 
     # 6. disabled TLS verification — python or node pattern, run both, language-gated
@@ -102,14 +126,10 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
             "TLS/SSL certificate verification is disabled",
         )
 
-    # 7. unsafe deserialization — python only
-    if language == "python":
+    # 7. unsafe deserialization — python + js/ts
+    for pattern in DESERIALIZATION_PATTERNS.get(language, []):
         findings += _findings_for_pattern(
-            content, path, _RE_PICKLE, "unsafe_deserialization", "high", "security",
-            "Unsafe deserialization of potentially untrusted data",
-        )
-        findings += _findings_for_pattern(
-            content, path, _RE_YAML_LOAD, "unsafe_deserialization", "high", "security",
+            content, path, pattern, "unsafe_deserialization", "high", "security",
             "Unsafe deserialization of potentially untrusted data",
         )
 

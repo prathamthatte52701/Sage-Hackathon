@@ -17,7 +17,7 @@ RULE_TO_STANDARD = {
     "subprocess_shell_true": "SEC-04",
     "tls_verification_disabled": "SEC-05",
     "unsafe_deserialization": "SEC-06",
-    "bare_except": "CQ-01",
+    "empty_exception_handler": "CQ-01",
     "todo_marker": "CQ-02",
 }
 
