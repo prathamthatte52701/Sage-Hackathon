@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const STORAGE_KEY = "sage_session_id";
+const STORAGE_KEY = "code_master_ai_session_id";
 
 function generateId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -20,3 +20,4 @@ export default function useSessionId() {
   });
   return sessionId;
 }
+

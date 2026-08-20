@@ -1,15 +1,15 @@
-# SAGE
+# CODE MASTER AI
 
-SAGE is a FastAPI + React code-intelligence workspace for paste-code review, project ZIP/GitHub analysis, evidence-grounded findings, knowledge-assisted reasoning, and safe fix workflows.
+CODE MASTER AI is a FastAPI + React code-intelligence workspace for paste-code review, project ZIP/GitHub analysis, evidence-grounded findings, knowledge-assisted reasoning, and safe fix workflows.
 
 The current implementation is built around a strict rule: deterministic evidence and validated repository context drive the product. LLM calls are used for explanation, quality review, and fix proposals, but they are not treated as authoritative proof by themselves.
 
-## What SAGE Does
+## What CODE MASTER AI Does
 
 - Reviews pasted code snippets with deterministic rules plus AI quality review.
 - Analyzes uploaded ZIP projects and imported GitHub repositories.
 - Scores projects across security, reliability, code quality, testing, performance, and production readiness.
-- Retrieves curated Sage engineering standards for each validated finding.
+- Retrieves curated Code Master AI engineering standards for each validated finding.
 - Supports project chat with repository retrieval and knowledge RAG.
 - Generates scoped fixes and applies only validated exact patches.
 - Reanalyzes fixed code/projects and supports downloading applied fixes.
@@ -22,7 +22,7 @@ The React app lives in `client/`.
 
 Primary UI areas:
 
-- `client/src/App.jsx` - main Sage workspace shell, paste review, project views, Ask AI, finding detail, and V2 fix workflow.
+- `client/src/App.jsx` - main Code Master AI workspace shell, paste review, project views, Ask AI, finding detail, and V2 fix workflow.
 - `client/src/api/client.js` - typed API wrapper for review, project import, chat, reasoning, fix generation, apply, and download.
 - `client/src/components/` - supporting editor/history/project components.
 
@@ -51,8 +51,8 @@ Important modules:
 - `server/services/analyzers/rules.py` - deterministic security, correctness, reliability, and production-readiness rules.
 - `server/services/retrieval.py` - project chat retrieval over files/findings/import context.
 - `server/services/patching.py` - exact structured patch validation and application.
-- `server/knowledge/retrieval.py` - Sage knowledge hybrid retrieval.
-- `server/knowledge/seed_data.py` - curated Sage engineering standards.
+- `server/knowledge/retrieval.py` - Code Master AI knowledge hybrid retrieval.
+- `server/knowledge/seed_data.py` - curated Code Master AI engineering standards.
 - `server/services/prompt_builder.py` - hardened prompts for review, chat, reasoning, and fixes.
 
 Backend runs on:
@@ -69,7 +69,7 @@ For pasted code:
 2. Run deterministic rules.
 3. Run AI quality review for non-obvious correctness/maintainability issues.
 4. Dedupe AI quality findings against deterministic findings.
-5. Retrieve Sage knowledge per finding, not once per snippet.
+5. Retrieve Code Master AI knowledge per finding, not once per snippet.
 6. Return one clean `Review findings` list to the UI.
 
 The product UI hides internal RAG/debug metadata such as retrieval mode, top-k counts, raw vector scores, and retrieval method names. Internal logs still include finding IDs, retrieved knowledge IDs, methods, scores, and top-k counts for debugging.
@@ -96,7 +96,7 @@ Knowledge is shown as engineering guidance, not proof of a defect.
 
 ## Safe Fix Workflow
 
-SAGE uses a preview-first patch model.
+CODE MASTER AI uses a preview-first patch model.
 
 State model:
 
@@ -160,7 +160,7 @@ For project findings:
 
 ## MongoDB Atlas Vector Search
 
-Trusted knowledge records live in the `sage_knowledge` collection by default. Uploaded project code is stored separately as project data and must not be ingested as Sage policy knowledge.
+Trusted knowledge records live in the `sage_knowledge` collection by default. Uploaded project code is stored separately as project data and must not be ingested as Code Master AI policy knowledge.
 
 Atlas Vector Search index:
 
@@ -314,3 +314,4 @@ Known lint warnings are React ergonomics warnings around synchronous state updat
 - LLM-generated fixes are previewed and exact-patch validated, but complex multi-location edits still require manual review.
 - Vector retrieval can fall back when Atlas/vector configuration is unavailable.
 - This is a hackathon-ready prototype, not a hardened multi-tenant production deployment.
+

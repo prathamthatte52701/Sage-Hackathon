@@ -786,7 +786,7 @@ async def download_fixed_project(project_id: str, filename: str | None = None):
                 zf.writestr(path, content)
         buffer.seek(0)
         project_name = project.get("project", {}).get("name") or "project"
-        safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", filename or f"{project_name}-sage-fixed.zip").strip("-")
+        safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", filename or f"{project_name}-code-master-ai-fixed.zip").strip("-")
         if not safe_name.endswith(".zip"):
             safe_name += ".zip"
         return Response(
@@ -881,3 +881,4 @@ async def chat_about_project(project_id: str, payload: ChatRequest):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_CHAT_ERROR_RESPONSE)
+
