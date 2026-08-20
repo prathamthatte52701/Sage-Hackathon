@@ -105,7 +105,7 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
         names = zf.namelist()
 
         if len(names) > MAX_FILE_COUNT:
-            return None, None, {"error": "ZIP contains too many files (max 500)"}
+            return None, None, {"error": "ZIP contains too many files (max 2000)"}
 
         if any(_is_unsafe_path(name) for name in names):
             return None, None, {"error": "ZIP contains unsafe file paths"}
