@@ -1054,7 +1054,7 @@ def _detector_record(
         detection_hints=[detection_hint],
         fix_strategy=recommendation,
         production_impact="Use the detector evidence as the source of truth; this knowledge record explains why the observed pattern matters and how to fix it safely.",
-        standards=[{"name": "Sage", "reference": f"detector:{rule_id}"}],
+        standards=[{"name": "Code Master AI", "reference": f"detector:{rule_id}"}],
         source_urls=[],
         content=(
             f"Principle: {title}. Warning signal: {detection_hint}. "
@@ -1098,3 +1098,4 @@ KNOWLEDGE_RECORDS.extend(
         _detector_record("FE-GEN-005", "Meet baseline accessibility requirements", "architecture", "frontend-accessibility", ["javascript", "typescript"], "medium", "clickable div without keyboard support", "Use semantic controls, labels, focus states, and keyboard access.", "interactive UI lacks semantic element/label/focus handling", "Pure decorative elements are not interactive controls.", "Use semantic HTML and test keyboard/screen-reader behavior."),
     ]
 )
+

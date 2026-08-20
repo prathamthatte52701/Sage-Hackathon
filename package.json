@@ -1,5 +1,5 @@
 {
-  "name": "sage-project",
+  "name": "code-master-ai-project",
   "private": true,
   "version": "0.0.0",
   "scripts": {
@@ -14,3 +14,4 @@
     "concurrently": "^9.1.0"
   }
 }
+

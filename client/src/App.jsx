@@ -195,7 +195,7 @@ function AppShell({ activeView, setActiveView, project, score, sourceType, child
             S
           </div>
           <div>
-            <p className="text-lg font-bold tracking-wide">SAGE</p>
+            <p className="text-lg font-bold tracking-wide">CODE MASTER AI</p>
             <p className="sage-mono text-[10px] tracking-[0.17em] text-[var(--sage-text-muted)]">AI CODE INTELLIGENCE</p>
           </div>
         </div>
@@ -253,9 +253,9 @@ function AppShell({ activeView, setActiveView, project, score, sourceType, child
                   S
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{meta.name || "Sage Workspace"}</p>
+                  <p className="truncate text-sm font-semibold">{meta.name || "Code Master AI Workspace"}</p>
                   <p className="mt-0.5 text-xs text-[var(--sage-text-muted)]">
-                    {hasProject ? `${project.files?.length || 0} files tracked by Sage` : "Import a project or paste code to begin."}
+                    {hasProject ? `${project.files?.length || 0} files tracked by Code Master AI` : "Import a project or paste code to begin."}
                   </p>
                 </div>
                 <SourceBadge source={hasProject ? sourceType : "workspace"} />
@@ -318,7 +318,7 @@ function OverviewPage({ project, score, setActiveView, setQuestionSeed, setSelec
             </div>
           </div>
           <Panel className="p-5">
-            <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">Sage checks</p>
+            <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">Code Master AI checks</p>
             <div className="mt-5 space-y-3 text-sm text-[var(--sage-text-secondary)]">
               {["Security risks", "Reliability issues", "Code quality", "Production readiness", "Evidence-backed fixes"].map((item) => (
                 <div key={item} className="flex items-center gap-3 rounded-lg bg-black/18 px-3 py-2">
@@ -462,7 +462,7 @@ function OverviewPage({ project, score, setActiveView, setQuestionSeed, setSelec
           </button>
         </Panel>
         <Panel className="relative min-h-[230px] overflow-hidden p-5">
-          <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">Sage signal</p>
+          <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">Code Master AI signal</p>
           <div className="relative mx-auto mt-8 grid h-28 w-28 place-items-center">
             <div className="absolute inset-0 rounded-full border border-[var(--sage-border-accent)]" />
             <div className="absolute -inset-5 rounded-full border border-dashed border-white/[0.08]" />
@@ -600,7 +600,7 @@ function AnalyzePage({
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Analyze codebase" title="Paste code or import a repository." subtitle="Evidence-grounded review using deterministic analysis, project retrieval, and Sage reasoning." />
+      <PageHeader eyebrow="Analyze codebase" title="Paste code or import a repository." subtitle="Evidence-grounded review using deterministic analysis, project retrieval, and Code Master AI reasoning." />
 
       <div className="flex w-fit rounded-lg border border-[var(--sage-border-subtle)] bg-black/20 p-1">
         {["import", "paste"].map((tab) => (
@@ -635,7 +635,7 @@ function AnalyzePage({
                 </select>
                 {(languageNotice || detectedLanguage.mismatch) && (
                   <p className="mt-2 max-w-xl text-xs text-[var(--sage-warning)]">
-                    {languageNotice || `This looks like ${detectedLanguage.detected}; selected language is ${language}. Sage will switch before review.`}
+                    {languageNotice || `This looks like ${detectedLanguage.detected}; selected language is ${language}. Code Master AI will switch before review.`}
                   </p>
                 )}
               </div>
@@ -1027,7 +1027,7 @@ function AskAiPage({ project, questionSeed, setQuestionSeed }) {
         <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">Evidence panel</p>
         <div className="mt-4 flex flex-wrap gap-2">
           {cited.length === 0 ? (
-            <p className="text-sm text-[var(--sage-text-muted)]">Cited project files appear here after Sage answers.</p>
+            <p className="text-sm text-[var(--sage-text-muted)]">Cited project files appear here after Code Master AI answers.</p>
           ) : (
             cited.map((file) => <CitationChip key={file} file={file} />)
           )}
@@ -1095,7 +1095,7 @@ function HistoryPage({ sessionId }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="History" title="Session review history" subtitle="Past paste-code reviews from this Sage session." />
+      <PageHeader eyebrow="History" title="Session review history" subtitle="Past paste-code reviews from this Code Master AI session." />
       {loading && <LoadingState label="Loading history..." />}
       {error && <ErrorState message={error} />}
       {!loading && !error && items.length === 0 && <EmptyState title="No analyzed code snippets yet." action="Analyze your first project or paste code." />}
@@ -1128,12 +1128,12 @@ function EmptyState({ title, action }) {
 function ReviewKnowledgePanel({ result }) {
   return (
     <Panel className="p-5">
-      <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">Sage knowledge</p>
+      <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">Code Master AI knowledge</p>
       {!result ? (
         <div className="mt-4 rounded-lg border border-[var(--sage-border-subtle)] bg-black/20 p-3">
           <p className="text-sm font-medium">Relevant engineering standards are retrieved automatically during review.</p>
           <p className="mt-2 text-xs leading-5 text-[var(--sage-text-muted)]">
-            Guidance appears inside each finding when Sage has supporting standards.
+            Guidance appears inside each finding when Code Master AI has supporting standards.
           </p>
         </div>
       ) : (
@@ -1524,3 +1524,4 @@ export default function App() {
     </AppShell>
   );
 }
+

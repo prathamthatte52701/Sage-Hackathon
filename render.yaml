@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: sage-code-reviewer-api
+    name: code-master-ai-reviewer-api
     runtime: python
     rootDir: server
     buildCommand: pip install -r requirements.txt
@@ -12,3 +12,4 @@ services:
         sync: false
       - key: MONGO_DB_NAME
         value: code_reviewer
+
