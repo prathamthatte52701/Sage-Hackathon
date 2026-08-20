@@ -62,7 +62,11 @@ def _metadata_filter(language: str | None, frameworks: list[str] | None, categor
 
 
 def _tokens(text: str) -> set[str]:
-    return {t.lower() for t in _WORD_RE.findall(text or "")}
+    tokens = set()
+    for token in _WORD_RE.findall(text or ""):
+        lowered = token.lower()
+        tokens.add(lowered[:-1] if len(lowered) > 4 and lowered.endswith("s") else lowered)
+    return tokens
 
 
 def _record_matches_metadata(record, language: str, framework_set: set[str], category: str | None) -> bool:

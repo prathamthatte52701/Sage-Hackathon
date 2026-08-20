@@ -38,7 +38,12 @@ def _build_finding_reasoning(raw: dict) -> FindingReasoning:
         data.pop("findingConfirmed", None)
 
     confidence = data.get("confidence")
-    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+    if (
+        not isinstance(confidence, (int, float))
+        or isinstance(confidence, bool)
+        or confidence < 0
+        or confidence > 1
+    ):
         data.pop("confidence", None)
 
     for field in ("severity", "reasoning", "impact", "recommendation", "suggestedFix"):
@@ -60,7 +65,12 @@ def _build_finding_transform(raw: dict) -> FindingTransform:
             data.pop(field, None)
 
     confidence = data.get("confidence")
-    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+    if (
+        not isinstance(confidence, (int, float))
+        or isinstance(confidence, bool)
+        or confidence < 0
+        or confidence > 1
+    ):
         data.pop("confidence", None)
 
     return FindingTransform(**{k: v for k, v in data.items() if k in FindingTransform.model_fields})

@@ -40,7 +40,7 @@ class FindingReasoning(BaseModel):
     impact: str = ""
     recommendation: str = ""
     suggestedFix: str = ""
-    confidence: float = 0.0
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
     citedStandards: list[dict] = []
 
 
@@ -61,4 +61,4 @@ class FindingTransform(BaseModel):
     original_snippet: str = ""
     proposed_fix: str = ""
     explanation: str = "AI fix generation unavailable"
-    confidence: float = 0.0
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
