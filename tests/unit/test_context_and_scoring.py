@@ -1,5 +1,7 @@
+import pytest
+
 from services.context_expansion import build_finding_context
-from services.retrieval import retrieve_relevant_files
+from services.retrieval import retrieve_relevant_files, retrieve_semantic_project_context
 from services.scoring import compute_score
 
 
@@ -89,3 +91,40 @@ def test_retrieval_understands_database_intent():
 
     assert results
     assert results[0]["path"] == "db.py"
+
+
+def test_retrieval_matches_symbol_name():
+    project = {
+        "files": [
+            {"path": "cache.py", "language": "python", "content": "def load_cached_session(raw):\n    return raw\n"},
+            {"path": "utils.py", "language": "python", "content": "def helper():\n    pass\n"},
+        ],
+        "functions": [{"file": "cache.py", "name": "load_cached_session"}],
+        "imports": [],
+    }
+
+    results = retrieve_relevant_files(project, "Where is load_cached_session implemented?")
+
+    assert results[0]["path"] == "cache.py"
+
+
+def test_retrieval_expands_import_dependencies():
+    project = {
+        "files": [
+            {"path": "routes/user.js", "language": "javascript", "content": "const svc = require('../services/user')\nsvc.create()"},
+            {"path": "services/user.js", "language": "javascript", "content": "module.exports = { create() {} }"},
+        ],
+        "imports": [{"file": "routes/user.js", "module": "../services/user"}],
+        "functions": [],
+    }
+
+    results = retrieve_relevant_files(project, "routes/user.js")
+
+    assert [r["path"] for r in results] == ["routes/user.js", "services/user.js"]
+
+
+@pytest.mark.asyncio
+async def test_project_vector_failure_returns_empty_context():
+    context = await retrieve_semantic_project_context({"_id": "p1", "session_id": "s1"}, "database", top_k=2)
+
+    assert context == []

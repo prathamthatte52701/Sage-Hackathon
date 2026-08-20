@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from db.mongo import get_project, save_project, update_project
 from models.schemas import ChatRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
-from knowledge.retrieval import retrieve_knowledge
+from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
@@ -465,8 +465,13 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
                 matched_standards = get_standards_for(weight_category, language)[:2]
 
         weight_category = FINDING_CATEGORY_MAP.get(finding.get("category"))
+        knowledge_query = build_finding_knowledge_query(
+            finding,
+            surrounding_context=code_snippet,
+            detector_name=finding.get("rule"),
+        )
         knowledge = await retrieve_knowledge(
-            f"{finding.get('message', '')}\n{finding.get('evidence', '')}",
+            knowledge_query,
             language=language,
             frameworks=project.get("project", {}).get("frameworks", []),
             category=weight_category,
@@ -528,8 +533,13 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
                 matched_standards = get_standards_for(weight_category, language)[:2]
 
         weight_category = FINDING_CATEGORY_MAP.get(finding.get("category"))
+        knowledge_query = build_finding_knowledge_query(
+            finding,
+            surrounding_context=code_snippet,
+            detector_name=finding.get("rule"),
+        )
         knowledge = await retrieve_knowledge(
-            f"{finding.get('message', '')}\n{finding.get('evidence', '')}",
+            knowledge_query,
             language=language,
             frameworks=project.get("project", {}).get("frameworks", []),
             category=weight_category,
