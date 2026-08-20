@@ -1,5 +1,4 @@
 import copy
-import json
 import os
 import re
 import zipfile
@@ -13,8 +12,7 @@ from fastapi.responses import JSONResponse
 from db.mongo import get_project, save_project, update_project
 from models.schemas import ChatRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
-from services.groq_client import GroqUnavailableError, call_groq
-from services.prompt_builder import build_chat_prompt, build_finding_reasoning_prompt, build_transform_prompt
+from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
 from services.retrieval import retrieve_relevant_files
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
@@ -333,22 +331,6 @@ async def score_project_by_id(project_id: str):
         return JSONResponse(status_code=500, content=_SCORE_ERROR_RESPONSE)
 
 
-def _extract_json(raw_text: str):
-    """Try direct json.loads, then fall back to extracting {...} substring."""
-    try:
-        return json.loads(raw_text)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
-    return None
-
-
 def _extract_code_snippet(files: list, file_path: str, line: int) -> str:
     """Lines [line-5, line+5] (1-indexed, clamped) from the matching file's content.
 
@@ -367,27 +349,6 @@ def _extract_code_snippet(files: list, file_path: str, line: int) -> str:
     start = max(0, (line - 1) - 5)
     end = min(len(lines), (line - 1) + 5 + 1)
     return "\n".join(lines[start:end])
-
-
-def _build_finding_reasoning(raw: dict) -> FindingReasoning:
-    """Coerce/drop bad-typed fields instead of crashing, same pattern as _build_issue."""
-    data = dict(raw) if isinstance(raw, dict) else {}
-
-    if not isinstance(data.get("findingConfirmed"), bool):
-        data.pop("findingConfirmed", None)
-
-    confidence = data.get("confidence")
-    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
-        data.pop("confidence", None)
-
-    for field in ("severity", "reasoning", "impact", "recommendation", "suggestedFix"):
-        if field in data and not isinstance(data[field], str):
-            data.pop(field, None)
-
-    if data.get("severity") not in ("critical", "high", "medium", "low"):
-        data.pop("severity", None)
-
-    return FindingReasoning(**{k: v for k, v in data.items() if k in FindingReasoning.model_fields})
 
 
 _REASON_ERROR_RESPONSE = {"error": "Could not reason about this finding, please try again"}
@@ -422,33 +383,7 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
             if weight_category:
                 matched_standards = get_standards_for(weight_category, language)[:2]
 
-        prompt = build_finding_reasoning_prompt(finding, code_snippet, language, matched_standards)
-        messages = [{"role": "user", "content": prompt}]
-
-        result = FindingReasoning()
-        try:
-            raw = await call_groq(messages)
-            parsed = _extract_json(raw)
-
-            if parsed is None:
-                retry_messages = [
-                    {
-                        "role": "user",
-                        "content": prompt
-                        + "\n\nYour previous response was not valid JSON. Respond with ONLY the JSON object, nothing else.",
-                    }
-                ]
-                raw = await call_groq(retry_messages)
-                parsed = _extract_json(raw)
-
-            if parsed is not None:
-                result = _build_finding_reasoning(parsed)
-                result.citedStandards = [
-                    {"id": s["id"], "title": s["title"], "evidenceSource": s["evidenceSource"]}
-                    for s in matched_standards
-                ]
-        except GroqUnavailableError:
-            result = FindingReasoning()
+        result = await confirm_and_explain_finding(finding, code_snippet, language, matched_standards)
 
         try:
             findings[payload.finding_index]["reasoning"] = result.model_dump()
@@ -460,21 +395,6 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_REASON_ERROR_RESPONSE)
-
-
-def _build_finding_transform(raw: dict) -> FindingTransform:
-    """Coerce/drop bad-typed fields instead of crashing, same pattern as _build_finding_reasoning."""
-    data = dict(raw) if isinstance(raw, dict) else {}
-
-    for field in ("original_snippet", "proposed_fix", "explanation"):
-        if field in data and not isinstance(data[field], str):
-            data.pop(field, None)
-
-    confidence = data.get("confidence")
-    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
-        data.pop("confidence", None)
-
-    return FindingTransform(**{k: v for k, v in data.items() if k in FindingTransform.model_fields})
 
 
 _TRANSFORM_ERROR_RESPONSE = {"error": "Could not generate a fix for this finding, please try again"}
@@ -507,29 +427,7 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
             if weight_category:
                 matched_standards = get_standards_for(weight_category, language)[:2]
 
-        prompt = build_transform_prompt(finding, code_snippet, language, matched_standards)
-        messages = [{"role": "user", "content": prompt}]
-
-        result = FindingTransform()
-        try:
-            raw = await call_groq(messages)
-            parsed = _extract_json(raw)
-
-            if parsed is None:
-                retry_messages = [
-                    {
-                        "role": "user",
-                        "content": prompt
-                        + "\n\nYour previous response was not valid JSON. Respond with ONLY the JSON object, nothing else.",
-                    }
-                ]
-                raw = await call_groq(retry_messages)
-                parsed = _extract_json(raw)
-
-            if parsed is not None:
-                result = _build_finding_transform(parsed)
-        except GroqUnavailableError:
-            result = FindingTransform()
+        result = await generate_fix(finding, code_snippet, language, matched_standards)
 
         try:
             findings[payload.finding_index]["transform"] = result.model_dump()
@@ -637,23 +535,6 @@ async def reanalyze_project(project_id: str, payload: FindingReasonRequest):
 _CHAT_ERROR_RESPONSE = {"error": "Could not answer this question, please try again"}
 
 
-def _build_chat_answer(raw: dict, retrieved_paths: set[str]) -> dict:
-    """Coerce/drop bad-typed fields; clamp cited_files to files actually retrieved
-    so the AI can't cite a file it was never shown."""
-    data = dict(raw) if isinstance(raw, dict) else {}
-
-    answer = data.get("answer")
-    if not isinstance(answer, str) or not answer:
-        answer = "No answer was returned."
-
-    cited = data.get("cited_files")
-    if not isinstance(cited, list):
-        cited = []
-    cited_files = [c for c in cited if isinstance(c, str) and c in retrieved_paths]
-
-    return {"answer": answer, "cited_files": cited_files}
-
-
 @router.post("/projects/{project_id}/chat")
 async def chat_about_project(project_id: str, payload: ChatRequest):
     try:
@@ -671,33 +552,7 @@ async def chat_about_project(project_id: str, payload: ChatRequest):
                 "retrieved_files": [],
             }
 
-        retrieved_paths = {f["path"] for f in retrieved}
-        prompt = build_chat_prompt(payload.question, retrieved)
-        messages = [{"role": "user", "content": prompt}]
-
-        result = {
-            "answer": "AI answer unavailable — the model service could not be reached.",
-            "cited_files": [],
-        }
-        try:
-            raw = await call_groq(messages)
-            parsed = _extract_json(raw)
-
-            if parsed is None:
-                retry_messages = [
-                    {
-                        "role": "user",
-                        "content": prompt
-                        + "\n\nYour previous response was not valid JSON. Respond with ONLY the JSON object, nothing else.",
-                    }
-                ]
-                raw = await call_groq(retry_messages)
-                parsed = _extract_json(raw)
-
-            if parsed is not None:
-                result = _build_chat_answer(parsed, retrieved_paths)
-        except GroqUnavailableError:
-            pass
+        result = await answer_project_question(payload.question, retrieved)
 
         return {**result, "retrieved_files": [f["path"] for f in retrieved]}
     except Exception as exc:
