@@ -16,6 +16,7 @@ from services.analyzer import SOURCE_LANGUAGES, is_test_file
 from services.groq_client import GroqUnavailableError, call_groq
 from services.grounding import ground_issue
 from services.prompt_builder import build_quality_review_prompt
+from services.tracing import StageTracer
 
 # Bounds -- deliberately conservative. A 20000-file "scale test" project must
 # not translate into 20000 Groq calls; reviewing the largest/most-central
@@ -133,6 +134,7 @@ async def run_ai_quality_review(project: dict) -> dict:
     findings. Never raises -- a Groq/grounding failure just means fewer
     findings, not a broken project analysis (deterministic findings from
     analyze_project already ran and are untouched)."""
+    tracer = StageTracer("project_ai_review")
     eligible = _eligible_files(project)
     reviewed = eligible[:MAX_FILES_REVIEWED]
     skipped = eligible[MAX_FILES_REVIEWED:]
@@ -152,7 +154,8 @@ async def run_ai_quality_review(project: dict) -> dict:
             tasks.append(_review_chunk(path, language, chunk, semaphore))
             task_meta.append(path)
 
-    results = await asyncio.gather(*tasks) if tasks else []
+    with tracer.stage("groq_ms"):
+        results = await asyncio.gather(*tasks) if tasks else []
 
     all_findings = []
     groq_calls = 0
@@ -160,10 +163,12 @@ async def run_ai_quality_review(project: dict) -> dict:
         all_findings.extend(findings)
         groq_calls += 1 if called else 0
 
-    deduped = _dedupe_against_deterministic(all_findings, deterministic_by_file)
+    with tracer.stage("grounding_and_dedup_ms"):
+        deduped = _dedupe_against_deterministic(all_findings, deterministic_by_file)
     project.setdefault("findings", []).extend(deduped)
 
     coverage = {
+        "files_discovered": len(project.get("files", [])),
         "files_eligible": len(eligible),
         "files_reviewed": len(reviewed),
         "files_skipped": len(skipped),
@@ -171,6 +176,11 @@ async def run_ai_quality_review(project: dict) -> dict:
         "groq_calls": groq_calls,
         "ai_candidate_count": sum(len(f) for f, _ in results),
         "ai_finding_count": len(deduped),
+        "project_total_ms": tracer.total_ms(),
     }
     project["ai_review_coverage"] = coverage
+    tracer.count("files_reviewed", len(reviewed))
+    tracer.count("groq_calls", groq_calls)
+    tracer.count("ai_findings_accepted", len(deduped))
+    tracer.log()
     return coverage

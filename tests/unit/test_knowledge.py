@@ -47,7 +47,13 @@ async def test_embedding_fails_clearly_without_provider(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_retrieval_falls_back_when_vector_unavailable():
+async def test_retrieval_falls_back_when_vector_unavailable(monkeypatch):
+    # This environment's .env intentionally configures MONGO_URL (needed for
+    # the working RAG pipeline), and the fixed db.mongo lazy-init no longer
+    # spuriously fails cross-loop -- both good things this test should not
+    # rely on being broken. Simulate genuine unavailability explicitly via
+    # get_db() instead, matching the pattern the other tests in this file use.
+    monkeypatch.setattr(retrieval, "get_db", lambda: None)
     result = await retrieve_knowledge("hardcoded secret", language="python", category="security")
     assert result["mode"] == "deterministic_fallback"
     assert result["available"] is False
