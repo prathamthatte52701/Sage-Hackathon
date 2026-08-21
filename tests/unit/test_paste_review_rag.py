@@ -2,8 +2,9 @@ import json
 
 import pytest
 
+from models.schemas import Issue
 from routers import review as review_router
-from routers.review import ReviewRequestIn, detect_language, review
+from routers.review import ReviewRequestIn, detect_language, dedupe_ai_findings, drop_low_value_style_noise, review
 
 
 JS_UTILITY = """
@@ -59,6 +60,12 @@ async def test_paste_review_calls_knowledge_and_adds_quality_review(monkeypatch)
                     "knowledge_id": "CORRECT-GEN-001",
                     "rule_id": "CORRECT-GEN-001",
                     "title": "Validate numeric input before calculation",
+                    # Phase 5 removed the "title contains a generic bypass
+                    # word" shortcut that used to rescue a record with weak
+                    # lexical overlap -- this mock now needs genuine overlap
+                    # with what a real finding/query about this snippet
+                    # would say, same as a real KB record would need.
+                    "description": "Numeric values silently coerced to zero without validation are a correctness risk.",
                     "category": "correctness",
                     "retrieval_method": "semantic",
                     "relevance_reason": "Atlas Vector Search semantic match",
@@ -123,6 +130,53 @@ async def test_paste_review_calls_knowledge_and_adds_quality_review(monkeypatch)
         for record in issue.knowledge_standards
     }
     assert "CORRECT-GEN-001" in returned_ids
+
+
+def test_dedupe_ai_findings_merges_same_root_cause_different_wording():
+    # Mirrors the real OCR test: two candidates on the same line describing
+    # the same root cause (unsupported document_type) under different wording.
+    a = Issue(
+        line=20, category="correctness", severity="medium", confidence=0.7,
+        issue="unsupported document_type can cause KeyError",
+        evidence="_TEMPLATE_BY_TYPE[document_type]", source="ai_quality",
+    )
+    b = Issue(
+        line=21, category="correctness", severity="critical", confidence=0.6,
+        issue="document_type is not validated against known template keys",
+        evidence="_env.get_template(_TEMPLATE_BY_TYPE[document_type]).render()", source="ai_quality",
+    )
+    merged = dedupe_ai_findings([a, b])
+    assert len(merged) == 1
+    # higher severity of the two candidates wins
+    assert merged[0].severity == "critical"
+
+
+def test_dedupe_ai_findings_keeps_distinct_risks_on_nearby_lines():
+    a = Issue(
+        line=5, category="security", severity="medium", confidence=0.7,
+        issue="Hardcoded API key committed to source",
+        evidence="const key = 'sk-abc123';", source="ai_quality",
+    )
+    b = Issue(
+        line=6, category="reliability", severity="medium", confidence=0.7,
+        issue="No timeout on the outbound fetch call",
+        evidence="await fetch(url)", source="ai_quality",
+    )
+    merged = dedupe_ai_findings([a, b])
+    assert len(merged) == 2
+
+
+def test_drop_low_value_style_noise_removes_low_confidence_cosmetic_finding():
+    cosmetic = Issue(line=1, category="style", severity="low", confidence=0.4, issue="docstring has an extraneous leading quote")
+    substantive = Issue(line=2, category="best_practice", severity="low", confidence=0.7, issue="filename is not validated against an extension allowlist")
+    kept = drop_low_value_style_noise([cosmetic, substantive])
+    assert kept == [substantive]
+
+
+def test_drop_low_value_style_noise_keeps_confident_or_severe_style_finding():
+    confident_style = Issue(line=1, category="style", severity="low", confidence=0.8, issue="inconsistent naming convention obscures a real behavior difference")
+    kept = drop_low_value_style_noise([confident_style])
+    assert kept == [confident_style]
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,17 @@ from config import GROQ_API_KEYS, GROQ_API_URL, GROQ_MODEL
 COOLDOWN_SECONDS = 120
 TIMEOUT_SECONDS = 20
 MAX_ATTEMPTS = 3
-MAX_OUTPUT_TOKENS = 2000
+# GROQ_MODEL (openai/gpt-oss-120b) is a reasoning model: hidden chain-of-thought
+# tokens are billed against max_tokens before any "content" is emitted, and at
+# default reasoning effort that CoT is unbounded -- observed eating all 2000
+# tokens with 0 left for the JSON answer (finish_reason="length", content="",
+# reasoning_tokens=1998), non-deterministically, even at temperature=0.
+# reasoning_effort="low" is the real fix (observed reasoning_tokens ~115-235
+# instead of 700-2000, finish_reason="stop" every time). MAX_OUTPUT_TOKENS is
+# bumped too, as headroom against an occasional larger spike, not as the
+# primary fix.
+MAX_OUTPUT_TOKENS = 3000
+REASONING_EFFORT = "low"
 BACKOFF_BASE_SECONDS = 0.5  # attempt 1 waits 0s, attempt 2 waits 0.5s, attempt 3 waits 1.0s
 
 # 429 (rate limit) and 5xx (provider-side) are transient -- worth a retry,
@@ -67,6 +77,7 @@ async def call_groq(messages: list[dict], temperature: float = 0.0) -> str:
                         "messages": messages,
                         "temperature": temperature,
                         "max_tokens": MAX_OUTPUT_TOKENS,
+                        "reasoning_effort": REASONING_EFFORT,
                     },
                 )
             except httpx.TimeoutException as exc:

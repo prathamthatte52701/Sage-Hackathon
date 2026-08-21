@@ -170,6 +170,28 @@ def _exact_records(
     return exact
 
 
+def _record_lexical_score(record, query_tokens: set[str]) -> int:
+    searchable_tokens = _tokens(
+        " ".join(
+            [
+                record.rule_id, record.title, record.category, record.subcategory,
+                record.description, record.why_it_matters,
+                " ".join(record.detection_hints), " ".join(record.bad_patterns),
+                " ".join(record.language), " ".join(record.framework),
+            ]
+        )
+    )
+    return len(query_tokens & searchable_tokens)
+
+
+# Fallback only fires when vector search is unavailable (Mongo/embedding
+# provider down) -- there's no cosine score to lean on at all here, so this
+# floor is deliberately the sole gate: without it, "same language/category"
+# alone (the previous behavior) padded the response with whatever record
+# happened to match metadata first, regardless of actual topical relevance.
+_FALLBACK_MIN_LEXICAL_SCORE = 1
+
+
 def _fallback_records(
     language: str | None,
     frameworks: list[str] | None,
@@ -177,21 +199,38 @@ def _fallback_records(
     top_k: int,
     reason: str,
     exact: list[dict] | None = None,
+    query: str = "",
 ) -> dict:
     records = list(exact or [])
     language = (language or "").lower()
     framework_set = {f.lower() for f in frameworks or []}
     seen = {r.get("knowledge_id") or r.get("rule_id") for r in records}
+    query_tokens = _tokens(query)
+
+    # Phase 6: query-aware, not "first N metadata-compatible records". Score
+    # every metadata-eligible record by real lexical overlap with the query,
+    # keep only records that clear a minimum floor, and return fewer than
+    # top_k (including zero) rather than pad with unrelated standards just to
+    # fill slots -- an empty fallback is honest; a wrong one isn't.
+    scored: list[tuple[int, object]] = []
     for record in KNOWLEDGE_RECORDS:
         if not _record_matches_metadata(record, language, framework_set, category):
             continue
         if record.rule_id in seen:
             continue
+        score = _record_lexical_score(record, query_tokens) if query_tokens else 0
+        if query_tokens and score < _FALLBACK_MIN_LEXICAL_SCORE:
+            continue
+        scored.append((score, record))
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    for score, record in scored:
+        if len(records) >= top_k:
+            break
         doc = _record_to_doc(record, "deterministic_fallback", None, reason)
         records.append(doc)
         seen.add(record.rule_id)
-        if len(records) >= top_k:
-            break
+
     return {
         "mode": "deterministic_fallback",
         "available": False,
@@ -228,7 +267,7 @@ async def retrieve_knowledge(
     exact = _exact_records(query, language, frameworks, category, exact_rule_id) if include_exact else []
     db = get_db()
     if db is None:
-        return _fallback_records(language, frameworks, category, top_k, "mongodb_unavailable", exact)
+        return _fallback_records(language, frameworks, category, top_k, "mongodb_unavailable", exact, query)
 
     try:
         try:
@@ -288,4 +327,4 @@ async def retrieve_knowledge(
             "indexed_record_count": indexed_record_count,
         }
     except (EmbeddingConfigurationError, EmbeddingProviderError, Exception) as exc:
-        return _fallback_records(language, frameworks, category, top_k, f"vector_unavailable:{type(exc).__name__}", exact)
+        return _fallback_records(language, frameworks, category, top_k, f"vector_unavailable:{type(exc).__name__}", exact, query)

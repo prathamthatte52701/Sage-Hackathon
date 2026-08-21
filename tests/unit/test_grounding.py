@@ -77,6 +77,48 @@ def test_deterministic_finding_without_evidence_is_not_penalized():
     assert grounded is True
 
 
+FETCH_SOURCE = """
+async function loadUser(id) {
+  const response = await fetch(`/api/users/${id}`);
+  return response.json();
+}
+"""
+
+
+def test_absence_based_finding_is_grounded_when_evidence_is_real():
+    # The finding is about something MISSING (a timeout) -- missing_control
+    # correctly names an identifier ("AbortController") that will never
+    # appear in this source. It must not be checked against source, only
+    # "evidence" (the real fetch call) is.
+    issue = Issue(
+        line=3,
+        category="reliability",
+        issue="Outbound fetch call has no timeout",
+        evidence="const response = await fetch(`/api/users/${id}`);",
+        missing_control="AbortController / request timeout",
+        source="ai_quality",
+    )
+    grounded, reason = ground_issue(issue, FETCH_SOURCE)
+    assert grounded is True
+    assert reason == ""
+
+
+def test_fabricated_identifier_in_evidence_itself_is_still_rejected():
+    # missing_control is exempt, but stuffing the same fabricated identifier
+    # into "evidence" (where the schema says only real code belongs) must
+    # still be caught -- this is not a loophole around hallucination checks.
+    issue = Issue(
+        line=3,
+        category="reliability",
+        issue="Outbound fetch call has no timeout",
+        evidence="fetch() has no AbortSignalTimeoutWrapper configured",
+        source="ai_quality",
+    )
+    grounded, reason = ground_issue(issue, FETCH_SOURCE)
+    assert grounded is False
+    assert "abortsignaltimeoutwrapper" in reason
+
+
 def test_ground_issues_splits_grounded_and_rejected():
     good = Issue(line=3, category="logic", issue="ok", evidence="overspendCategory", source="ai_quality")
     bad = Issue(line=3, category="logic", issue="bad", evidence="overshootCategory", source="ai_quality")

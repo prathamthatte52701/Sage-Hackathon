@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from db.mongo import get_history, save_review
-from knowledge.retrieval import redact_sensitive_query_text, retrieve_knowledge
+from knowledge.retrieval import _GENERIC_QUERY_WORDS, redact_sensitive_query_text, retrieve_knowledge
 from knowledge.seed_data import KNOWLEDGE_RECORDS
 from models.schemas import FindingTransform, Issue, PasteFixRequest, ReviewRequest, ReviewResponse
 from services.patching import build_patch_metadata
@@ -251,28 +251,95 @@ def detect_language(code: str, selected_language: str) -> dict:
     }
 
 
+# (signal_key, KB-domain hint phrase, regex) -- scanned across the WHOLE
+# source (not just a truncated prefix) so a risk near the bottom of a long
+# file still surfaces. One representative line per matched signal is pulled
+# into the query instead of a raw truncated dump, so the query stays compact
+# (and useful to a 256-token local embedder) regardless of file length, and
+# the KB domain hints stay proportional to what's actually IN the file
+# instead of a fixed validation/numeric/date bias.
+_SIGNAL_PATTERNS: list[tuple[str, str, re.Pattern]] = [
+    ("llm_ai_provider", "external AI/LLM trust boundary, prompt injection, third-party data privacy, data minimization",
+     re.compile(r"\b(openai|groq|anthropic|chat/completions|chat\.completions|llm)\b", re.I)),
+    ("outbound_http", "external service reliability, outbound timeouts, malformed response handling",
+     re.compile(r"\bfetch\s*\(|\baxios\.|\brequests\.(get|post|put|delete)\(|\bhttpx\.")),
+    ("json_parsing", "malformed/untrusted response handling",
+     re.compile(r"JSON\.parse\(")),
+    ("cache_state", "caching, cache invalidation, stale derived data",
+     re.compile(r"\bcache\b", re.I)),
+    ("concurrency", "concurrency, request coalescing, duplicate concurrent generation",
+     re.compile(r"\bpending\w*\s*=|in-?flight|await\s+Promise\.all", re.I)),
+    ("process_local_state", "process-local mutable state, horizontal scalability",
+     re.compile(r"^\s*(let|const|var)\s+\w+\s*=\s*(\{\}|\[\]|null)\s*;?\s*$", re.MULTILINE)),
+    ("auth", "authentication, authorization, session/token handling",
+     re.compile(r"\b(jwt|authorization|req\.user|session)\b", re.I)),
+    ("database_query", "database consistency, data integrity, query correctness",
+     re.compile(r"\.find(One|ById)?\(|\.aggregate\(|\bSELECT\b|\.query\(|\.execute\(")),
+    ("unbounded_query", "resource bounds, pagination, unbounded payload",
+     re.compile(r"\.find\(\{\}\)|\.find\(\)")),
+    ("regex_construction", "regex built from user-controlled input",
+     re.compile(r"new RegExp\(|RegExp\(")),
+    ("date_parsing", "date validation, date handling",
+     re.compile(r"\bnew Date\(|Date\.parse\(")),
+    ("numeric_conversion", "numeric conversion, finite-number validation",
+     re.compile(r"\bNumber\(|parseInt\(|parseFloat\(")),
+    ("aggregation", "aggregation logic, correctness",
+     re.compile(r"\.reduce\(|\.aggregate\(")),
+]
+
+# Always-eligible baseline domains -- almost any snippet can legitimately cite
+# validation/correctness standards, so these aren't gated behind a signal
+# match the way the AI-boundary/caching/concurrency ones above are.
+_BASELINE_DOMAINS = "validation of supplied values, error handling, correctness"
+
+
+def _extract_whole_file_signals(code: str) -> tuple[list[str], list[str]]:
+    """Scans the FULL source once and returns (domain_hints, evidence_lines)
+    for every signal pattern that matched anywhere in the file -- not just in
+    a truncated prefix. evidence_lines holds one representative line per
+    matched signal, in source order of first match."""
+    lines = (code or "").splitlines()
+    domain_hints: list[str] = []
+    evidence_lines: list[str] = []
+    for _key, domain_hint, pattern in _SIGNAL_PATTERNS:
+        match = pattern.search(code or "")
+        if not match:
+            continue
+        domain_hints.append(domain_hint)
+        line_no = code.count("\n", 0, match.start())
+        line_text = lines[line_no].strip() if 0 <= line_no < len(lines) else match.group(0)
+        evidence_lines.append(line_text[:160])
+    return domain_hints, evidence_lines
+
+
 def build_paste_knowledge_query(code: str, language: str, deterministic_findings: list[Issue]) -> str:
-    """Pre-review query: built from deterministic findings (if any) + code
-    evidence, used to retrieve a small set of standards BEFORE the AI quality
-    review runs, so the reviewer knows what engineering risks to look for
-    instead of only decorating findings after the fact (see attach_issue_knowledge,
-    which runs post-hoc per finding — this is the pre-review counterpart)."""
+    """Pre-review query: built from deterministic findings + signals detected
+    across the WHOLE snippet (not a truncated prefix), used to retrieve a
+    small set of standards BEFORE the AI quality review runs, so the reviewer
+    knows what engineering risks to look for instead of only decorating
+    findings after the fact (see attach_issue_knowledge, which runs post-hoc
+    per finding — this is the pre-review counterpart)."""
     finding_terms = "\n".join(
         f"- {issue.category}: {issue.issue} line {issue.line}" for issue in deterministic_findings[:5]
     )
-    compact_code = "\n".join(line.strip() for line in (code or "").splitlines() if line.strip())
-    return redact_sensitive_query_text(
-        "\n".join(
-            [
-                f"PASTE CODE REVIEW LANGUAGE: {language}",
-                "Retrieve standards that match the concrete code behavior below: validation of supplied values, numeric conversion, default branches, date handling, aggregation logic, zero/empty edge cases, error handling, and correctness.",
-                f"Deterministic findings:\n{finding_terms or '(none)'}",
-                "Code evidence excerpt:",
-                compact_code,
-            ]
-        ),
-        max_chars=1400,
-    )
+    domain_hints, evidence_lines = _extract_whole_file_signals(code)
+    domains = ", ".join([_BASELINE_DOMAINS] + domain_hints)
+    evidence_block = "\n".join(f"- {line}" for line in evidence_lines) or "(no strong signal matched; see code excerpt below)"
+
+    parts = [
+        f"PASTE CODE REVIEW LANGUAGE: {language}",
+        f"Retrieve standards that match the concrete code behavior below, across these domains actually present in the snippet: {domains}.",
+        f"Deterministic findings:\n{finding_terms or '(none)'}",
+        "Representative evidence lines from across the whole snippet:",
+        evidence_block,
+    ]
+    if not domain_hints:
+        # No structural signal matched at all (e.g. a tiny/simple snippet) --
+        # fall back to a short raw excerpt so the query isn't just headers.
+        compact_code = "\n".join(line.strip() for line in (code or "").splitlines() if line.strip())
+        parts.append("Code evidence excerpt:")
+        parts.append(compact_code)
+    return redact_sensitive_query_text("\n".join(parts), max_chars=1400)
 
 
 def build_issue_knowledge_query(issue: Issue, code: str, language: str) -> str:
@@ -334,7 +401,13 @@ def _knowledge_for_client(knowledge: dict | None) -> dict:
     }
 
 
-_PASTE_STOPWORDS = {
+# Own paste-review-specific stopwords, unioned with knowledge/retrieval.py's
+# _GENERIC_QUERY_WORDS (reused rather than duplicated -- "api"/"request"/
+# "data"/"value" etc. are common enough across unrelated KB record titles
+# that sharing them proves nothing about topical relevance; this was
+# previously a much narrower local list that let e.g. a CORS record and a
+# pagination record falsely "overlap" a finding via generic words alone).
+_PASTE_STOPWORDS = _GENERIC_QUERY_WORDS | {
     "the", "and", "for", "with", "that", "this", "from", "code", "review", "match",
     "concrete", "behavior", "language", "javascript", "python", "typescript",
     "function", "return", "const", "let", "else", "current", "previous",
@@ -446,6 +519,20 @@ _ISSUE_TO_KB_CATEGORIES = {
 }
 
 
+def _framework_mismatch(record: dict, evidence_tokens: set[str]) -> bool:
+    """A KB record scoped to a specific framework (e.g. framework=["react"])
+    must not attach to a finding unless that framework is actually evidenced
+    -- callers here never pass a `frameworks` filter to retrieve_knowledge (no
+    framework is detected for a pasted snippet), so that scoping would
+    otherwise be completely inert and e.g. a React bundle-splitting record
+    could attach to a plain Express backend finding just by both being
+    javascript. "any" is always eligible."""
+    frameworks = [f for f in (record.get("framework") or []) if f and f != "any"]
+    if not frameworks:
+        return False
+    return not any(fw.lower() in evidence_tokens for fw in frameworks)
+
+
 def _requires_slicing_evidence_but_lacks_it(rule_id: str, evidence_lower: str) -> bool:
     """js_date_slice_without_validation is specifically about a slice/
     substring call on a date-like value -- it should never attach (whether
@@ -462,7 +549,12 @@ def rerank_issue_knowledge(knowledge: dict, issue: Issue, query: str, top_k: int
     evidence_lower = (issue.evidence or "").lower()
     selected = []
     seen = set()
-    allowed_categories = {"correctness", "api_design"} | _ISSUE_TO_KB_CATEGORIES.get(issue.category, set())
+    # No blanket "correctness/api_design are always eligible" bias -- a
+    # finding's own category is the sole source of which KB domains are
+    # relevant to it (Phase 5: this blanket was why an api_design-tagged
+    # pagination record could attach to an unrelated fail-open rate-limiter
+    # finding just by both existing).
+    allowed_categories = _ISSUE_TO_KB_CATEGORIES.get(issue.category, set())
 
     for doc in _seed_matches_for_issue(issue):
         if (doc.get("category") or "") not in allowed_categories:
@@ -480,9 +572,14 @@ def rerank_issue_knowledge(knowledge: dict, issue: Issue, query: str, top_k: int
             continue
         if _requires_slicing_evidence_but_lacks_it(key, evidence_lower):
             continue
+        if _framework_mismatch(record, evidence_tokens):
+            continue
         score = _record_overlap_score(record, evidence_tokens)
-        title = (record.get("title") or "").lower()
-        if score < 2 and not any(token in title for token in ("date", "numeric", "zero", "validation", "input")):
+        # No title-keyword bypass: a record whose title merely contains a
+        # common word like "validation" or "input" is not thereby relevant
+        # to THIS finding -- relevance must be earned via real token overlap
+        # with the finding's own evidence/category, every time, no exceptions.
+        if score < 2:
             continue
         selected.append(record)
         seen.add(key)
@@ -514,6 +611,81 @@ def dedupe_quality_against_deterministic(quality: list[Issue], deterministic: li
     return kept
 
 
+_SEVERITY_RANK = {"low": 0, "medium": 1, "critical": 2}
+_IDENTIFIER_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]{4,}")
+
+
+def _issue_theme_tokens(issue: Issue) -> set[str]:
+    return _paste_tokens(f"{issue.issue} {issue.category}")
+
+
+def _issue_identifiers(issue: Issue) -> set[str]:
+    """snake_case/camelCase-shaped identifiers (5+ chars) mentioned in the
+    finding. Two findings about the same variable/field (e.g. document_type)
+    are strong dedup evidence even when the surrounding prose differs enough
+    that plain theme-token overlap alone wouldn't clear a ratio threshold."""
+    text = f"{issue.issue} {issue.evidence}"
+    return {
+        tok.lower() for tok in _IDENTIFIER_RE.findall(text)
+        if "_" in tok or re.search(r"[a-z][A-Z]", tok)
+    }
+
+
+def dedupe_ai_findings(issues: list[Issue]) -> list[Issue]:
+    """Phase 9: AI-vs-AI semantic dedup. The model can describe the same root
+    cause twice in one response under different wording (observed: "unsupported
+    document_type can cause KeyError" and "document_type is not validated
+    against known template keys" for the same line) -- merge those instead of
+    surfacing both. Two candidates merge only when they're close in the file
+    AND (share a real code identifier the finding is about, e.g. document_type
+    -- the strongest signal two findings are about the same root cause -- OR
+    share enough general theme-token overlap); a shared line alone is not
+    enough (two genuinely distinct risks can legitimately sit on one line)."""
+    merged: list[Issue] = []
+    for issue in issues:
+        theme = _issue_theme_tokens(issue)
+        identifiers = _issue_identifiers(issue)
+        match_index = None
+        for index, existing in enumerate(merged):
+            if abs((existing.line or 0) - (issue.line or 0)) > 2:
+                continue
+            shared_identifier = bool(identifiers & _issue_identifiers(existing))
+            existing_theme = _issue_theme_tokens(existing)
+            overlap = len(theme & existing_theme) if theme and existing_theme else 0
+            smaller = min(len(theme), len(existing_theme)) or 1
+            strong_theme_overlap = overlap >= 2 and overlap / smaller >= 0.5
+            if shared_identifier or strong_theme_overlap:
+                match_index = index
+                break
+        if match_index is None:
+            merged.append(issue)
+            continue
+        existing = merged[match_index]
+        # Prefer higher severity, then higher confidence, then the more
+        # substantively supported candidate (longer evidence + fix).
+        merged[match_index] = max(
+            (existing, issue),
+            key=lambda i: (
+                _SEVERITY_RANK.get(i.severity, 0),
+                i.confidence,
+                len(i.evidence or "") + len(i.fix_suggestion or ""),
+            ),
+        )
+    return merged
+
+
+def drop_low_value_style_noise(issues: list[Issue]) -> list[Issue]:
+    """Phase 10: style analysis itself isn't disabled (deterministic style
+    rules and a confident/severe style finding both still surface) -- only a
+    low-severity, low-confidence cosmetic finding (e.g. "docstring has an
+    extraneous leading quote") is held back from the default review so it
+    doesn't compete for attention with security/reliability findings."""
+    return [
+        issue for issue in issues
+        if not (issue.category == "style" and issue.severity == "low" and issue.confidence < 0.6)
+    ]
+
+
 async def attach_issue_knowledge(issues: list[Issue], code: str, language: str, top_k: int = 3) -> list[Issue]:
     for index, issue in enumerate(issues):
         query = build_issue_knowledge_query(issue, code, language)
@@ -542,40 +714,40 @@ async def attach_issue_knowledge(issues: list[Issue], code: str, language: str, 
 
 
 def rerank_paste_knowledge(knowledge: dict, query: str, code: str, top_k: int = 4) -> dict:
+    """Phase 5/7: a single explainable relevance gate -- real lexical token
+    overlap with the snippet's own evidence -- instead of the previous mix of
+    ad hoc per-title/per-category string blockers (which only ever covered
+    the specific bad matches someone had already noticed) plus an unconditional
+    curated-record injection triggered by generic tokens like "amount"/"date"/
+    "type"/"transaction" appearing ANYWHERE in the snippet, regardless of
+    whether any actual finding supported that standard. Exact/curated matches
+    (retrieval_method != "semantic") already proved relevance upstream and
+    skip the lexical gate; semantic matches must earn real evidence overlap."""
     evidence_tokens = _paste_tokens(query + "\n" + code)
     selected = []
     seen = set()
 
     for record in knowledge.get("records", []):
-        category = (record.get("category") or "").lower()
-        title = (record.get("title") or "").lower()
-        if "stack trace" in title and not ({"stack", "trace", "client", "api", "response"} & evidence_tokens):
-            continue
-        if "api failure" in title and not ({"api", "fetch", "request", "response", "loading", "client"} & evidence_tokens):
-            continue
-        if category in {"security", "database", "performance"} and not ({"database", "query", "request", "http", "secret", "token"} & evidence_tokens):
-            continue
-        if "api" in title and not ({"api", "request", "response", "input", "validation", "external", "supplied"} & evidence_tokens):
-            continue
-        score = _record_overlap_score(record, evidence_tokens)
-        if score < 2:
-            continue
         key = record.get("knowledge_id") or record.get("rule_id")
-        if key and key not in seen:
+        if not key or key in seen:
+            continue
+        if (record.get("retrieval_method") or "") == "exact_rule":
+            # Already proved relevant via a deterministic title/phrase-overlap
+            # match upstream (knowledge/retrieval.py's _exact_records) -- no
+            # second lexical gate needed.
+            selected.append(record)
+            seen.add(key)
+        elif not _framework_mismatch(record, evidence_tokens):
+            # "semantic" (cosine-only, can still be topically-adjacent-but-
+            # irrelevant) and "deterministic_fallback" (no relevance signal
+            # at all, just same language/category) both need real overlap.
+            score = _record_overlap_score(record, evidence_tokens)
+            if score < 2:
+                continue
             selected.append(record)
             seen.add(key)
         if len(selected) >= top_k:
             break
-
-    value_validation_evidence = {"amount", "date", "type", "transaction", "transactions", "value", "validation", "supplied"} & evidence_tokens
-    if value_validation_evidence and "API-GEN-001" not in seen:
-        validation_record = _record_from_seed(
-            "API-GEN-001",
-            "curated_evidence_match",
-            "Pasted code uses supplied values without visible validation",
-        )
-        if validation_record:
-            selected.insert(0, validation_record)
 
     reranked = dict(knowledge)
     reranked["records"] = selected[:top_k]
@@ -690,6 +862,10 @@ async def review(payload: ReviewRequestIn):
         tracer.count("grounding_rejected", len(rejected))
         if rejected:
             print(f"[review] grounding rejected {len(rejected)}/{candidate_count} AI candidate(s): {rejected}")
+        pre_dedup_count = len(quality_issues)
+        quality_issues = dedupe_ai_findings(quality_issues)
+        tracer.count("ai_ai_duplicates_merged", pre_dedup_count - len(quality_issues))
+        quality_issues = drop_low_value_style_noise(quality_issues)
         quality_issues = dedupe_quality_against_deterministic(quality_issues, deterministic_issues)
         tracer.count("ai_findings_accepted", len(quality_issues))
         with tracer.stage("finding_rag_ms"):

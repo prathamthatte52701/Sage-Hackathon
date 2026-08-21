@@ -56,10 +56,38 @@ architecture, scalability, performance, external service reliability, privacy,
 prompt injection / AI boundary issues, resource bounds, maintainability, and
 production readiness.
 
+Also actively look for a MISSING safeguard when its absence is inferable from
+concrete code you can see, not only for things visibly wrong. Examples: an
+outbound HTTP/provider call with no timeout; a cached or derived result with
+no invalidation path when its source data changes; multiple related database
+writes with no transaction/rollback; an expensive operation (LLM call, heavy
+aggregation) with no guard against duplicate concurrent triggering; an external
+AI/LLM call receiving more raw user/financial fields than the prompt needs;
+untrusted text (user input, OCR/document extraction) concatenated into an LLM
+prompt with no data/instruction separation; an unbounded query, list, or
+payload; a regex built from user-controlled input; a numeric value used
+without a finite/range check. A missing-safeguard concern does not require
+that the missing thing's name (e.g. "AbortController") appear anywhere in the
+snippet -- it requires that the code performing the operation which needs that
+safeguard is visible in the snippet.
+
 Retrieved engineering knowledge is GUIDANCE ONLY, not proof that this snippet has
 an issue. Do not report a problem merely because a standard exists. Every issue
 you report MUST identify concrete evidence in the code, such as a line number,
 expression, branch, function, or exact behavior visible in the snippet.
+
+A concern about something MISSING (no timeout, no cache invalidation, no
+concurrency guard, no validation) is just as legitimate as a concern about
+something present, as long as it is anchored to real code you can point to.
+For an absence-based concern, keep "evidence" to the real code the missing
+safeguard should apply to (e.g. the fetch call itself), and name what's
+missing in "missing_control" instead of inventing an identifier and putting
+it in "evidence". Example: evidence="const response = await fetch(url, {...})",
+missing_control="AbortController / request timeout". Do not put a
+recommended fix's identifier (e.g. a library or API name you are suggesting
+they add) in "evidence" — that belongs in "fix_suggestion" or
+"missing_control". "evidence" is reserved for what the code actually
+contains right now.
 
 If an aspect cannot be inferred from this pasted snippet, do not turn it into an
 issue. Use this phrase in the summary when relevant:
@@ -96,7 +124,8 @@ Schema (follow EXACTLY, do not add or remove fields):
       "issue": "<short evidence-backed concern>",
       "fix_suggestion": "<concrete, actionable fix tied to the observed evidence>",
       "confidence": <number between 0 and 1>,
-      "evidence": "<quote or identify the exact code evidence that supports this concern>",
+      "evidence": "<quote or identify the exact code that exists right now and grounds this concern -- never an identifier you are proposing to add>",
+      "missing_control": "<name what safeguard/check is absent, ONLY if this is an absence-based concern, else empty string>",
       "knowledge_ids": ["<rule_id values from retrieved knowledge that helped, if any>"]
     }}
   ],

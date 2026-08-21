@@ -90,13 +90,54 @@ async def test_malformed_objectid_query_returns_relevant_domain():
 
 @pytest.mark.asyncio
 async def test_third_party_llm_privacy_query_returns_relevant_domain():
+    # Phase 4: this used to be a genuine KB coverage gap (no dedicated
+    # privacy/external-AI-boundary standard existed) -- AI-GEN-001 was added
+    # to close it, so this now asserts the real match instead of just "not
+    # obviously wrong".
     records = await _relevant_records("third-party LLM receives transaction amounts and dates")
+    rule_ids = _rule_ids(records)
     categories = _categories(records)
-    # this is a genuine KB coverage gap (no dedicated privacy/external-AI-
-    # boundary standard exists yet) -- assert it doesn't confidently return
-    # something actively wrong (e.g. a pure UI/frontend standard) rather
-    # than asserting a match that doesn't exist in the KB.
+    assert "AI-GEN-001" in rule_ids, f"expected the third-party AI data-minimization standard, got {rule_ids}"
+    assert "privacy" in categories
     assert "style" not in categories
+
+
+@pytest.mark.asyncio
+async def test_prompt_injection_query_returns_ai_boundary_standard():
+    records = await _relevant_records("untrusted OCR document text concatenated directly into an LLM prompt")
+    rule_ids = _rule_ids(records)
+    assert "AI-GEN-002" in rule_ids, f"expected the prompt-injection AI-boundary standard, got {rule_ids}"
+
+
+@pytest.mark.asyncio
+async def test_stale_cache_query_returns_cache_invalidation_standard():
+    records = await _relevant_records("cached generated insight is never invalidated when the source data changes")
+    rule_ids = _rule_ids(records)
+    assert "CACHE-GEN-001" in rule_ids, f"expected the cache-invalidation standard, got {rule_ids}"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_concurrent_generation_query_returns_coalescing_standard():
+    records = await _relevant_records("two concurrent requests both trigger the same expensive LLM generation with no in-flight guard")
+    rule_ids = _rule_ids(records)
+    assert "CONC-GEN-001" in rule_ids, f"expected the request-coalescing standard, got {rule_ids}"
+
+
+@pytest.mark.asyncio
+async def test_user_controlled_regex_finding_query_returns_regex_standard():
+    # Shaped like the real per-finding query (build_issue_knowledge_query),
+    # not a bare English sentence -- that's what the pipeline actually sends.
+    query = (
+        "PASTE FINDING LANGUAGE: javascript\n"
+        "TITLE: Search filter builds a RegExp directly from unescaped user query text\n"
+        "RULE: security\nCATEGORY: security\nLINE: 12\n"
+        "EVIDENCE: const filter = new RegExp(req.query.search);\n"
+        "REASON: Escape regex metacharacters before constructing the pattern.\n"
+        "LOCAL CODE CONTEXT:\nconst filter = new RegExp(req.query.search);\n"
+    )
+    records = await _relevant_records(query)
+    rule_ids = _rule_ids(records)
+    assert "SEC-GEN-014" in rule_ids, f"expected the user-controlled-regex standard, got {rule_ids}"
 
 
 @pytest.mark.asyncio

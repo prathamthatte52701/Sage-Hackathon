@@ -177,3 +177,29 @@ async def test_request_includes_bounded_max_tokens(monkeypatch):
     assert "max_tokens" in captured
     assert isinstance(captured["max_tokens"], int)
     assert captured["max_tokens"] > 0
+
+
+@pytest.mark.asyncio
+async def test_request_sets_low_reasoning_effort(monkeypatch):
+    # GROQ_MODEL is a reasoning model (openai/gpt-oss-120b): hidden
+    # chain-of-thought tokens are billed against max_tokens before any
+    # "content" is emitted. At default effort this was observed consuming
+    # the entire token budget (finish_reason="length", content="",
+    # reasoning_tokens=1998/2000), producing 0 findings on real snippets even
+    # though the model had real things to say. "low" keeps CoT bounded
+    # (observed ~115-235 reasoning tokens vs 700-2000) so content is reliably
+    # emitted. Regression guard: this must not silently regress back to the
+    # provider default.
+    captured = {}
+
+    class _CapturingClient(_FakeAsyncClient):
+        async def post(self, url, headers=None, json=None):
+            captured.update(json or {})
+            return await super().post(url, headers=headers, json=json)
+
+    fake = _CapturingClient([_FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})])
+    monkeypatch.setattr(groq_client.httpx, "AsyncClient", lambda timeout=None: fake)
+    monkeypatch.setattr(groq_client, "GROQ_API_KEYS", ["key-a"])
+
+    await call_groq([{"role": "user", "content": "hi"}])
+    assert captured.get("reasoning_effort") == "low"
