@@ -28,6 +28,23 @@ _SECRETISH_RE = re.compile(
     r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"][^'\"]+['\"]"
 )
 
+# Words common enough across many KB records' titles/hints/descriptions that
+# sharing them proves nothing about actual topical relevance (e.g. "user",
+# "request", and "data" appear in security, api_design, and reliability
+# records alike). Excluded from the exact-match overlap check below --
+# without this, a 2-token overlap threshold on raw tokens falsely marked
+# barely-related records (e.g. SQL injection, XSS) as "exact" 1.0-score
+# matches for a query about process-local caching, purely because both
+# mention "user" and "request".
+_GENERIC_QUERY_WORDS = {
+    "the", "and", "for", "with", "that", "this", "from", "code", "review",
+    "match", "concrete", "behavior", "language", "function", "return",
+    "const", "let", "else", "current", "previous", "not", "are", "was",
+    "has", "have", "its", "into", "when", "where", "what", "how", "using",
+    "used", "user", "users", "request", "requests", "data", "value",
+    "values", "field", "fields", "call", "calls", "value", "case", "cases",
+}
+
 
 def redact_sensitive_query_text(text: str, max_chars: int = 1200) -> str:
     redacted = _SECRETISH_RE.sub(r"\1 = \"[REDACTED]\"", text or "")
@@ -65,7 +82,9 @@ def _tokens(text: str) -> set[str]:
     tokens = set()
     for token in _WORD_RE.findall(text or ""):
         lowered = token.lower()
-        tokens.add(lowered[:-1] if len(lowered) > 4 and lowered.endswith("s") else lowered)
+        singular = lowered[:-1] if len(lowered) > 4 and lowered.endswith("s") else lowered
+        if singular not in _GENERIC_QUERY_WORDS:
+            tokens.add(singular)
     return tokens
 
 
@@ -134,7 +153,14 @@ def _exact_records(
             title_tokens = _tokens(record.title)
             hint_tokens = _tokens(" ".join(record.detection_hints + record.bad_patterns + [record.description]))
             phrase_hit = bool(record.title and record.title.lower() in query_lower)
-            strong_overlap = len(query_tokens & (title_tokens | hint_tokens)) >= 2
+            shared = query_tokens & (title_tokens | hint_tokens)
+            # Require both an absolute floor (>=2 shared specific tokens) and
+            # a proportional one (shared covers a real fraction of the
+            # query's own meaningful tokens) -- an absolute-only threshold
+            # let two incidental shared words falsely mark an unrelated
+            # record (e.g. an XSS standard) as an "exact" 1.0-score match
+            # for an unrelated query just because both mention "cache"/"process".
+            strong_overlap = len(shared) >= 2 and query_tokens and (len(shared) / len(query_tokens)) >= 0.3
             if phrase_hit or strong_overlap:
                 reason = "deterministic title/pattern match"
 

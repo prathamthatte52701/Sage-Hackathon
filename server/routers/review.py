@@ -12,6 +12,7 @@ from services.patching import build_patch_metadata
 from services.groq_client import GroqUnavailableError, call_groq
 from services.analyzers.rules import run_rules
 from services.grounding import ground_issues
+from services.tracing import StageTracer
 from services.prompt_builder import build_quality_review_prompt, build_transform_prompt
 
 router = APIRouter()
@@ -445,8 +446,20 @@ _ISSUE_TO_KB_CATEGORIES = {
 }
 
 
+def _requires_slicing_evidence_but_lacks_it(rule_id: str, evidence_lower: str) -> bool:
+    """js_date_slice_without_validation is specifically about a slice/
+    substring call on a date-like value -- it should never attach (whether
+    surfaced via curated match or semantic search) unless the finding's own
+    evidence shows one. Otherwise a merely date-adjacent finding gets
+    technique-specific guidance that doesn't apply to it."""
+    if rule_id != "js_date_slice_without_validation":
+        return False
+    return not any(token in evidence_lower for token in (".slice(", ".substring(", ".substr("))
+
+
 def rerank_issue_knowledge(knowledge: dict, issue: Issue, query: str, top_k: int = 3) -> dict:
     evidence_tokens = _paste_tokens(query)
+    evidence_lower = (issue.evidence or "").lower()
     selected = []
     seen = set()
     allowed_categories = {"correctness", "api_design"} | _ISSUE_TO_KB_CATEGORIES.get(issue.category, set())
@@ -455,7 +468,7 @@ def rerank_issue_knowledge(knowledge: dict, issue: Issue, query: str, top_k: int
         if (doc.get("category") or "") not in allowed_categories:
             continue
         key = doc.get("rule_id")
-        if key not in seen:
+        if key not in seen and not _requires_slicing_evidence_but_lacks_it(key, evidence_lower):
             selected.append(doc)
             seen.add(key)
 
@@ -464,6 +477,8 @@ def rerank_issue_knowledge(knowledge: dict, issue: Issue, query: str, top_k: int
         if not key or key in seen:
             continue
         if (record.get("category") or "") not in allowed_categories:
+            continue
+        if _requires_slicing_evidence_but_lacks_it(key, evidence_lower):
             continue
         score = _record_overlap_score(record, evidence_tokens)
         title = (record.get("title") or "").lower()
@@ -571,42 +586,56 @@ def rerank_paste_knowledge(knowledge: dict, query: str, code: str, top_k: int = 
 
 @router.post("/review", response_model=ReviewResponse)
 async def review(payload: ReviewRequestIn):
+    tracer = StageTracer("paste_review")
     try:
         language_detection = detect_language(payload.code, payload.language)
         effective_language = language_detection["effective"]
-        deterministic = _deterministic_review_response(payload.code, effective_language)
+        with tracer.stage("deterministic_ms"):
+            deterministic = _deterministic_review_response(payload.code, effective_language)
         deterministic_issues = deterministic.deterministic_findings
+        tracer.count("deterministic_findings", len(deterministic_issues))
 
         # Pre-review RAG: retrieve a small set of relevant standards BEFORE the
         # AI review runs, so the model knows what to check for instead of RAG
         # only decorating findings after they already exist (attach_issue_knowledge
         # below is the post-hoc, per-finding counterpart to this).
         pre_review_knowledge = None
-        try:
-            pre_review_query = build_paste_knowledge_query(payload.code, effective_language, deterministic_issues)
-            pre_review_knowledge = await retrieve_knowledge(pre_review_query, language=effective_language, top_k=6)
-            pre_review_knowledge = rerank_paste_knowledge(pre_review_knowledge, pre_review_query, payload.code, top_k=4)
-        except Exception as exc:
-            print(f"[review] pre-review knowledge retrieval failed, continuing without it: {type(exc).__name__}")
-            pre_review_knowledge = None
+        knowledge_queries = 0
+        with tracer.stage("pre_rag_ms"):
+            try:
+                pre_review_query = build_paste_knowledge_query(payload.code, effective_language, deterministic_issues)
+                pre_review_knowledge = await retrieve_knowledge(pre_review_query, language=effective_language, top_k=6)
+                knowledge_queries += 1
+                pre_review_knowledge = rerank_paste_knowledge(pre_review_knowledge, pre_review_query, payload.code, top_k=4)
+            except Exception as exc:
+                print(f"[review] pre-review knowledge retrieval failed, continuing without it: {type(exc).__name__}")
+                pre_review_knowledge = None
+        tracer.count("pre_rag_records", len((pre_review_knowledge or {}).get("records", [])))
 
         messages = [
             {"role": "user", "content": build_quality_review_prompt(payload.code, effective_language, pre_review_knowledge)}
         ]
         parsed = None
+        groq_calls = 0
         try:
-            raw = await call_groq(messages)
-            parsed = _extract_json(raw)
-
-            if parsed is None:
-                raw = await call_groq(messages)  # retry once
+            with tracer.stage("groq_ms"):
+                raw = await call_groq(messages)
+                groq_calls += 1
                 parsed = _extract_json(raw)
 
-            if parsed is None:
-                raw = await call_groq(messages)  # rotate key, retry again
-                parsed = _extract_json(raw)
+                if parsed is None:
+                    raw = await call_groq(messages)  # retry once
+                    groq_calls += 1
+                    parsed = _extract_json(raw)
+
+                if parsed is None:
+                    raw = await call_groq(messages)  # rotate key, retry again
+                    groq_calls += 1
+                    parsed = _extract_json(raw)
         except GroqUnavailableError:
-            deterministic_issues = await attach_issue_knowledge(deterministic_issues, payload.code, effective_language)
+            tracer.count("groq_calls", groq_calls)
+            with tracer.stage("finding_rag_ms"):
+                deterministic_issues = await attach_issue_knowledge(deterministic_issues, payload.code, effective_language)
             response = ReviewResponse(
                 issues=deterministic_issues,
                 deterministic_findings=deterministic_issues,
@@ -624,10 +653,17 @@ async def review(payload: ReviewRequestIn):
                 )
             except Exception as exc:
                 print(f"[review] failed to save deterministic review to mongo: {exc}")
+            tracer.count("ai_candidates", 0)
+            tracer.count("grounding_rejected", 0)
+            tracer.count("ai_findings_accepted", 0)
+            tracer.count("final_findings", len(response.issues))
+            tracer.log()
             return response
 
         if parsed is None:
-            deterministic_issues = await attach_issue_knowledge(deterministic_issues, payload.code, effective_language)
+            tracer.count("groq_calls", groq_calls)
+            with tracer.stage("finding_rag_ms"):
+                deterministic_issues = await attach_issue_knowledge(deterministic_issues, payload.code, effective_language)
             response = ReviewResponse(
                 issues=deterministic_issues,
                 deterministic_findings=deterministic_issues,
@@ -635,19 +671,32 @@ async def review(payload: ReviewRequestIn):
                 language_detection=language_detection,
                 summary=deterministic.summary + "; AI quality review unavailable (malformed model response)",
             )
+            tracer.count("ai_candidates", 0)
+            tracer.count("grounding_rejected", 0)
+            tracer.count("ai_findings_accepted", 0)
+            tracer.count("final_findings", len(response.issues))
+            tracer.log()
             return response
 
+        tracer.count("groq_calls", groq_calls)
         quality_issues, quality_summary = _build_quality_issues(parsed)
         candidate_count = len(quality_issues)
+        tracer.count("ai_candidates", candidate_count)
         # P0: mechanical source grounding. An AI candidate must not reach the
         # user just because its JSON parsed — verify its evidence and claimed
         # line actually exist in the source before accepting it.
-        quality_issues, rejected = ground_issues(quality_issues, payload.code)
+        with tracer.stage("grounding_ms"):
+            quality_issues, rejected = ground_issues(quality_issues, payload.code)
+        tracer.count("grounding_rejected", len(rejected))
         if rejected:
             print(f"[review] grounding rejected {len(rejected)}/{candidate_count} AI candidate(s): {rejected}")
         quality_issues = dedupe_quality_against_deterministic(quality_issues, deterministic_issues)
-        deterministic_issues = await attach_issue_knowledge(deterministic_issues, payload.code, effective_language)
-        quality_issues = await attach_issue_knowledge(quality_issues, payload.code, effective_language)
+        tracer.count("ai_findings_accepted", len(quality_issues))
+        with tracer.stage("finding_rag_ms"):
+            deterministic_issues = await attach_issue_knowledge(deterministic_issues, payload.code, effective_language)
+            quality_issues = await attach_issue_knowledge(quality_issues, payload.code, effective_language)
+            knowledge_queries += len(deterministic_issues) + len(quality_issues)
+        tracer.count("knowledge_queries", knowledge_queries)
         response = ReviewResponse(
             issues=deterministic_issues + quality_issues,
             deterministic_findings=deterministic_issues,
@@ -659,6 +708,7 @@ async def review(payload: ReviewRequestIn):
             ).strip(),
         )
         _apply_confidence_sanity_checks(response)
+        tracer.count("final_findings", len(response.issues))
 
         try:
             await save_review(
@@ -671,8 +721,10 @@ async def review(payload: ReviewRequestIn):
         except Exception as exc:
             print(f"[review] failed to save review to mongo: {exc}")
 
+        tracer.log()
         return response
     except Exception as exc:
+        tracer.log()
         print(f"[review] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=ERROR_RESPONSE)
 
