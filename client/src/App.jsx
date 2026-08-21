@@ -126,6 +126,19 @@ function scoreTone(score) {
   return "text-[var(--sage-danger)]";
 }
 
+// The 7 canonical project-health dimensions, in the fixed order they must
+// always render -- never derived from Object.entries(score.categories),
+// which would silently drop a dimension if the backend omitted a key.
+const HEALTH_DIMENSIONS = [
+  { key: "security", label: "Security" },
+  { key: "code_quality", label: "Code Quality" },
+  { key: "architecture", label: "Architecture" },
+  { key: "testing", label: "Testing" },
+  { key: "api_design", label: "API Design" },
+  { key: "performance", label: "Performance" },
+  { key: "production_readiness", label: "Production Readiness" },
+];
+
 function Panel({ children, className = "" }) {
   return <section className={cx("sage-panel rounded-[12px]", className)}>{children}</section>;
 }
@@ -408,13 +421,34 @@ function OverviewPage({ project, score, setActiveView, setQuestionSeed, setSelec
         </div>
 
         <div className="grid grid-cols-2 gap-2.5">
-          <DashboardMetric label="Project health" value={score ? overall.toFixed(1) : "--"} detail="/100" tone={scoreTone(overall)} />
+          <DashboardMetric
+            label="Project health"
+            value={score ? overall.toFixed(1) : "--"}
+            detail={score ? `${score.dimensions_evaluated ?? 0}/${score.dimensions_total ?? 7} dimensions assessed` : "/100"}
+            tone={scoreTone(overall)}
+          />
           <DashboardMetric label="Findings" value={findings.length} detail="Total issues" />
           <DashboardMetric label="Critical / High" value={(counts.critical || 0) + (counts.high || 0)} detail="Require attention" tone="text-[var(--sage-danger)]" />
           <DashboardMetric label="Files analyzed" value={files.length} detail="Total files" />
           <DashboardMetric label="Last analysis" value={score ? "Now" : "Pending"} detail="Current session" className="col-span-2" />
         </div>
       </section>
+
+      {score && (
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <p className="sage-mono text-[11px] uppercase tracking-[0.24em] text-[var(--sage-text-muted)]">Project health</p>
+            <span className="text-xs text-[var(--sage-text-muted)]">
+              {score.dimensions_evaluated ?? 0}/{score.dimensions_total ?? 7} dimensions assessed
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {HEALTH_DIMENSIONS.map((dim) => (
+              <HealthDimensionCard key={dim.key} label={dim.label} data={score.categories?.[dim.key]} />
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="grid gap-4 xl:grid-cols-[1fr_1fr_260px]">
         <Panel className="p-5">
@@ -476,6 +510,75 @@ function OverviewPage({ project, score, setActiveView, setQuestionSeed, setSelec
         </Panel>
       </section>
     </div>
+  );
+}
+
+function HealthDimensionCard({ label, data }) {
+  const [expanded, setExpanded] = useState(false);
+  const status = data?.status || "not_evaluated";
+  const score = typeof data?.score === "number" ? data.score : null;
+  const findingCount = data?.finding_count ?? 0;
+  const deductions = data?.deductions ?? [];
+
+  const state = status === "not_evaluated" ? "not_assessed" : score >= 80 ? "healthy" : score >= 60 ? "attention" : "risk";
+  const dotTone = {
+    healthy: "bg-[var(--sage-success)]",
+    attention: "bg-[var(--sage-warning)]",
+    risk: "bg-[var(--sage-danger)]",
+    not_assessed: "bg-[var(--sage-text-faint)]",
+  }[state];
+  const textTone = {
+    healthy: "text-[var(--sage-success)]",
+    attention: "text-[var(--sage-warning)]",
+    risk: "text-[var(--sage-danger)]",
+    not_assessed: "text-[var(--sage-text-muted)]",
+  }[state];
+  const stateLabel = { healthy: "Healthy", attention: "Needs attention", risk: "High risk", not_assessed: "Not assessed" }[state];
+  const canExpand = deductions.length > 0;
+
+  return (
+    <button
+      type="button"
+      onClick={() => canExpand && setExpanded((v) => !v)}
+      className={cx(
+        "sage-panel w-full rounded-[12px] p-4 text-left transition-colors",
+        canExpand ? "cursor-pointer hover:border-[var(--sage-border-accent)]" : "cursor-default"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", dotTone)} />
+        <p className="truncate text-sm font-medium text-[var(--sage-text-primary)]">{label}</p>
+        {status === "partial" && (
+          <span className="sage-mono ml-auto shrink-0 rounded border border-[var(--sage-border-default)] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[var(--sage-text-muted)]">
+            Partial
+          </span>
+        )}
+      </div>
+      <div className={cx("mt-2 text-2xl font-semibold tabular-nums", textTone)}>
+        {score === null ? "—" : score}
+        <span className="ml-1 text-xs font-normal text-[var(--sage-text-muted)]">/ 100</span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/30">
+        <div className={cx("h-full rounded-full", dotTone)} style={{ width: score === null ? "0%" : `${score}%` }} />
+      </div>
+      <div className="mt-2 flex items-center justify-between text-xs">
+        <span className="text-[var(--sage-text-muted)]">
+          {findingCount} finding{findingCount === 1 ? "" : "s"}
+        </span>
+        <span className={textTone}>{stateLabel}</span>
+      </div>
+      {expanded && (
+        <div className="mt-3 space-y-1.5 border-t border-[var(--sage-border-subtle)] pt-2.5">
+          {deductions.slice(0, 2).map((d, i) => (
+            <p key={i} className="text-[11px] leading-4 text-[var(--sage-text-secondary)]">
+              {d.severity && <span className="sage-mono uppercase text-[var(--sage-text-muted)]">{d.severity} </span>}
+              {d.reason}
+              {typeof d.amount === "number" && <span className="text-[var(--sage-danger)]"> -{d.amount}</span>}
+            </p>
+          ))}
+        </div>
+      )}
+    </button>
   );
 }
 
