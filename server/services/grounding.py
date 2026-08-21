@@ -14,6 +14,16 @@ Two checks, in order:
    source. A wholesale token mismatch (an evidence quote built mostly from
    names that don't exist anywhere in the file) is the hallucination
    signature this exists to catch.
+
+Deliberately NOT checked against the source: Issue.missing_control,
+Issue.fix_suggestion, Issue.issue. A finding about something ABSENT (no
+timeout, no cache invalidation, no concurrency guard) legitimately names an
+identifier that will never appear in the source -- that's the whole point of
+the finding. The schema (see build_quality_review_prompt) asks the model to
+put what actually exists in "evidence" and what's missing in
+"missing_control" precisely so this mechanical check only ever verifies the
+"exists" half, never penalizing a finding for correctly describing an
+absence.
 """
 
 import re
@@ -83,10 +93,24 @@ def ground_issue(issue, code: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _reason_code(reason: str) -> str:
+    """Phase 13 (dev/trace only, never sent to the client -- see StageTracer's
+    docstring): a stable machine-readable bucket for a free-text rejection
+    reason, so "why did this snippet produce 0 findings" can be answered by
+    counting codes in server logs instead of eyeballing prose every time."""
+    if "outside the source range" in reason:
+        return "invalid_line"
+    if "no evidence quote provided" in reason:
+        return "no_source_evidence"
+    if "identifiers not found anywhere in source" in reason:
+        return "claimed_identifier_missing"
+    return "other"
+
+
 def ground_issues(issues: list, code: str) -> tuple[list, list[dict]]:
     """Filters a list of Issue objects, returning (grounded_issues, rejected).
-    `rejected` is a list of {"issue": <short label>, "reason": <str>} for
-    logging/telemetry — never shown to the end user."""
+    `rejected` is a list of {"issue": <short label>, "reason": <str>,
+    "reason_code": <str>} for logging/telemetry — never shown to the end user."""
     grounded = []
     rejected = []
     for issue in issues:
@@ -94,5 +118,10 @@ def ground_issues(issues: list, code: str) -> tuple[list, list[dict]]:
         if ok:
             grounded.append(issue)
         else:
-            rejected.append({"issue": getattr(issue, "issue", ""), "line": getattr(issue, "line", None), "reason": reason})
+            rejected.append({
+                "issue": getattr(issue, "issue", ""),
+                "line": getattr(issue, "line", None),
+                "reason": reason,
+                "reason_code": _reason_code(reason),
+            })
     return grounded, rejected

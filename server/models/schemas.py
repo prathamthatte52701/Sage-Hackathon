@@ -26,6 +26,7 @@ class Issue(BaseModel):
     needs_human_review: bool = False
     rule: str = ""
     evidence: str = ""
+    missing_control: str = ""
     source: Literal["deterministic", "ai_quality"] | str = ""
     knowledge_standards: list[dict] = []
 
