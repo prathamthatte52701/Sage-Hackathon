@@ -128,6 +128,154 @@ The same server-side identity travels through every project, job, finding, file,
 
 ---
 
+## Exact Project Flow and API Contract
+
+This section documents the request sequence used by the project workspace. It is the contract the frontend follows today.
+
+### 1. Create a project
+
+Choose one ingestion path:
+
+```text
+POST /api/projects/upload
+Content-Type: multipart/form-data
+
+file       = repository.zip
+session_id = browser-session-id
+```
+
+or:
+
+```json
+POST /api/projects/github
+{
+  "repo_url": "owner/repository",
+  "session_id": "browser-session-id"
+}
+```
+
+The backend assigns the owner from `get_request_user()`. `session_id` supports client history/UX; it is not an authorization identity. A successful response includes `project_id`, normalized project metadata, and any ingestion warnings.
+
+### 2. Analyze asynchronously
+
+```text
+POST /api/projects/{project_id}/analyze
+-> 202 Accepted
+{
+  "job_id": "...",
+  "status": "queued",
+  "created": true
+}
+```
+
+The client polls:
+
+```text
+GET /api/analysis-jobs/{job_id}
+```
+
+Possible job states are:
+
+```text
+queued -> running -> completed
+                 -> partial
+                 -> failed
+```
+
+For a duplicate request while the same project is already being analyzed, the backend returns the existing active job rather than running another expensive analysis.
+
+### 3. Load report and score
+
+After a terminal successful job state, the client refreshes the project and score:
+
+```text
+GET  /api/projects/{project_id}
+POST /api/projects/{project_id}/score
+```
+
+The project response carries findings, analysis state, and source metadata. It intentionally does not need to hydrate every GridFS-backed source file. The UI loads a selected file only when needed:
+
+```text
+GET /api/projects/{project_id}/files/{file_path}
+```
+
+### 4. Operate on a stable finding
+
+Every analyzed finding has a deterministic `finding_id`. New frontend calls use that identity, never a synthetic `finding_index = -1` fallback.
+
+```json
+POST /api/projects/{project_id}/findings/reason
+{ "finding_id": "stable-finding-id" }
+```
+
+```json
+POST /api/projects/{project_id}/findings/transform
+{ "finding_id": "stable-finding-id" }
+```
+
+The transform response contains the proposed original/replacement snippets, diff, source hash, target span, `can_apply`, a specific `apply_failure_reason`, and backend-produced validation checks.
+
+### 5. Apply exactly once
+
+```json
+POST /api/projects/{project_id}/fixes/apply
+{ "finding_id": "stable-finding-id" }
+```
+
+The patch engine validates the current stored file before it writes:
+
+```text
+original target exists
+target occurs exactly once
+stored source hash still matches
+replacement is well formed
+patch does not overlap an existing affected span
+```
+
+Only the selected file is changed. A successful apply increments `source_revision` and leaves the previous analysis stale until rescan. Reapplying an already-applied or stale transform is rejected instead of modifying the file again.
+
+### 6. Reanalyze the stored source
+
+```text
+POST /api/projects/{project_id}/reanalyze
+-> 202 Accepted { job_id, status, created }
+```
+
+Reanalysis uses the same analysis pipeline as the initial scan. It does not rerun the replacement or depend on an old finding. Once its job completes, the client repeats the project and score refresh:
+
+```text
+GET  /api/projects/{project_id}
+POST /api/projects/{project_id}/score
+```
+
+At rest, freshness is expressed by the revision relationship:
+
+```text
+analysis_revision == source_revision  -> report describes current stored source
+analysis_revision != source_revision  -> report is stale; reanalysis is required
+```
+
+### 7. Export the resulting project
+
+```text
+GET /api/projects/{project_id}/download-fixed
+```
+
+The backend streams a ZIP from persisted project state. It includes changed source plus preserved unrelated text and binary project files, while refusing unsafe archive paths.
+
+### Failure semantics
+
+| Situation | Expected behavior |
+| --- | --- |
+| Invalid archive or GitHub URL | Controlled `400` with an actionable error message |
+| Project, job, or file is not owned/does not exist | Controlled `404` without leaking another project's data |
+| Analysis cannot complete | Job becomes `failed` or `partial`; the UI does not claim a clean scan |
+| AI enrichment fails | Deterministic results remain; coverage is marked partial where applicable |
+| Generated patch no longer matches source | Controlled `409`/validation failure; source is unchanged |
+| File source cannot be loaded | UI shows `Source unavailable`, not generated placeholder code |
+
+---
+
 ## What You Can Do Today
 
 - Review pasted Python, JavaScript, TypeScript, Java, or C/C++ snippets.
