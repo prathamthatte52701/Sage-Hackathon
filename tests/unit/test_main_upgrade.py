@@ -198,5 +198,7 @@ async def test_partial_semantic_analysis_records_partial_coverage(monkeypatch):
     assert coverage["semantic_coverage"] == "partial"
     assert coverage["eligible_files"] == 45
     assert coverage["ai_reviewed_files"] == 40
+    assert coverage["ai_finding_count"] == 0
+    assert project["findings"] == []
     assert coverage["files_skipped"] == 5
     assert coverage["partial_reasons"]

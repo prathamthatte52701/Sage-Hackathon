@@ -137,7 +137,9 @@ def _exact_records(
             continue
 
         reason = ""
-        if exact_rule_id and record.rule_id.lower() == exact_rule_id.lower():
+        if exact_rule_id:
+            if record.rule_id.lower() != exact_rule_id.lower():
+                continue
             reason = "explicit rule_id match"
         else:
             searchable = " ".join(
@@ -265,6 +267,15 @@ async def retrieve_knowledge(
     include_exact: bool = True,
 ) -> dict:
     exact = _exact_records(query, language, frameworks, category, exact_rule_id) if include_exact else []
+    if exact_rule_id:
+        return {
+            "mode": "exact_rule_only",
+            "available": bool(exact),
+            "reason": "" if exact else "no_exact_rule_guidance",
+            "records": exact[:top_k],
+            "seed_record_count": len(KNOWLEDGE_RECORDS),
+            "indexed_record_count": None,
+        }
     db = get_db()
     if db is None:
         return _fallback_records(language, frameworks, category, top_k, "mongodb_unavailable", exact, query)

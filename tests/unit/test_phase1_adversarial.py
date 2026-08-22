@@ -142,7 +142,10 @@ class TestCoverage:
         assert coverage["ai_chunks_completed"] == 1
         assert coverage["failed_ai_chunks"] == 1
         assert coverage["semantic_coverage"] == "partial"
+        assert coverage["ai_candidate_count"] == 1
+        assert coverage["ai_finding_count"] == 0
         assert any(f["rule"] == "dangerous_eval" for f in project["findings"])
+        assert all(f.get("source") != "ai_quality" for f in project["findings"])
 
     @pytest.mark.asyncio
     async def test_zero_eligible_files_has_sensible_complete_zero_coverage(self):
@@ -166,7 +169,8 @@ class TestDeduplication:
         }
         ai = {**deterministic, "rule": "ai_quality_security", "severity": "critical", "message": "CORS allows all origins", "source": "ai_quality"}
         assert _dedupe_against_deterministic([ai], {"app.py": [deterministic]}) == []
-        assert deterministic["severity"] == "critical"
+        assert deterministic["severity"] == "medium"
+        assert deterministic["message"] == "Wildcard CORS"
         assert deterministic["evidence"] == "allow_origins=['*']"
 
     def test_two_legitimate_same_line_vulnerabilities_remain_distinct(self):

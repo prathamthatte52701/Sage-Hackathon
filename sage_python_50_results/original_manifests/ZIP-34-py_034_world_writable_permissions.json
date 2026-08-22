@@ -1,0 +1,24 @@
+{
+  "zip": "py_034_world_writable_permissions.zip",
+  "sha256": "edd28a04e7bb4a8a12dcff36488985f62a2dc910942a2f84dfdcaaa48d4785fa",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 604,
+      "sha256": "79ad52a40ff2d18f007b23d88c1554c2abad05d00c47e755d46a29a09ddd0b89",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 109,
+      "sha256": "146e3f3b89376cd466c907170285ceb06851edd31a80945268b27f74ec1831ab",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 181,
+      "sha256": "cc01358f417aa5c8476f351c79eba47a95f64e8babe4f98661515fc02ebc5173",
+      "type": "text"
+    }
+  ]
+}

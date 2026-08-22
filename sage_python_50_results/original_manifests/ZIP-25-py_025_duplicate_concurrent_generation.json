@@ -1,0 +1,24 @@
+{
+  "zip": "py_025_duplicate_concurrent_generation.zip",
+  "sha256": "7ca92a5f07d3c0e9055708d498a552c2f131d72d5a5403ee57277c8722c6488a",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 634,
+      "sha256": "869d7db32176a252d4eabe2bd30c49df9f788c8a69799c17bdf650242a748ca5",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 106,
+      "sha256": "723bd1c22db5c1b6374adeec4a3b876ef2d276ab9143115abbb5a62448e33f51",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 341,
+      "sha256": "72b4610ba01866b1df4822ba16af5af8dfb9bbdb394031f356d30c97b9d7c06d",
+      "type": "text"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "zip": "py_021_global_counter_race.zip",
+  "sha256": "a08ccb026fa7c270245eb6cd316c8921e2ccf55d73c9fc4cd054cee0aaa6aba9",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 602,
+      "sha256": "31711dda4f8a58dae58b4fbf46a82d8536a692b221e2131c3a42385c970ab5bf",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 82,
+      "sha256": "619b00b9957ece3ad17a9188158c57a8a88391fece8f59c17d754498e599d3fd",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 158,
+      "sha256": "bb7643810384c98b3a8e85ae732132b38fc92eb610d52955a1fd65e49d8b2bfb",
+      "type": "text"
+    }
+  ]
+}

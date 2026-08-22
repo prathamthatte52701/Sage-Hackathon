@@ -1,0 +1,30 @@
+{
+  "zip": "py_039_third_party_ai_privacy.zip",
+  "sha256": "51b56d4ae3d89c6616dcf4811c8e223848d5739f415e02cbf63adeca60224e58",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 700,
+      "sha256": "1d02b5c7ae5bc84ac5253e3e977bbe79c11ce1e65549c70a935f470d0c029a94",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 93,
+      "sha256": "abc8e31b7e927797e8cc922764e7502ed6cf497bb42d0e4e22b58865aadf8e36",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 283,
+      "sha256": "bb8ba9ee9bc44c3fa15852331da0e23cc6da87c905438d9a680fe46964a8b4d4",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "4b8183101fd19f071771805a42a31fbb234a7961921fdb8b783a279755a1b5d5",
+      "type": "text"
+    }
+  ]
+}

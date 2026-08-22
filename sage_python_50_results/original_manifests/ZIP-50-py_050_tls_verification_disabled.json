@@ -1,0 +1,30 @@
+{
+  "zip": "py_050_tls_verification_disabled.zip",
+  "sha256": "a1c66af989a6495cbfb6e77dbfdeeeeece473e6d1dd05abe9468c09f8d690129",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 863,
+      "sha256": "865efabdc2b8049983876b134a8f2b8424532812d0cd7baf3da883c68444d68d",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 105,
+      "sha256": "f30ec78a1c52647f61cbb3dcb2ba430adb99a3c3058ce4192748e71a79c4a638",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 136,
+      "sha256": "7b7fdb824da6412ddb965a98d4824742c75443e1e07f5ff0f1642ccf889539f8",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "4b8183101fd19f071771805a42a31fbb234a7961921fdb8b783a279755a1b5d5",
+      "type": "text"
+    }
+  ]
+}

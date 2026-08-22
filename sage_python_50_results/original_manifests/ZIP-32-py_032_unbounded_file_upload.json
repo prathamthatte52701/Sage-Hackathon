@@ -1,0 +1,30 @@
+{
+  "zip": "py_032_unbounded_file_upload.zip",
+  "sha256": "13b3d129e713f4841e110de063af928bc66b527b1896b6499136448f181ce1e7",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 863,
+      "sha256": "1089f4c04f1991fb71f02f735f46fb4d868cfa0c12f59ebe17818f8a6e4df270",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 115,
+      "sha256": "4b8b10ceafbca1e90300d6c83303c62d6b8c3e9cbcfb0d2313d785697833f098",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 242,
+      "sha256": "ceb02a078c8adace30d5138a3161eeaf07ae878c29419593bd1a772c5253a0c4",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "73fb365065be5f54d66cbfc7d896797d2d869cd27a084b4efd701a4a062d5f02",
+      "type": "text"
+    }
+  ]
+}

@@ -74,6 +74,8 @@ async def _run(code: str, language: str = "javascript") -> list[Issue]:
         ReviewRequestIn(code=code, language=language, session_id="benchmark-test"),
         current_user={"_id": "test-user"},
     )
+    if "AI quality review unavailable" in (response.summary or ""):
+        pytest.skip(response.summary)
     return response.deterministic_findings + response.ai_quality_review
 
 

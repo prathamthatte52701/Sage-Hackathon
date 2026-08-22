@@ -161,7 +161,13 @@ export default function FindingExplorer({
           ) : (
             filteredFindings.map((finding, idx) => {
               const isSelected = activeFinding === finding;
-              const isDeterministic = finding.source === "AST" || Boolean(finding.line);
+              const isDeterministic =
+                finding.deterministic_evidence === true ||
+                finding.source === "deterministic" ||
+                finding.source === "AST" ||
+                String(finding.evidence_type || "").startsWith("deterministic") ||
+                String(finding.evidence_type || "").startsWith("ast_") ||
+                String(finding.evidence_type || "").startsWith("literal_");
               const isGrounded = finding.grounded !== false;
 
               return (

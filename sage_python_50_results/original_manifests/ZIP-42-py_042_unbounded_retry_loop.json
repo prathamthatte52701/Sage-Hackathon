@@ -1,0 +1,30 @@
+{
+  "zip": "py_042_unbounded_retry_loop.zip",
+  "sha256": "905783ab302455d2ebd1528a6aef336c47e5a7abc5c3a4c50867bbe2cd0f33c3",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 591,
+      "sha256": "1cd86e191bdd122b48b53e1e740d4c15919f1d0d24675d88ade89138a606519d",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 84,
+      "sha256": "5dc626271134dac4917a157a546f3a5e733ad5279c044d685fffaa8e07e289c3",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 234,
+      "sha256": "05ccd740f1a82f80e9854ea292e691bee11f49143aa4d82cda1c6dcfe4b418a0",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "4b8183101fd19f071771805a42a31fbb234a7961921fdb8b783a279755a1b5d5",
+      "type": "text"
+    }
+  ]
+}

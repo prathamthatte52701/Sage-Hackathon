@@ -502,7 +502,10 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
     # survive -- nothing AI-produced can pass (see services/security_rules.py).
     # `findings` itself is untouched so existing scoring/UI keep working;
     # later phases switch the primary product surface to this field.
+    analyzed["all_findings"] = analyzed.get("findings", [])
     analyzed["security_findings"] = to_closed_world_findings(analyzed.get("findings", []))
+    _assign_finding_ids(analyzed["security_findings"])
+    analyzed["findings"] = analyzed["security_findings"]
 
     updates = {
         key: analyzed.get(key, [])
@@ -516,6 +519,7 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
             "configs",
             "deploymentFiles",
             "findings",
+            "all_findings",
             "warnings",
             "structuralMetadata",
             "security_findings",
@@ -546,7 +550,7 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
         }
     return {
         "project_id": project_id,
-        "finding_count": len(analyzed.get("findings", [])),
+        "finding_count": len(analyzed.get("security_findings", [])),
         "analysis_revision": updates["analysis_revision"],
         "partial": updates["analysis_status"] == "partial",
     }

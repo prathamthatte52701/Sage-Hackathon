@@ -1,0 +1,30 @@
+{
+  "zip": "py_009_jwt_signature_disabled.zip",
+  "sha256": "d6e7b95d974f1eb106857ec7c983015d6baeaf9f162ad5ab1c8a49694087513f",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 584,
+      "sha256": "2579e9223a018a6ab93f4862353aec49bd26858a952d7ac9384ca4f1d201e81c",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 93,
+      "sha256": "cd110700c9cd9b5d38de9b31b39b1667c2c0a5d932a8b2641fedcf2273c9f2d7",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 114,
+      "sha256": "e370eb516d0b3d8feba5b2510d82b2209db5c4adf904cf91c82b54a625194446",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 13,
+      "sha256": "d9d2b0fdf77e23f709582415f3a436ecc6494110e0a5324fdb58ca87f7b68d0a",
+      "type": "text"
+    }
+  ]
+}

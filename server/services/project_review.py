@@ -10,6 +10,7 @@ uncontrolled Groq calls for a large project.
 """
 
 import asyncio
+import copy
 import re
 
 from models.schemas import Issue
@@ -251,15 +252,10 @@ def _same_source_location_duplicate(qf: dict, deterministic: dict, file_contents
 
 def _merge_duplicate(base: dict, incoming: dict) -> dict:
     merged = dict(base)
-    if _SEVERITY_RANK.get(incoming.get("severity"), 0) > _SEVERITY_RANK.get(base.get("severity"), 0):
-        merged["severity"] = incoming.get("severity")
-        merged["message"] = incoming.get("message") or merged.get("message")
     sources = set(str(merged.get("source", "deterministic")).split("+"))
     sources.add(incoming.get("source") or "deterministic")
     merged["source"] = "+".join(sorted(s for s in sources if s))
     merged["confidence"] = "high" if "deterministic" in merged["source"] else merged.get("confidence", "medium")
-    if incoming.get("fix_suggestion") and not merged.get("fix_suggestion"):
-        merged["fix_suggestion"] = incoming.get("fix_suggestion")
     base.update(merged)
     return merged
 
@@ -341,10 +337,9 @@ async def _review_chunk(path: str, language: str, chunk: str, semaphore: asyncio
 async def run_ai_quality_review(project: dict) -> dict:
     """Runs AI quality review across eligible project source files, bounded
     and concurrency-limited. Returns coverage metadata; mutates
-    project["findings"] in place by appending grounded, deduplicated AI
-    findings. Never raises -- a Groq/grounding failure just means fewer
-    findings, not a broken project analysis (deterministic findings from
-    analyze_project already ran and are untouched)."""
+    project["ai_review_coverage"] only. AI review is not an authoritative
+    finding creator: deterministic findings from analyze_project remain the
+    sole active findings."""
     tracer = StageTracer("project_ai_review")
     eligible = _eligible_files(project)
     reviewed = eligible[:MAX_FILES_REVIEWED]
@@ -379,8 +374,7 @@ async def run_ai_quality_review(project: dict) -> dict:
         groq_calls += 1 if called else 0
 
     with tracer.stage("grounding_and_dedup_ms"):
-        deduped = _dedupe_against_deterministic(all_findings, deterministic_by_file, file_contents)
-    project.setdefault("findings", []).extend(deduped)
+        _dedupe_against_deterministic([dict(finding) for finding in all_findings], copy.deepcopy(deterministic_by_file), file_contents)
 
     coverage = {
         "files_discovered": len(project.get("files", [])),
@@ -400,12 +394,12 @@ async def run_ai_quality_review(project: dict) -> dict:
         + ([f"{len(tasks) - groq_calls} AI chunk(s) failed or were skipped"] if len(tasks) != groq_calls else [])
         + ([f"AI call budget of {PROJECT_AI_CALL_BUDGET} reached"] if len(tasks) >= PROJECT_AI_CALL_BUDGET else []),
         "ai_candidate_count": sum(len(f) for f, _ in results),
-        "ai_finding_count": len(deduped),
+        "ai_finding_count": 0,
         "project_total_ms": tracer.total_ms(),
     }
     project["ai_review_coverage"] = coverage
     tracer.count("files_reviewed", len(reviewed))
     tracer.count("groq_calls", groq_calls)
-    tracer.count("ai_findings_accepted", len(deduped))
+    tracer.count("ai_findings_accepted", 0)
     tracer.log()
     return coverage

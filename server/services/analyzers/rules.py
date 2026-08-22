@@ -794,6 +794,19 @@ def _python_ssrf_sink_name(call: ast.Call, modules: dict[str, str], functions: d
     return ""
 
 
+def _python_url_like_parameter_names(parameters: list[ast.arg]) -> set[str]:
+    url_names = {"url", "uri", "target_url", "webhook_url", "callback_url"}
+    return {parameter.arg for parameter in parameters if parameter.arg.lower() in url_names}
+
+
+def _python_exposed_url_function_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(
+        marker in lowered
+        for marker in ("preview", "proxy", "webhook", "callback", "fetch_url", "open_url", "download")
+    )
+
+
 def _python_ssrf_scope_findings(
     statements: list[ast.stmt],
     content: str,
@@ -867,12 +880,8 @@ def _python_ssrf_findings(content: str, path: str) -> list[dict]:
         )
         parameters = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
         parameter_names = {parameter.arg for parameter in parameters if parameter.arg in {"request", "req"}}
-        if is_route_handler:
-            parameter_names.update(
-                parameter.arg
-                for parameter in parameters
-                if parameter.arg.lower() in {"url", "uri", "target_url", "webhook_url", "callback_url"}
-            )
+        if is_route_handler or _python_exposed_url_function_name(node.name):
+            parameter_names.update(_python_url_like_parameter_names(parameters))
         if not parameter_names:
             continue
         findings.extend(

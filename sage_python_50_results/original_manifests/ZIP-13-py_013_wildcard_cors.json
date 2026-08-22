@@ -1,0 +1,30 @@
+{
+  "zip": "py_013_wildcard_cors.zip",
+  "sha256": "fff720bbf8f8c505d4b7adfea5d5c76b66e5a4373ebce69c007e245cf4f5f3fc",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 560,
+      "sha256": "f33511f2a87a065d054cb7cdd283c17968d53be2cf0e5630e3d7987d9eba3262",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 76,
+      "sha256": "631a8fd863ab7d3ca38c0415a135751a0633bd9a125428fe53f6b7c1f8a837c9",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 297,
+      "sha256": "5e52884d426769f540d89d3803518fab4c4477aaf444a3224a14d100ba814b73",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "73fb365065be5f54d66cbfc7d896797d2d869cd27a084b4efd701a4a062d5f02",
+      "type": "text"
+    }
+  ]
+}
