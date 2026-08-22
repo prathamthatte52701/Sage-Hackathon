@@ -111,6 +111,27 @@ class _TaintWalker:
         self.path = path
         self.summaries = _function_summaries(tree)
         self.findings: list[dict] = []
+        self._analyzed_local_calls: set[int] = set()
+
+    def _local_function(self, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        short = name.rsplit(".", 1)[-1]
+        return next(
+            (item for item in ast.walk(self.tree) if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == short),
+            None,
+        )
+
+    def _identity_sanitizer(self, name: str) -> bool:
+        function = self._local_function(name)
+        if function is None:
+            return False
+        params = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+        parameter_names = {param.arg for param in params}
+        return any(
+            isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in parameter_names
+            for node in ast.walk(function)
+        )
 
     def _eval(self, node: ast.AST | None, state: dict[str, _Taint], request_names: set[str]) -> _Taint | None:
         if node is None:
@@ -131,14 +152,22 @@ class _TaintWalker:
         if isinstance(node, ast.Call):
             name = _call_name(node)
             args = [self._eval(arg, state, request_names) for arg in node.args]
-            if _is_sanitizer(name):
+            if _is_sanitizer(name) and not self._identity_sanitizer(name):
                 return None
             summary = self.summaries.get(name.rsplit(".", 1)[-1])
             if summary:
-                positional = [arg for arg in node.args]
-                fn = next((item for item in ast.walk(self.tree) if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == name.rsplit(".", 1)[-1]), None)
+                fn = self._local_function(name)
                 if fn:
                     params = [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+                    local_state = {
+                        param.arg: args[index]
+                        for index, param in enumerate(params)
+                        if index < len(args) and args[index] is not None
+                    }
+                    call_id = id(node)
+                    if call_id not in self._analyzed_local_calls:
+                        self._analyzed_local_calls.add(call_id)
+                        self._block(fn.body, local_state, {param.arg for param in params if param.arg in {"request", "req"}})
                     return _merge([args[index] for index, param in enumerate(params) if param.arg in summary.returns_from and index < len(args)], _source_segment(self.source, node))
             return _merge(args, _source_segment(self.source, node))
         for child in ast.iter_child_nodes(node):
@@ -171,6 +200,8 @@ class _TaintWalker:
     def _sink(self, node: ast.Call, state: dict[str, _Taint], request_names: set[str]) -> None:
         name = _call_name(node)
         parts = name.split(".")
+        if self._local_function(name) is not None:
+            self._eval(node, state, request_names)
         taint = self._eval(node.args[0], state, request_names) if node.args else None
         if taint and parts[-1] in _SQL_SINKS and len(parts) >= 2:
             self._add_finding("sql_injection", "critical", "Request-derived input reaches SQL execution.", "Use parameterized SQL queries and keep user input in bound parameters.", node, taint)
@@ -178,8 +209,11 @@ class _TaintWalker:
             shell = any(keyword.arg == "shell" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True for keyword in node.keywords)
             if parts[0] == "os" or shell:
                 self._add_finding("command_injection", "critical", "Request-derived input reaches command execution.", "Avoid shell execution and use a fixed argument list with strict validation.", node, taint)
-        if taint and len(parts) == 2 and parts[0] in _HTTP_MODULES and parts[1] in _HTTP_METHODS:
-            self._add_finding("ssrf", "high", "Request-derived URL reaches an outbound HTTP request.", "Allowlist destinations and validate the URL before making the request.", node, taint)
+        url_taint = taint
+        if len(parts) == 2 and parts[0] in _HTTP_MODULES and parts[1] == "request" and len(node.args) >= 2:
+            url_taint = self._eval(node.args[1], state, request_names)
+        if url_taint and len(parts) == 2 and parts[0] in _HTTP_MODULES and parts[1] in _HTTP_METHODS:
+            self._add_finding("ssrf", "high", "Request-derived URL reaches an outbound HTTP request.", "Allowlist destinations and validate the URL before making the request.", node, url_taint)
         if taint and name == "urllib.request.urlopen":
             self._add_finding("ssrf", "high", "Request-derived URL reaches an outbound HTTP request.", "Allowlist destinations and validate the URL before making the request.", node, taint)
         if taint and (name in {"mark_safe", "Markup"} or parts[-1] in {"mark_safe", "Markup"}):
@@ -191,10 +225,32 @@ class _TaintWalker:
                 continue
             if isinstance(statement, ast.If):
                 guard_names = self._validator_guard_names(statement.test, state, request_names)
+                before = dict(state)
+                true_state = dict(state)
+                false_state = dict(state)
+                self._block(statement.body, true_state, request_names)
+                self._block(statement.orelse, false_state, request_names)
+                if guard_names and isinstance(statement.test, ast.UnaryOp) and isinstance(statement.test.op, ast.Not):
+                    for name in guard_names:
+                        false_state.pop(name, None)
+                    state.clear()
+                    state.update(false_state)
+                    continue
+                state.clear()
+                for name in set(true_state) | set(false_state):
+                    value = true_state.get(name) or false_state.get(name)
+                    if value:
+                        state[name] = value
+                for name in set(before) - set(true_state) - set(false_state):
+                    state.pop(name, None)
+                continue
+            if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+                if isinstance(statement, (ast.For, ast.AsyncFor)):
+                    iter_taint = self._eval(statement.iter, state, request_names)
+                    if iter_taint and isinstance(statement.target, ast.Name):
+                        state[statement.target.id] = iter_taint.through(statement.target.id)
                 self._block(statement.body, state, request_names)
                 self._block(statement.orelse, state, request_names)
-                for name in guard_names:
-                    state.pop(name, None)
                 continue
             if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 value = statement.value if hasattr(statement, "value") else None
