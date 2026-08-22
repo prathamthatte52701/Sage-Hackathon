@@ -71,16 +71,17 @@ def decode_session_token(token: str) -> str | None:
 
 
 async def get_current_user(session_token: str | None = Cookie(default=None, alias=COOKIE_NAME)):
-    """Require a valid session and resolve its user server-side."""
-    from db.mongo import get_user_by_id
-
-    unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    if not session_token:
-        raise unauthorized
-    user_id = decode_session_token(session_token)
-    if not user_id:
-        raise unauthorized
-    user = await get_user_by_id(user_id)
-    if user is None:
-        raise unauthorized
-    return user
+    """Temporary anonymous identity while login/session auth is disabled."""
+    # AUTH DISABLED: restore the commented dependency body below to require a session.
+    # from db.mongo import get_user_by_id
+    # unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    # if not session_token:
+    #     raise unauthorized
+    # user_id = decode_session_token(session_token)
+    # if not user_id:
+    #     raise unauthorized
+    # user = await get_user_by_id(user_id)
+    # if user is None:
+    #     raise unauthorized
+    # return user
+    return {"_id": "anonymous", "email": "anonymous@local"}
