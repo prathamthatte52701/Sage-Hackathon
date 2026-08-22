@@ -74,6 +74,7 @@ BINARY_ASSET_EXTENSIONS = {
 
 EXTENSION_LANGUAGE_MAP = {
     ".py": "python",
+    ".pyi": "python",
     ".js": "javascript",
     ".jsx": "javascript",
     ".ts": "typescript",
@@ -100,7 +101,20 @@ TEXT_MANIFEST_FILENAMES = {
     "render.yaml",
     "vercel.json",
     "Procfile",
+    "Pipfile",
 }
+
+# Generic config/deployment file shapes worth reading as text even though
+# they aren't a programming "language" -- deliberately kept out of
+# EXTENSION_LANGUAGE_MAP/SOURCE_LANGUAGES so they never show up as a
+# detected project language or get routed through language-specific
+# analysis; they just stop being treated as an opaque binary blob.
+TEXT_CONFIG_EXTENSIONS = {".yaml", ".yml", ".toml", ".cfg"}
+
+# Upload/import bodies spool to RAM up to this size, then transparently
+# spill to disk -- same threshold download_fixed_project already uses for
+# the output side of this file.
+UPLOAD_SPOOL_THRESHOLD = 8 * 1024 * 1024
 
 _ERROR_RESPONSE = {"error": "Could not process the uploaded project, please try again"}
 
@@ -136,7 +150,11 @@ def _canonical_archive_path(name: str) -> str:
 
 def _should_read_text(display_name: str, language: str) -> bool:
     basename = PurePosixPath(display_name.replace("\\", "/")).name
-    return language in SOURCE_LANGUAGES or basename in TEXT_MANIFEST_FILENAMES
+    if language in SOURCE_LANGUAGES or basename in TEXT_MANIFEST_FILENAMES:
+        return True
+    if basename.startswith("README"):
+        return True
+    return os.path.splitext(basename)[1].lower() in TEXT_CONFIG_EXTENSIONS
 
 
 def _extract_dependencies(files_index: list[dict]) -> list[dict]:
@@ -215,17 +233,29 @@ def _strip_common_top_level(names: list[str]) -> str:
     return ""
 
 
-def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level: bool = False):
+def _project_from_zip_bytes(zip_source: bytes | tempfile.SpooledTemporaryFile, project_name: str, strip_top_level: bool = False):
     """Shared by ZIP upload and GitHub import: one normalized project
     representation, one analysis pipeline downstream — never two.
+
+    zip_source is either raw bytes (existing tests, small callers) or an
+    already-seekable file-like object -- the SpooledTemporaryFile the
+    production upload/import paths now stream into, so this function never
+    has to make its own BytesIO(raw_bytes) copy of a near-cap archive.
 
     Returns (project_representation, upload_warnings, error_response). Exactly
     one of (project_representation, error_response) is None.
     """
-    if len(raw_bytes) > MAX_ZIP_SIZE:
-        return None, None, {"error": "ZIP file exceeds the 300MB limit"}
+    if isinstance(zip_source, (bytes, bytearray)):
+        if len(zip_source) > MAX_ZIP_SIZE:
+            return None, None, {"error": "ZIP file exceeds the 300MB limit"}
+        buffer = BytesIO(zip_source)
+    else:
+        buffer = zip_source
+        buffer.seek(0, os.SEEK_END)
+        if buffer.tell() > MAX_ZIP_SIZE:
+            return None, None, {"error": "ZIP file exceeds the 300MB limit"}
+        buffer.seek(0)
 
-    buffer = BytesIO(raw_bytes)
     if not zipfile.is_zipfile(buffer):
         return None, None, {"error": "Uploaded file is not a valid ZIP archive"}
 
@@ -380,11 +410,15 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
     return project_representation, warnings, None
 
 
-async def _read_upload_capped(file: UploadFile, max_size: int) -> bytes | None:
-    """Reads in bounded chunks so an oversized body is rejected without ever
-    buffering the whole thing in memory first -- unlike a single
-    `await file.read()`, whose cost is paid before MAX_ZIP_SIZE is checked."""
-    chunks = []
+async def _read_upload_capped(file: UploadFile, max_size: int) -> tempfile.SpooledTemporaryFile | None:
+    """Streams the upload in bounded chunks straight into a spooled temp file
+    (RAM up to UPLOAD_SPOOL_THRESHOLD, disk beyond it) so an oversized body
+    is rejected without ever buffering the whole thing in memory first --
+    unlike a single `await file.read()` (whose cost is paid before
+    MAX_ZIP_SIZE is checked), and unlike the old chunks-list-then-`b"".join`
+    approach, which still ended up holding the entire joined body as one
+    Python bytes object even though it read in bounded chunks."""
+    spool = tempfile.SpooledTemporaryFile(max_size=UPLOAD_SPOOL_THRESHOLD, mode="w+b")
     total = 0
     while True:
         chunk = await file.read(1024 * 1024)
@@ -392,9 +426,11 @@ async def _read_upload_capped(file: UploadFile, max_size: int) -> bytes | None:
             break
         total += len(chunk)
         if total > max_size:
+            spool.close()
             return None
-        chunks.append(chunk)
-    return b"".join(chunks)
+        spool.write(chunk)
+    spool.seek(0)
+    return spool
 
 
 @router.post("/projects/upload")
@@ -404,13 +440,16 @@ async def upload_project(
     current_user: dict = Depends(get_request_user),
 ):
     try:
-        raw_bytes = await _read_upload_capped(file, MAX_ZIP_SIZE)
-        if raw_bytes is None:
+        spool = await _read_upload_capped(file, MAX_ZIP_SIZE)
+        if spool is None:
             return JSONResponse(status_code=400, content={"error": "ZIP file exceeds the 300MB limit"})
 
-        project_representation, warnings, error = _project_from_zip_bytes(
-            raw_bytes, _derive_project_name(file.filename)
-        )
+        try:
+            project_representation, warnings, error = _project_from_zip_bytes(
+                spool, _derive_project_name(file.filename)
+            )
+        finally:
+            spool.close()
         if error is not None:
             return JSONResponse(status_code=400, content=error)
 
@@ -472,9 +511,19 @@ async def import_from_github(payload: GithubImportRequest, current_user: dict = 
 
         # Same normalized representation as ZIP upload — no separate GitHub
         # analysis path. strip_top_level peels off zipball's '{repo}-{sha}/' wrapper.
-        project_representation, warnings, error = _project_from_zip_bytes(
-            resp.content, repo, strip_top_level=True
-        )
+        # httpx already buffered the response as one `resp.content` bytes object
+        # (a streamed, bounded re-download is a separate concern from this P0)
+        # -- spooling it here at least avoids _project_from_zip_bytes needing
+        # its own BytesIO(raw_bytes) copy on top of that.
+        spool = tempfile.SpooledTemporaryFile(max_size=UPLOAD_SPOOL_THRESHOLD, mode="w+b")
+        spool.write(resp.content)
+        spool.seek(0)
+        try:
+            project_representation, warnings, error = _project_from_zip_bytes(
+                spool, repo, strip_top_level=True
+            )
+        finally:
+            spool.close()
         if error is not None:
             return JSONResponse(status_code=400, content=error)
 

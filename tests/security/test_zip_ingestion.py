@@ -1,9 +1,11 @@
 import io
+import tempfile
+import time
 import zipfile
 
 import pytest
 
-from routers.projects import MAX_REPOSITORY_FILES, MAX_SINGLE_FILE_UNCOMPRESSED, _project_from_zip_bytes, _read_upload_capped
+from routers.projects import MAX_REPOSITORY_FILES, MAX_SINGLE_FILE_UNCOMPRESSED, UPLOAD_SPOOL_THRESHOLD, _project_from_zip_bytes, _read_upload_capped
 
 
 def _zip_bytes(entries: dict[str, str]) -> bytes:
@@ -145,6 +147,38 @@ def test_binary_assets_do_not_count_toward_the_eligible_file_limit():
     assert all(f["content"] is None and f["binary_content"] for f in png_files)  # ...but as binary, not source
 
 
+def test_many_junk_extension_files_stay_cheap_and_untranscoded():
+    """Bug 2: 2000 files of an extension nobody analyzes, alongside 50 real
+    .py files and a few recognized config/manifest files. Upload cost must
+    track the handful of real files, not the pile of junk, and only the
+    recognized Python/config/deployment set gets UTF-8-decoded as source --
+    everything else is still stored (round-trip fidelity) but left as raw
+    bytes instead of wastefully decoded."""
+    entries = {f"assets/blob_{i}.xyzjunk": "junk-content" for i in range(2000)}
+    entries.update({f"src/module_{i}.py": "x = 1\n" for i in range(50)})
+    entries["config/settings.yaml"] = "debug: true\n"
+    entries["stubs/module.pyi"] = "def f() -> int: ...\n"
+    entries["README.md"] = "# hello\n"
+
+    start = time.perf_counter()
+    project, warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "junky")
+    elapsed = time.perf_counter() - start
+
+    assert error is None
+    assert elapsed < 2.0, f"took {elapsed:.2f}s -- junk-extension files should be cheap to classify"
+    assert len(project["files"]) == 2053
+
+    by_path = {f["path"]: f for f in project["files"]}
+    assert by_path["src/module_0.py"]["content"] == "x = 1\n"
+    assert by_path["config/settings.yaml"]["content"] == "debug: true\n"
+    assert by_path["stubs/module.pyi"]["content"] == "def f() -> int: ...\n"
+    assert by_path["README.md"]["content"] == "# hello\n"
+
+    junk_files = [f for f in project["files"] if f["path"].endswith(".xyzjunk")]
+    assert len(junk_files) == 2000
+    assert all(f["content"] is None and f["binary_content"] is not None for f in junk_files)
+
+
 def test_completely_empty_zip_is_handled_cleanly():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w"):
@@ -207,4 +241,26 @@ async def test_upload_capped_read_accepts_body_within_limit():
     data = b"a" * 1000
     within_limit = _FakeUploadFile(data)
     result = await _read_upload_capped(within_limit, max_size=2000)
-    assert result == data
+    try:
+        assert result.read() == data
+    finally:
+        result.close()
+
+
+@pytest.mark.asyncio
+async def test_upload_capped_read_streams_to_spooled_file_not_one_bytes_blob():
+    """Bug 1 fix: the capped reader must hand back a seekable spooled file
+    (RAM up to UPLOAD_SPOOL_THRESHOLD, then disk) instead of the old
+    chunks-list-then-`b"".join` result, which -- despite reading in bounded
+    chunks -- still ended up holding the whole body as one Python bytes
+    object before _project_from_zip_bytes ever saw it."""
+    data = b"z" * (UPLOAD_SPOOL_THRESHOLD + (1024 * 1024))  # forces disk rollover
+    upload = _FakeUploadFile(data)
+    result = await _read_upload_capped(upload, max_size=len(data) + 1)
+    try:
+        assert isinstance(result, tempfile.SpooledTemporaryFile)
+        assert not isinstance(result, (bytes, bytearray))
+        assert result.tell() == 0  # left seeked-to-start for the next reader
+        assert result.read() == data  # disk-spilled content survives intact
+    finally:
+        result.close()
