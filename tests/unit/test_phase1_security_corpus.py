@@ -31,7 +31,7 @@ CORPUS = [
     CorpusCase("pickle", "python", "pickle.loads(blob)", True, {"unsafe_deserialization"}),
     CorpusCase("yaml", "python", "yaml.load(body)", True, {"unsafe_deserialization"}),
     CorpusCase("ssrf", "python", "requests.get(request.args['url'])", True, {"ssrf_untrusted_url"}),
-    CorpusCase("cors", "python", "CORSMiddleware(app, allow_origins=['*'])", True, {"permissive_cors"}),
+    CorpusCase("cors", "python", "CORSMiddleware(app, allow_origins=['*'], allow_credentials=True)", True, {"permissive_cors"}),
     CorpusCase("weak_hash", "python", "password_hash = hashlib.md5(password).hexdigest()", True, {"weak_crypto_hash"}),
     CorpusCase("redirect", "python", "return redirect(request.args['next'])", True, {"unsafe_redirect"}),
     CorpusCase("comment_secret", "python", "# password = 'example-secret'", False, set()),
