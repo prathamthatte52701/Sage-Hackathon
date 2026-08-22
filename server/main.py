@@ -57,11 +57,21 @@ _AUTH_MAX_REQUESTS = 8
 _AUTH_WINDOW_SECONDS = 60
 
 
+# The frontend polls this endpoint on a fixed 1s interval while an analysis
+# runs (up to 120 times for a single analyze/reanalyze call) -- it's a
+# read-only, ownership-checked status lookup, not an action, so throttling
+# it alongside everything else blocks nothing an attacker gains from and
+# was exhausting the shared 30/60s IP budget on every analysis over ~25s,
+# turning normal usage into random 429s on whatever request came next.
+_RATE_LIMIT_EXEMPT_PREFIXES = ("/api/analysis-jobs/",)
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    if request.url.path.startswith("/api/"):
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith(_RATE_LIMIT_EXEMPT_PREFIXES):
         client_ip = request.client.host if request.client else "unknown"
-        if request.url.path in ("/api/auth/login", "/api/auth/signup"):
+        if path in ("/api/auth/login", "/api/auth/signup"):
             allowed = check_rate_limit(f"auth:{client_ip}", _AUTH_MAX_REQUESTS, _AUTH_WINDOW_SECONDS)
         else:
             allowed = check_rate_limit(client_ip)
