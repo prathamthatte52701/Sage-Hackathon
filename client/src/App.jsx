@@ -170,7 +170,7 @@ export default function App() {
       const findingIdx = (projectBundle.findings || []).indexOf(finding);
       const data = await transformFinding(
         projectBundle.project_id,
-        findingIdx >= 0 ? findingIdx : 0
+        finding
       );
 
       setActiveFixData({
@@ -207,7 +207,7 @@ export default function App() {
       // Step 1: Apply the validated patch to stored source.
       await applyProjectFix(
         projectBundle.project_id,
-        activeFixData.findingIndex
+        activeFixData.finding
       );
 
       // Step 2: Reanalyze the current stored source and refresh its score.

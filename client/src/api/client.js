@@ -162,22 +162,24 @@ export async function scoreProject(projectId) {
   }
 }
 
-export async function transformFinding(projectId, findingIndex) {
+function findingReference(finding) {
+  return typeof finding === "object"
+    ? { finding_id: finding.finding_id || "", finding_index: -1 }
+    : { finding_index: finding };
+}
+
+export async function transformFinding(projectId, finding) {
   try {
-    const res = await api.post(`/api/projects/${projectId}/findings/transform`, {
-      finding_index: findingIndex,
-    });
+    const res = await api.post(`/api/projects/${projectId}/findings/transform`, findingReference(finding));
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not generate a fix. Please try again."));
   }
 }
 
-export async function reasonFinding(projectId, findingIndex) {
+export async function reasonFinding(projectId, finding) {
   try {
-    const res = await api.post(`/api/projects/${projectId}/findings/reason`, {
-      finding_index: findingIndex,
-    });
+    const res = await api.post(`/api/projects/${projectId}/findings/reason`, findingReference(finding));
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not explain this finding. Please try again."));
@@ -203,11 +205,9 @@ export async function reanalyzeProject(projectId) {
   }
 }
 
-export async function applyProjectFix(projectId, findingIndex) {
+export async function applyProjectFix(projectId, finding) {
   try {
-    const res = await api.post(`/api/projects/${projectId}/fixes/apply`, {
-      finding_index: findingIndex,
-    });
+    const res = await api.post(`/api/projects/${projectId}/fixes/apply`, findingReference(finding));
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not apply this fix safely."));
