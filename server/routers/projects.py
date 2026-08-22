@@ -332,6 +332,7 @@ async def upload_project(
 
         project_id = await save_project(project_representation, session_id, current_user["_id"])
 
+        print(f"[projects] upload user_id={current_user['_id']} project_id={project_id}")
         return {"project_id": project_id, "project": project_representation, "warnings": warnings}
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
@@ -393,6 +394,7 @@ async def import_from_github(payload: GithubImportRequest, current_user: dict = 
 
         project_id = await save_project(project_representation, payload.session_id, current_user["_id"])
 
+        print(f"[projects] upload user_id={current_user['_id']} project_id={project_id}")
         return {"project_id": project_id, "project": project_representation, "warnings": warnings}
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
@@ -832,6 +834,7 @@ async def apply_project_fix(
             current_user["_id"],
             {"files": project["files"], "findings": project["findings"], "patches": project.get("patches", []), "compliance_score": after_score},
         )
+        print(f"[projects] fix applied user_id={current_user['_id']} project_id={project_id}")
         return {
             "status": "applied",
             "file": finding.get("file"),
@@ -864,6 +867,7 @@ async def download_fixed_project(
                     continue
                 zf.writestr(path, content)
         buffer.seek(0)
+        print(f"[projects] download user_id={current_user['_id']} project_id={project_id}")
         project_name = project.get("project", {}).get("name") or "project"
         safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", filename or f"{project_name}-code-master-ai-fixed.zip").strip("-")
         if not safe_name.endswith(".zip"):
