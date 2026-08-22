@@ -22,6 +22,11 @@ large files, repeatability, and duplicate-risk scenarios.
 - False-negative rate: 0.00.
 - Crashes: 0.
 
+Backend verification after the fixes: `347 passed, 11 skipped, 1 failed`.
+The one failure was the existing live `test_benchmark_1_auth_middleware`
+Groq/auth benchmark, which completed with `groq_calls=0` and no deterministic
+finding; it is outside the Python taint analyzer scope.
+
 The metrics are limited to this controlled corpus and are not a claim about
 arbitrary Python programs.
 
