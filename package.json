@@ -1,0 +1,17 @@
+{
+  "name": "code-master-ai-project",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "install:server": "python -m venv server/venv && server\\venv\\Scripts\\pip install -r server/requirements.txt",
+    "install:client": "npm --prefix client install",
+    "postinstall": "npm run install:server && npm run install:client",
+    "dev:server": "cd server && venv\\Scripts\\python -m uvicorn main:app --port 8000",
+    "dev:client": "npm --prefix client run dev",
+    "dev": "concurrently -n server,client -c blue,green \"npm run dev:server\" \"npm run dev:client\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
+

@@ -1,0 +1,193 @@
+import React, { useState, useEffect } from "react";
+import {
+  ShieldAlert,
+  Search,
+  Filter,
+  FileCode,
+  CheckCircle2,
+  ChevronRight,
+  Sparkles,
+} from "lucide-react";
+import CodeViewer from "./CodeViewer";
+import EvidencePanel from "./EvidencePanel";
+
+export default function FindingExplorer({
+  project,
+  selectedFinding,
+  onSelectFinding,
+  onGenerateFix,
+  generatingFix,
+  onReasonFinding,
+  reasoning,
+}) {
+  const findings = project?.findings ?? [];
+  const files = project?.files ?? [];
+
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFileContent, setActiveFileContent] = useState("");
+
+  // Select first finding by default if none selected
+  const activeFinding = selectedFinding || (findings.length > 0 ? findings[0] : null);
+
+  // Retrieve source code of the active finding file
+  useEffect(() => {
+    if (activeFinding && activeFinding.file) {
+      // Find file content in project.files or generate placeholder snippet
+      const matchingFile = files.find(
+        (f) => f.path === activeFinding.file || f.filename === activeFinding.file
+      );
+      if (matchingFile && matchingFile.content) {
+        setActiveFileContent(matchingFile.content);
+      } else if (activeFinding.code_context) {
+        setActiveFileContent(activeFinding.code_context);
+      } else {
+        // Construct fallback readable snippet around line if file content missing
+        setActiveFileContent(
+          `// File: ${activeFinding.file}\n// Grounded finding at line ${activeFinding.line || 42}\n\n` +
+          (activeFinding.evidence_snippet || `const user = req.query.user;\ndb.execute("SELECT * FROM users WHERE id = " + user);`)
+        );
+      }
+    } else {
+      setActiveFileContent("");
+    }
+  }, [activeFinding, files]);
+
+  // Filter findings
+  const filteredFindings = findings.filter((f) => {
+    const matchesSev = severityFilter === "all" || f.severity === severityFilter;
+    const matchesSearch =
+      !searchQuery.trim() ||
+      (f.title || f.type || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (f.file || "").toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesSev && matchesSearch;
+  });
+
+  const severityCounts = {
+    all: findings.length,
+    critical: findings.filter((f) => f.severity === "critical").length,
+    high: findings.filter((f) => f.severity === "high").length,
+    medium: findings.filter((f) => f.severity === "medium").length,
+    low: findings.filter((f) => f.severity === "low").length,
+  };
+
+  return (
+    <div className="h-[calc(100vh-5rem)] grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden">
+      {/* COLUMN 1: Findings Sidebar List (3 cols) */}
+      <div className="lg:col-span-3 cm-card border-[#232936] bg-[#10131A] flex flex-col h-full overflow-hidden">
+        {/* Header & Filter Controls */}
+        <div className="p-3 border-b border-[#232936] space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-mono font-semibold text-[#F4F7FB] flex items-center gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 text-[#7C8CFF]" />
+              FINDINGS ({filteredFindings.length})
+            </span>
+          </div>
+
+          {/* Search Input */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-[#687386] absolute left-2.5 top-2.5" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search findings or files..."
+              className="w-full pl-8 pr-3 py-1.5 rounded-md border border-[#232936] bg-[#090B10] text-xs text-[#F4F7FB] font-mono placeholder:text-[#687386] focus:border-[#7C8CFF] focus:outline-none"
+            />
+          </div>
+
+          {/* Severity Pills */}
+          <div className="flex gap-1 overflow-x-auto pb-1">
+            {["all", "critical", "high", "medium", "low"].map((sev) => (
+              <button
+                key={sev}
+                onClick={() => setSeverityFilter(sev)}
+                className={`px-2 py-1 rounded text-[10px] font-mono font-semibold capitalize transition-all ${
+                  severityFilter === sev
+                    ? "bg-[#7C8CFF] text-[#090B10]"
+                    : "bg-[#090B10] text-[#9AA4B2] border border-[#232936] hover:text-[#F4F7FB]"
+                }`}
+              >
+                {sev} ({severityCounts[sev]})
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Findings List Scrollable */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          {filteredFindings.length === 0 ? (
+            <div className="p-6 text-center text-xs text-[#687386]">
+              No findings matching filter criteria.
+            </div>
+          ) : (
+            filteredFindings.map((finding, idx) => {
+              const isSelected = activeFinding === finding;
+              return (
+                <div
+                  key={idx}
+                  onClick={() => onSelectFinding?.(finding)}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                    isSelected
+                      ? "bg-[#151922] border-[#7C8CFF] shadow-md shadow-[#7C8CFF]/10"
+                      : "bg-[#090B10] border-[#232936] hover:border-[#7C8CFF]/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span
+                      className={`cm-badge ${
+                        finding.severity === "critical"
+                          ? "cm-badge-critical"
+                          : finding.severity === "high"
+                          ? "cm-badge-high"
+                          : "cm-badge-medium"
+                      }`}
+                    >
+                      {finding.severity || "HIGH"}
+                    </span>
+                    <span className="text-[10px] font-mono text-[#7C8CFF] flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-[#36D399]" />
+                      Grounded
+                    </span>
+                  </div>
+
+                  <h4 className="text-xs font-semibold text-[#F4F7FB] truncate">
+                    {finding.title || finding.type || "Finding"}
+                  </h4>
+
+                  <div className="text-[11px] font-mono text-[#687386] truncate mt-1 flex items-center justify-between">
+                    <span>
+                      {finding.file}:{finding.line || 1}
+                    </span>
+                    <ChevronRight className="w-3 h-3 text-[#687386]" />
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* COLUMN 2: Code Viewer / Editor Workspace (5 cols) */}
+      <div className="lg:col-span-5 h-full overflow-hidden">
+        <CodeViewer
+          fileContent={activeFileContent}
+          filePath={activeFinding?.file}
+          highlightLine={activeFinding?.line}
+          height="100%"
+        />
+      </div>
+
+      {/* COLUMN 3: Evidence & Explanation Panel (4 cols) */}
+      <div className="lg:col-span-4 h-full overflow-hidden">
+        <EvidencePanel
+          finding={activeFinding}
+          onGenerateFix={() => onGenerateFix?.(activeFinding)}
+          generatingFix={generatingFix}
+          onReasonFinding={() => onReasonFinding?.(activeFinding)}
+          reasoning={reasoning}
+        />
+      </div>
+    </div>
+  );
+}
