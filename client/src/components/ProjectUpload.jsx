@@ -280,7 +280,7 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
 
               <div className="flex items-center gap-2 text-[11px] font-mono text-[#687386]">
                 <FileArchive className="w-3.5 h-3.5" />
-                <span>ZIP archives up to 300MB, 2,000 files</span>
+                <span>ZIP archives up to 300MB, 5,000 analyzable files</span>
               </div>
             </div>
 

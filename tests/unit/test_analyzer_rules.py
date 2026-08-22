@@ -168,6 +168,18 @@ export function percentageChange(current, previous) {
     assert not any(rule.startswith("sql") or rule.startswith("xss") for rule in rules)
 
 
+def test_javascript_month_component_range_without_validation_is_reported():
+    content = """
+function monthKey(monthYear) {
+  const [year, month] = monthYear.split('-').map(Number);
+  return new Date(year, month, 1);
+}
+"""
+    rules = _rules(content)
+
+    assert "js_date_component_range_without_validation" in rules
+
+
 def test_javascript_correctness_safe_patterns_do_not_fire():
     content = """
 const parsed = Number(value);

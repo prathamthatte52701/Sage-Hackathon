@@ -1538,6 +1538,10 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
             "Date-like value is sliced without visible validation",
         )
         findings += _findings_for_pattern(
+            content, path, _RE_JS_DATE_COMPONENT_RANGE, "js_date_component_range_without_validation", "medium", "logic",
+            "Date components are parsed without validating the month range; JavaScript Date normalizes out-of-range months",
+        )
+        findings += _findings_for_pattern(
             content, path, _RE_JS_PERCENT_ZERO_BASELINE, "js_zero_baseline_fallback", "low", "logic",
             "Zero baseline is treated as missing by a falsy guard",
         )

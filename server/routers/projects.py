@@ -36,11 +36,41 @@ router = APIRouter()
 MAX_ZIP_SIZE = 300 * 1024 * 1024  # 300MB
 MAX_UNCOMPRESSED_SIZE = 600 * 1024 * 1024  # archive-bomb guard
 MAX_SINGLE_FILE_UNCOMPRESSED = 15 * 1024 * 1024  # per-file decompressed cap, enforced on ACTUAL bytes read
-MAX_FILE_COUNT = 2000
+# Applies to ELIGIBLE files only (after junk-directory and binary/asset
+# filtering below) -- NOT the raw ZIP entry count. A repo with 12,000 raw
+# entries but 3,000 real source files (the rest node_modules/.git/build
+# noise) must not be rejected just because the raw count is large.
+MAX_REPOSITORY_FILES = 5000
 MAX_CONTENT_SIZE = 100_000  # chars; retained as the large-file warning threshold
 MAX_PATH_DEPTH = 20
 
-IGNORE_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", "coverage", ".cache"}
+IGNORE_DIRS = {
+    ".git", "node_modules", "venv", ".venv", "env", "__pycache__",
+    "dist", "build", "out", "coverage", ".cache",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".idea", ".vscode", "tmp", "temp", "logs",
+    "target", "bin", "obj", "vendor",
+}
+# Narrower than a whole ignored top-level directory: only the generated
+# cache subtree of Next.js's .next/ is junk -- the rest of .next/ (and any
+# other unlisted directory) is left alone, per "be conservative" above.
+IGNORE_PATH_PREFIXES = (".next/cache/",)
+
+# Assets SAGE cannot meaningfully analyze as source. These are still stored
+# (for byte-exact download-fixed-ZIP fidelity -- GridFS/binary_content,
+# unchanged from today) but never counted toward MAX_REPOSITORY_FILES and
+# never sent to any AI/RAG context, matching existing _should_read_text
+# behavior for non-source extensions.
+BINARY_ASSET_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+    ".mp4", ".mov", ".mp3", ".wav",
+    ".pdf",
+    ".zip", ".tar", ".gz",
+    ".exe", ".dll", ".so", ".dylib",
+    ".class", ".pyc",
+    ".map",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+}
 
 EXTENSION_LANGUAGE_MAP = {
     ".py": "python",
@@ -149,8 +179,20 @@ def _extract_dependencies(files_index: list[dict]) -> list[dict]:
 
 
 def _is_ignored(name: str) -> bool:
-    parts = PurePosixPath(name.replace("\\", "/")).parts
-    return any(part in IGNORE_DIRS for part in parts)
+    return _ignore_label(name) is not None
+
+
+def _ignore_label(name: str) -> str | None:
+    """The junk directory/prefix responsible for ignoring this path, or None."""
+    normalized = name.replace("\\", "/")
+    for prefix in IGNORE_PATH_PREFIXES:
+        if normalized.startswith(prefix):
+            return prefix.rstrip("/")
+    return next((part for part in PurePosixPath(normalized).parts if part in IGNORE_DIRS), None)
+
+
+def _is_binary_asset(display_name: str) -> bool:
+    return os.path.splitext(display_name)[1].lower() in BINARY_ASSET_EXTENSIONS
 
 
 def _derive_project_name(filename: str | None) -> str:
@@ -190,11 +232,38 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
     with zipfile.ZipFile(buffer) as zf:
         names = zf.namelist()
 
-        if len(names) > MAX_FILE_COUNT:
-            return None, None, {"error": f"ZIP contains too many files (max {MAX_FILE_COUNT})"}
-
         if any(_is_unsafe_path(name) for name in names):
             return None, None, {"error": "ZIP contains unsafe file paths"}
+
+        prefix = _strip_common_top_level(names) if strip_top_level else ""
+
+        # Classify by path/extension alone -- no decompression needed yet.
+        # Only files that are neither in a junk directory nor an obviously
+        # binary/noise asset count toward MAX_REPOSITORY_FILES; this is what
+        # lets a repo with thousands of raw node_modules/.git entries still
+        # be accepted when its real source footprint is small. Rejecting
+        # here, before opening a single entry, is also the cheapest possible
+        # place to bail out of an oversized repository.
+        eligible_paths: set[str] = set()
+        for name in names:
+            if name.endswith("/"):
+                continue
+            display_name = name[len(prefix):] if prefix and name.startswith(prefix) else name
+            display_name = _canonical_archive_path(display_name)
+            if not display_name or _is_ignored(display_name):
+                continue
+            if _is_binary_asset(display_name):
+                continue
+            eligible_paths.add(display_name)
+
+        if len(eligible_paths) > MAX_REPOSITORY_FILES:
+            return None, None, {
+                "error": (
+                    f"Repository contains {len(eligible_paths):,} analyzable files. "
+                    f"Current maximum is {MAX_REPOSITORY_FILES:,}. "
+                    "Dependency/build/cache files were already excluded."
+                )
+            }
 
         # Cheap first pass on header-declared sizes -- catches an honest huge
         # archive before spending any CPU on decompression. NOT sufficient on
@@ -205,8 +274,6 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
         total_uncompressed = sum(zf.getinfo(name).file_size for name in names)
         if total_uncompressed > MAX_UNCOMPRESSED_SIZE:
             return None, None, {"error": "ZIP uncompressed contents exceed the 600MB limit"}
-
-        prefix = _strip_common_top_level(names) if strip_top_level else ""
 
         files_index = []
         stored_paths: set[str] = set()
@@ -225,11 +292,9 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
             if display_name in stored_paths:
                 return None, None, {"error": "ZIP contains duplicate file paths"}
 
-            if _is_ignored(display_name):
-                top_ignored = next(
-                    part for part in PurePosixPath(display_name.replace("\\", "/")).parts if part in IGNORE_DIRS
-                )
-                ignored_counts[top_ignored] = ignored_counts.get(top_ignored, 0) + 1
+            ignore_label = _ignore_label(display_name)
+            if ignore_label is not None:
+                ignored_counts[ignore_label] = ignored_counts.get(ignore_label, 0) + 1
                 continue
 
             stored_paths.add(display_name)

@@ -3,7 +3,7 @@ import zipfile
 
 import pytest
 
-from routers.projects import MAX_FILE_COUNT, MAX_SINGLE_FILE_UNCOMPRESSED, _project_from_zip_bytes, _read_upload_capped
+from routers.projects import MAX_REPOSITORY_FILES, MAX_SINGLE_FILE_UNCOMPRESSED, _project_from_zip_bytes, _read_upload_capped
 
 
 def _zip_bytes(entries: dict[str, str]) -> bytes:
@@ -78,10 +78,82 @@ def test_zip_bomb_per_file_decompressed_size_capped():
 
 
 def test_zip_excessive_file_count_rejected():
-    entries = {f"file_{i}.py": "x = 1\n" for i in range(MAX_FILE_COUNT + 1)}
+    entries = {f"file_{i}.py": "x = 1\n" for i in range(MAX_REPOSITORY_FILES + 1)}
     project, warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "many")
     assert project is None
-    assert "too many files" in error["error"]
+    assert "analyzable files" in error["error"]
+    assert f"{MAX_REPOSITORY_FILES:,}" in error["error"]
+
+
+def test_zip_at_exactly_the_file_limit_is_accepted():
+    entries = {f"file_{i}.py": "x = 1\n" for i in range(MAX_REPOSITORY_FILES)}
+    project, warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "exact")
+    assert error is None
+    assert len(project["files"]) == MAX_REPOSITORY_FILES
+
+
+def test_zip_one_over_the_file_limit_is_rejected_cleanly():
+    entries = {f"file_{i}.py": "x = 1\n" for i in range(MAX_REPOSITORY_FILES + 1)}
+    project, warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "over")
+    assert project is None
+    assert warnings is None
+    assert "Repository contains" in error["error"]
+
+
+def test_2500_eligible_files_is_accepted():
+    entries = {f"src/file_{i}.py": "x = 1\n" for i in range(2500)}
+    project, _warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "mid")
+    assert error is None
+    assert len(project["files"]) == 2500
+
+
+def test_4999_eligible_files_is_accepted():
+    entries = {f"src/file_{i}.py": "x = 1\n" for i in range(4999)}
+    project, _warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "almost")
+    assert error is None
+    assert len(project["files"]) == 4999
+
+
+def test_dependency_junk_does_not_count_toward_the_eligible_file_limit():
+    """A ZIP whose raw entry count (10,300) is well past MAX_REPOSITORY_FILES
+    must still be accepted when almost all of that is node_modules noise --
+    only the real source files count toward the cap."""
+    entries = {f"node_modules/pkg{i}/index.js": "module.exports = {};\n" for i in range(10_000)}
+    entries.update({f"src/feature_{i}.py": "x = 1\n" for i in range(300)})
+    project, warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "noisy")
+    assert error is None
+    assert len(project["files"]) == 300
+    assert all(f["path"].startswith("src/") for f in project["files"])
+    assert any("node_modules" in w for w in warnings)
+
+
+def test_binary_assets_do_not_count_toward_the_eligible_file_limit():
+    """3000 real source files plus 5000 images -- the images are still
+    stored (round-trip fidelity) but must not push this over the cap."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        for i in range(3000):
+            zf.writestr(f"src/module_{i}.py", "x = 1\n")
+        for i in range(5000):
+            zf.writestr(f"assets/img_{i}.png", b"\x89PNG\r\n\x1a\n\x00fake")
+
+    project, _warnings, error = _project_from_zip_bytes(buffer.getvalue(), "assets")
+    assert error is None
+    assert len(project["files"]) == 8000  # all of them are still stored...
+    png_files = [f for f in project["files"] if f["path"].endswith(".png")]
+    assert len(png_files) == 5000
+    assert all(f["content"] is None and f["binary_content"] for f in png_files)  # ...but as binary, not source
+
+
+def test_zip_duplicate_file_paths_rejected():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("app.py", "a = 1\n")
+        zf.writestr("app.py", "a = 2\n")
+    project, warnings, error = _project_from_zip_bytes(buffer.getvalue(), "dup")
+    assert project is None
+    assert warnings is None
+    assert error["error"] == "ZIP contains duplicate file paths"
 
 
 def test_malformed_zip_bytes_returns_clean_error_not_crash():
