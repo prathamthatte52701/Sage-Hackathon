@@ -4,33 +4,74 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from routers import explain, projects, review
+from config import CORS_ORIGINS, JWT_SECRET, MONGO_URL
+from routers import auth, explain, projects, review
 from services.rate_limit import check_rate_limit
 
 app = FastAPI(title="AI Code Reviewer")
 
+# allow_credentials=True is required for the HttpOnly session cookie to be
+# sent cross-origin (client on :5173, server on :8000 in dev) -- which is
+# exactly why allow_origins can no longer be "*" (the two are mutually
+# exclusive per the CORS spec; browsers reject a wildcard-origin response
+# that also carries Access-Control-Allow-Credentials).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'none'"
+    return response
+
+
+# Login/signup get a tighter limit -- credential-stuffing/enumeration
+# targets, and cheap enough to hammer that the default 30/min is too loose.
+_AUTH_MAX_REQUESTS = 8
+_AUTH_WINDOW_SECONDS = 60
 
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/"):
         client_ip = request.client.host if request.client else "unknown"
-        if not check_rate_limit(client_ip):
+        if request.url.path in ("/api/auth/login", "/api/auth/signup"):
+            allowed = check_rate_limit(f"auth:{client_ip}", _AUTH_MAX_REQUESTS, _AUTH_WINDOW_SECONDS)
+        else:
+            allowed = check_rate_limit(client_ip)
+        if not allowed:
             return JSONResponse(
                 status_code=429, content={"error": "Too many requests, please slow down"}
             )
     return await call_next(request)
 
 
+app.include_router(auth.router, prefix="/api")
 app.include_router(review.router, prefix="/api")
 app.include_router(explain.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
+
+
+@app.on_event("startup")
+async def _verify_startup_config():
+    if not JWT_SECRET:
+        raise RuntimeError(
+            "JWT_SECRET is not set. Configure it in the environment before starting the server."
+        )
+    if MONGO_URL:
+        from db.mongo import ensure_indexes
+
+        await ensure_indexes()
 
 
 @app.exception_handler(RequestValidationError)

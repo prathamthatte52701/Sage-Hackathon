@@ -7,13 +7,14 @@ from io import BytesIO
 from pathlib import PurePosixPath
 
 import httpx
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from db.mongo import get_project, save_project, update_project
+from db.mongo import get_owned_project, save_project, update_owned_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
+from services.auth import get_current_user
 from services.project_review import run_ai_quality_review
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
@@ -26,6 +27,7 @@ router = APIRouter()
 
 MAX_ZIP_SIZE = 300 * 1024 * 1024  # 300MB
 MAX_UNCOMPRESSED_SIZE = 600 * 1024 * 1024  # archive-bomb guard
+MAX_SINGLE_FILE_UNCOMPRESSED = 15 * 1024 * 1024  # per-file decompressed cap, enforced on ACTUAL bytes read
 MAX_FILE_COUNT = 2000
 MAX_CONTENT_SIZE = 100_000  # chars; retained as the large-file warning threshold
 MAX_PATH_DEPTH = 20
@@ -181,6 +183,12 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
         if any(_is_unsafe_path(name) for name in names):
             return None, None, {"error": "ZIP contains unsafe file paths"}
 
+        # Cheap first pass on header-declared sizes -- catches an honest huge
+        # archive before spending any CPU on decompression. NOT sufficient on
+        # its own: a crafted entry can declare a small file_size in its
+        # header while its actual deflate stream expands far larger, so the
+        # per-file/running-total check below (on bytes actually read) is the
+        # real enforcement layer against a forged-header zip bomb.
         total_uncompressed = sum(zf.getinfo(name).file_size for name in names)
         if total_uncompressed > MAX_UNCOMPRESSED_SIZE:
             return None, None, {"error": "ZIP uncompressed contents exceed the 600MB limit"}
@@ -189,6 +197,7 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
 
         files_index = []
         ignored_counts: dict[str, int] = {}
+        actual_uncompressed_total = 0
 
         for name in names:
             if name.endswith("/"):
@@ -210,8 +219,14 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
 
             content = None
             if _should_read_text(display_name, language):
-                text = zf.read(name).decode("utf-8", errors="replace")
-                content = text
+                with zf.open(name) as entry:
+                    raw = entry.read(MAX_SINGLE_FILE_UNCOMPRESSED + 1)
+                if len(raw) > MAX_SINGLE_FILE_UNCOMPRESSED:
+                    return None, None, {"error": f"{display_name}: file too large after decompression"}
+                actual_uncompressed_total += len(raw)
+                if actual_uncompressed_total > MAX_UNCOMPRESSED_SIZE:
+                    return None, None, {"error": "ZIP uncompressed contents exceed the 600MB limit"}
+                content = raw.decode("utf-8", errors="replace")
 
             files_index.append(
                 {
@@ -281,10 +296,33 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
     return project_representation, warnings, None
 
 
+async def _read_upload_capped(file: UploadFile, max_size: int) -> bytes | None:
+    """Reads in bounded chunks so an oversized body is rejected without ever
+    buffering the whole thing in memory first -- unlike a single
+    `await file.read()`, whose cost is paid before MAX_ZIP_SIZE is checked."""
+    chunks = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_size:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.post("/projects/upload")
-async def upload_project(file: UploadFile = File(...), session_id: str = Form(...)):
+async def upload_project(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+    current_user: dict = Depends(get_current_user),
+):
     try:
-        raw_bytes = await file.read()
+        raw_bytes = await _read_upload_capped(file, MAX_ZIP_SIZE)
+        if raw_bytes is None:
+            return JSONResponse(status_code=400, content={"error": "ZIP file exceeds the 300MB limit"})
 
         project_representation, warnings, error = _project_from_zip_bytes(
             raw_bytes, _derive_project_name(file.filename)
@@ -292,7 +330,7 @@ async def upload_project(file: UploadFile = File(...), session_id: str = Form(..
         if error is not None:
             return JSONResponse(status_code=400, content=error)
 
-        project_id = await save_project(project_representation, session_id)
+        project_id = await save_project(project_representation, session_id, current_user["_id"])
 
         return {"project_id": project_id, "project": project_representation, "warnings": warnings}
     except Exception as exc:
@@ -319,7 +357,7 @@ def _parse_github_repo(repo_url: str):
 
 
 @router.post("/projects/github")
-async def import_from_github(payload: GithubImportRequest):
+async def import_from_github(payload: GithubImportRequest, current_user: dict = Depends(get_current_user)):
     try:
         parsed = _parse_github_repo(payload.repo_url)
         if parsed is None:
@@ -353,7 +391,7 @@ async def import_from_github(payload: GithubImportRequest):
         if error is not None:
             return JSONResponse(status_code=400, content=error)
 
-        project_id = await save_project(project_representation, payload.session_id)
+        project_id = await save_project(project_representation, payload.session_id, current_user["_id"])
 
         return {"project_id": project_id, "project": project_representation, "warnings": warnings}
     except Exception as exc:
@@ -362,9 +400,9 @@ async def import_from_github(payload: GithubImportRequest):
 
 
 @router.get("/projects/{project_id}")
-async def get_project_by_id(project_id: str):
+async def get_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
         return project
@@ -377,9 +415,9 @@ _ANALYZE_ERROR_RESPONSE = {"error": "Could not analyze this project, please try 
 
 
 @router.post("/projects/{project_id}/analyze")
-async def analyze_project_by_id(project_id: str):
+async def analyze_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
@@ -415,7 +453,7 @@ async def analyze_project_by_id(project_id: str):
         )
         }
         updates["ai_review_coverage"] = analyzed.get("ai_review_coverage", {})
-        await update_project(project_id, updates)
+        await update_owned_project(project_id, current_user["_id"], updates)
 
         return analyzed
     except Exception as exc:
@@ -427,14 +465,14 @@ _SCORE_ERROR_RESPONSE = {"error": "Could not score this project, please try agai
 
 
 @router.post("/projects/{project_id}/score")
-async def score_project_by_id(project_id: str):
+async def score_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
         score = compute_score(project)
-        await update_project(project_id, {"compliance_score": score})
+        await update_owned_project(project_id, current_user["_id"], {"compliance_score": score})
 
         return score
     except Exception as exc:
@@ -466,9 +504,11 @@ _REASON_ERROR_RESPONSE = {"error": "Could not reason about this finding, please 
 
 
 @router.post("/projects/{project_id}/findings/reason", response_model=FindingReasoning)
-async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
+async def reason_about_finding(
+    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_current_user)
+):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
@@ -523,7 +563,7 @@ async def reason_about_finding(project_id: str, payload: FindingReasonRequest):
                 "rule_ids": [r.get("rule_id") for r in knowledge.get("records", [])],
             }
             findings[payload.finding_index]["related_files"] = [f["path"] for f in context["related_files"]]
-            await update_project(project_id, {"findings": findings})
+            await update_owned_project(project_id, current_user["_id"], {"findings": findings})
         except Exception as exc:
             print(f"[projects] failed to persist finding reasoning: {exc}")
 
@@ -563,9 +603,11 @@ def _enrich_transform(transform: FindingTransform, finding: dict, content: str |
 
 
 @router.post("/projects/{project_id}/findings/transform", response_model=FindingTransform)
-async def transform_finding(project_id: str, payload: FindingReasonRequest):
+async def transform_finding(
+    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_current_user)
+):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
@@ -613,7 +655,7 @@ async def transform_finding(project_id: str, payload: FindingReasonRequest):
 
         try:
             findings[payload.finding_index]["transform"] = result.model_dump()
-            await update_project(project_id, {"findings": findings})
+            await update_owned_project(project_id, current_user["_id"], {"findings": findings})
         except Exception as exc:
             print(f"[projects] failed to persist finding transform: {exc}")
 
@@ -658,9 +700,11 @@ def _verification_note(before_project: dict) -> str:
 
 
 @router.post("/projects/{project_id}/reanalyze")
-async def reanalyze_project(project_id: str, payload: FindingReasonRequest):
+async def reanalyze_project(
+    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_current_user)
+):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
@@ -708,7 +752,7 @@ async def reanalyze_project(project_id: str, payload: FindingReasonRequest):
         patched["compliance_score"] = after_score
         patched.pop("_id", None)  # let Mongo assign a fresh id — this must be a separate document
         session_id = project.get("session_id")
-        new_project_id = await save_project(patched, session_id)
+        new_project_id = await save_project(patched, session_id, current_user["_id"])
 
         return {
             "new_project_id": new_project_id,
@@ -730,9 +774,11 @@ _DOWNLOAD_ERROR_RESPONSE = {"error": "Could not create fixed ZIP"}
 
 
 @router.post("/projects/{project_id}/fixes/apply")
-async def apply_project_fix(project_id: str, payload: ApplyProjectFixRequest):
+async def apply_project_fix(
+    project_id: str, payload: ApplyProjectFixRequest, current_user: dict = Depends(get_current_user)
+):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
         findings = project.get("findings", [])
@@ -754,7 +800,7 @@ async def apply_project_fix(project_id: str, payload: ApplyProjectFixRequest):
             applied = apply_exact_replacement(file_entry["content"], original, fixed)
         except PatchError as exc:
             finding["fix_state"] = "Conflict"
-            await update_project(project_id, {"findings": findings})
+            await update_owned_project(project_id, current_user["_id"], {"findings": findings})
             return JSONResponse(status_code=409, content={"error": str(exc)})
 
         file_entry["content"] = applied.patched
@@ -781,7 +827,11 @@ async def apply_project_fix(project_id: str, payload: ApplyProjectFixRequest):
         analyze_project(project)
         after_score = compute_score(project)
         project["compliance_score"] = after_score
-        await update_project(project_id, {"files": project["files"], "findings": project["findings"], "patches": project.get("patches", []), "compliance_score": after_score})
+        await update_owned_project(
+            project_id,
+            current_user["_id"],
+            {"files": project["files"], "findings": project["findings"], "patches": project.get("patches", []), "compliance_score": after_score},
+        )
         return {
             "status": "applied",
             "file": finding.get("file"),
