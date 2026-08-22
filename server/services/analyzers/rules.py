@@ -9,7 +9,39 @@ import io
 import re
 import tokenize
 
-_RE_SECRET = re.compile(r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"][^'\"]{4,}['\"]")
+_RE_SECRET = re.compile(r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"]([^'\"]{4,})['\"]")
+
+# GOD spec Rule 1: "DO NOT report password = 'hello' / token = 'test' /
+# secret = 'example' automatically" -- a credential-shaped assignment whose
+# VALUE is itself a common weak/placeholder word is evidence of a test
+# fixture or a lazy default, not a real embedded credential. Checked
+# case-insensitively against the whole value and against alphabetic-only
+# runs within it (so "changeme123", "testpassword", "xxxxadminxxxx" are
+# still caught, but a real high-entropy secret containing "test" as a
+# substring, e.g. an actual key from a provider's test-mode key space
+# with real random suffix, is judged on the whole value, not blocklisted
+# for merely containing "test").
+_WEAK_SECRET_VALUES = {
+    "hello", "test", "example", "changeme", "password", "admin", "adminadmin",
+    "12345", "123456", "1234567", "12345678", "123456789", "qwerty", "letmein",
+    "welcome", "secret", "default", "changeit", "placeholder", "xxx", "xxxx",
+    "yourpassword", "yourapikey", "your_api_key", "yourtoken", "your_token",
+    "testpassword", "testtoken", "testsecret", "dummy", "fakekey", "fake",
+    "notarealsecret", "notarealkey", "sample", "foobar", "foo", "bar",
+}
+
+
+def _is_weak_placeholder_secret_value(value: str) -> bool:
+    normalized = re.sub(r"[\s_\-]", "", value).lower()
+    # strip a trailing digit run too -- "changeme123", "testpassword1" are
+    # still the same placeholder word with a throwaway numeric suffix.
+    core = re.sub(r"\d+$", "", normalized)
+    if normalized in _WEAK_SECRET_VALUES or core in _WEAK_SECRET_VALUES:
+        return True
+    # a run of the same character (xxxxxxxx, 00000000) is a placeholder shape
+    if len(set(normalized)) <= 1:
+        return True
+    return False
 _RE_EVAL_PY = re.compile(r"\b(eval|exec)\s*\(")
 _RE_EVAL_JS = re.compile(r"\beval\s*\(")
 _RE_BARE_EXCEPT = re.compile(r"^\s*except\s*:\s*$", re.MULTILINE)
@@ -243,6 +275,17 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
     # 1. hardcoded secret/credential — all languages
     for match in _RE_SECRET.finditer(content):
         if _is_comment_or_non_secret_context(content, match):
+            continue
+        # The line-based check above only catches a comment/docstring line
+        # that itself STARTS with a comment marker -- a secret-shaped
+        # example shown inside a multi-line Python docstring (a common
+        # documentation pattern) doesn't start with '#' and would slip
+        # through. Tokenize-based check catches that: it's real for
+        # Python because docstrings are STRING tokens, not comments, so a
+        # match landing inside one means it's example text, not live code.
+        if language == "python" and not _outside_python_comment_or_string(content, match):
+            continue
+        if _is_weak_placeholder_secret_value(match.group(2)):
             continue
         findings.append(
             {
