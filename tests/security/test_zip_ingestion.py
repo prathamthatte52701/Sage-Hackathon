@@ -29,6 +29,21 @@ def test_zip_upload_builds_normalized_project():
     assert project["project"]["languages"] == ["python"]
 
 
+def test_binary_asset_is_preserved_for_storage_round_trip():
+    payload = b"\x89PNG\r\n\x1a\n\x00\x01asset"
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("src/app.py", "print('ok')\n")
+        zf.writestr("assets/logo.png", payload)
+
+    project, _warnings, error = _project_from_zip_bytes(archive.getvalue(), "demo")
+
+    assert error is None
+    asset = next(file for file in project["files"] if file["path"] == "assets/logo.png")
+    assert asset["content"] is None
+    assert asset["binary_content"] == payload
+
+
 def test_zip_rejects_excessive_path_depth():
     deep_path = "/".join([f"d{i}" for i in range(25)]) + "/app.py"
     project, warnings, error = _project_from_zip_bytes(_zip_bytes({deep_path: "print(1)"}), "deep")
