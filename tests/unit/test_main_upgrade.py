@@ -76,6 +76,88 @@ def test_semantic_duplicate_deterministic_and_ai_is_merged():
     assert deterministic["source"] == "ai_quality+deterministic"
 
 
+def test_ai_privacy_duplicate_on_same_logging_line_is_not_appended():
+    source = "\n".join(
+        [
+            "import logging",
+            "logger = logging.getLogger(__name__)",
+            "def authenticate(token: str):",
+            "    logger.info('auth attempt token=%s', token)",
+            "    return token.startswith('session-')",
+        ]
+    )
+    deterministic = [
+        finding for finding in run_rules("app.py", "python", source)
+        if finding["rule"] == "sensitive_logging"
+    ]
+    assert len(deterministic) == 1
+    assert deterministic[0]["line"] == 4
+
+    ai_duplicate = {
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_privacy",
+        "severity": "low",
+        "category": "privacy",
+        "message": "Sensitive authentication token is logged in plaintext, risking credential leakage.",
+        "evidence": "logger.info('auth attempt token=%s', token)",
+        "source": "ai_quality",
+    }
+
+    kept = _dedupe_against_deterministic(
+        [ai_duplicate],
+        {"app.py": deterministic},
+        {"app.py": source},
+    )
+    assert kept == []
+    assert deterministic[0]["source"] == "ai_quality+deterministic"
+
+
+def test_ai_weak_crypto_duplicate_on_nearby_password_hash_line_is_not_appended():
+    source = "\n".join(
+        [
+            "import hashlib",
+            "def hash_password(password: str) -> str: return hashlib.md5(password.encode()).hexdigest()",
+            "def verify(password: str, stored: str) -> bool: return hash_password(password) == stored",
+        ]
+    )
+    deterministic = [
+        finding for finding in run_rules("app.py", "python", source)
+        if finding["rule"] == "weak_crypto_hash"
+    ]
+    assert len(deterministic) == 1
+    assert deterministic[0]["line"] == 2
+
+    ai_duplicate = {
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "severity": "critical",
+        "category": "security",
+        "message": "Insecure password hashing using MD5, which is fast and vulnerable to brute-force attacks.",
+        "evidence": "hash_password(password)",
+        "source": "ai_quality",
+    }
+
+    kept = _dedupe_against_deterministic(
+        [ai_duplicate],
+        {"app.py": deterministic},
+        {"app.py": source},
+    )
+    assert kept == []
+    assert deterministic[0]["source"] == "ai_quality+deterministic"
+
+
+def test_sensitive_logging_finding_has_logging_specific_remediation():
+    findings = run_rules(
+        "app.py",
+        "python",
+        "import logging\nlogger=logging.getLogger(__name__)\nlogger.info('token=%s', token)\n",
+    )
+    logging_finding = next(finding for finding in findings if finding["rule"] == "sensitive_logging")
+    assert "Do not log token" in logging_finding["fix_suggestion"]
+
+
 def test_nearby_different_findings_are_not_merged():
     deterministic = {
         "file": "app.py",

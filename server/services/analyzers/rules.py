@@ -10,7 +10,7 @@ import io
 import re
 import tokenize
 
-_RE_SECRET = re.compile(r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"]([^'\"]{4,})['\"]")
+_RE_SECRET = re.compile(r"(?i)(password|secret(?:[_-]?key)?|api[_-]?key|token)\s*=\s*['\"]([^'\"]{4,})['\"]")
 
 # GOD spec Rule 1: "DO NOT report password = 'hello' / token = 'test' /
 # secret = 'example' automatically" -- a credential-shaped assignment whose
@@ -118,6 +118,11 @@ _RE_TEMP_TMPNAM_JS = re.compile(r"\b(tmp\.tmpNameSync|os\.tmpdir\s*\(\s*\)\s*\+)
 _RE_UNSAFE_REDIRECT_PY = re.compile(r"\bredirect\s*\(\s*(request\.(args|form|json)|req\.(args|form|json))")
 _RE_UNSAFE_REDIRECT_JS = re.compile(r"\bres\.redirect\s*\(\s*(req\.(query|body|params)|request\.(query|body|params))")
 _RE_LOCAL_STORAGE_TOKEN = re.compile(r"\b(localStorage|sessionStorage)\.setItem\s*\(\s*['\"][^'\"]*(token|jwt|secret|session)[^'\"]*['\"]", re.IGNORECASE)
+_RE_JS_AUTH_COOKIE = re.compile(
+    r"\b(?:res|response)\.cookie\s*\(\s*['\"](?P<name>[^'\"]*(?:auth|session|token|jwt)[^'\"]*)['\"]\s*,"
+    r"[^,{}]+\s*,\s*\{(?P<options>[^{}]*)\}",
+    re.IGNORECASE,
+)
 _RE_JS_NUMERIC_COERCION_DEFAULT = re.compile(r"\bNumber\s*\([^)]*\)\s*\|\|\s*0\b")
 _RE_JS_DATE_SLICE = re.compile(r"\.\s*(date|createdAt|updatedAt)\s*\.slice\s*\(")
 _RE_JS_PERCENT_ZERO_BASELINE = re.compile(r"if\s*\(\s*!\s*(previous|prev|oldValue|baseline)\s*\)\s*return\s+0\s*;")
@@ -154,6 +159,10 @@ RULE_METADATA = {
     "debug_config_enabled": {"title": "Debug/development config enabled", "languages": ["python", "javascript", "typescript"], "category": "best_practice"},
     "weak_crypto_hash": {"title": "Weak cryptographic hash", "languages": ["python", "javascript", "typescript"], "category": "security"},
     "insecure_random_secret": {"title": "Insecure randomness for secret-like value", "languages": ["python", "javascript", "typescript"], "category": "security"},
+    "jwt_signature_verification_disabled": {"title": "JWT signature verification disabled", "languages": ["python"], "category": "security"},
+    "jwt_algorithm_verification_bypass": {"title": "JWT algorithm verification bypass", "languages": ["python"], "category": "security"},
+    "insecure_auth_cookie": {"title": "Insecure authentication cookie configuration", "languages": ["python"], "category": "security"},
+    "jwt_insecure_secret_fallback": {"title": "JWT secret has a literal fallback", "languages": ["python"], "category": "security"},
     "sensitive_logging": {"title": "Sensitive data written to logs", "languages": ["python", "javascript", "typescript"], "category": "security"},
     "blocking_call_in_async": {"title": "Blocking call inside async handler/function", "languages": ["python", "javascript", "typescript"], "category": "performance"},
     "unsafe_tempfile": {"title": "Unsafe temporary file name generation", "languages": ["python", "javascript", "typescript"], "category": "security"},
@@ -166,6 +175,25 @@ RULE_METADATA = {
     "js_zero_baseline_fallback": {"title": "Zero baseline treated as missing", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_unknown_type_default": {"title": "Unknown enum/type falls into default branch", "languages": ["javascript", "typescript"], "category": "logic"},
     "process_global_auth_cache": {"title": "Process-global authentication cache", "languages": ["javascript", "typescript"], "category": "security"},
+}
+
+RULE_FIX_SUGGESTIONS = {
+    "sensitive_logging": "Do not log token, password, secret, or API-key values. Log a stable non-sensitive event or redacted identifier instead.",
+    "hardcoded_secret": "Move the credential into a secret manager or environment variable and rotate the exposed value.",
+    "sql_concat": "Use parameterized query APIs instead of concatenating or interpolating request-controlled values.",
+    "nosql_untrusted_filter": "Build an allowlisted query object from approved fields instead of passing request-controlled objects directly.",
+    "subprocess_shell_true": "Avoid shell=True and pass an argument array; validate any request-controlled argument against an allowlist.",
+    "os_system_call": "Replace shell execution with a safe library call or fixed command plus allowlisted arguments.",
+    "ssrf_untrusted_url": "Validate outbound URLs against an allowlist and block private/internal network targets before making the request.",
+    "path_traversal_file": "Resolve the requested path under a fixed base directory and reject paths that escape it.",
+    "unsafe_archive_extract": "Validate archive member paths before extraction and reject entries that escape the destination directory.",
+    "unsafe_deserialization": "Use a safe parser/loader for untrusted input and avoid object deserialization APIs.",
+    "dangerous_eval": "Replace dynamic code execution with a safe parser or explicit command dispatch table.",
+    "tls_verification_disabled": "Keep TLS certificate verification enabled and configure trusted CA material explicitly when needed.",
+    "permissive_cors": "Use an explicit origin allowlist and do not combine wildcard origins with credentials.",
+    "weak_crypto_hash": "Use a modern password hashing or cryptographic primitive appropriate to the security boundary.",
+    "insecure_random_secret": "Use a cryptographically secure random source such as Python secrets or Node crypto for token generation.",
+    "frontend_token_storage": "Keep auth tokens out of localStorage/sessionStorage; prefer HttpOnly secure cookies or in-memory state.",
 }
 
 # language-gated pattern tables for the 3 checks that only covered Python
@@ -203,6 +231,8 @@ def _findings_for_pattern(content: str, path: str, pattern: re.Pattern, rule: st
                 "evidence": _evidence(match),
                 "confidence": "medium",
                 "evidence_type": "deterministic_pattern",
+                "fix_suggestion": RULE_FIX_SUGGESTIONS.get(rule, "Review the deterministic evidence and apply the matching secure pattern."),
+                "source": "deterministic",
             }
         )
     return findings
@@ -232,6 +262,8 @@ def _finding(path: str, content: str, match: re.Match, rule: str, severity: str,
         "evidence": _evidence(match),
         "confidence": "medium",
         "evidence_type": "deterministic_pattern",
+        "fix_suggestion": RULE_FIX_SUGGESTIONS.get(rule, "Review the deterministic evidence and apply the matching secure pattern."),
+        "source": "deterministic",
     }
 
 
@@ -271,7 +303,10 @@ def _is_comment_or_non_secret_context(content: str, match: re.Match) -> bool:
 
 
 def _security_context_guard(content: str, match: re.Match) -> bool:
-    return bool(_HASH_SECURITY_CONTEXT.search(_nearby(content, match.start(), match.end())))
+    line_start, line_end = _line_bounds(content, match.start(), match.end())
+    previous_start = content.rfind("\n", 0, max(0, line_start - 1)) + 1
+    previous_start = content.rfind("\n", 0, max(0, previous_start - 1)) + 1
+    return bool(_HASH_SECURITY_CONTEXT.search(content[previous_start:line_end]))
 
 
 def _sql_execution_sink_guard(content: str, match: re.Match) -> bool:
@@ -279,7 +314,26 @@ def _sql_execution_sink_guard(content: str, match: re.Match) -> bool:
 
 
 def _secret_random_guard(content: str, match: re.Match) -> bool:
-    return bool(_RE_SECURITY_TOKEN_WORD.search(_nearby(content, match.start(), match.end())))
+    line_start, line_end = _line_bounds(content, match.start(), match.end())
+    previous_start = content.rfind("\n", 0, max(0, line_start - 1)) + 1
+    previous_start = content.rfind("\n", 0, max(0, previous_start - 1)) + 1
+    return bool(_RE_SECURITY_TOKEN_WORD.search(content[previous_start:line_end]))
+
+
+def _python_security_context_guard(content: str, match: re.Match) -> bool:
+    return _outside_python_comment_or_string(content, match) and _security_context_guard(content, match)
+
+
+def _python_secret_random_guard(content: str, match: re.Match) -> bool:
+    return _outside_python_comment_or_string(content, match) and _secret_random_guard(content, match)
+
+
+def _javascript_security_context_guard(content: str, match: re.Match) -> bool:
+    return _outside_javascript_comment_or_string(content, match) and _security_context_guard(content, match)
+
+
+def _javascript_secret_random_guard(content: str, match: re.Match) -> bool:
+    return _outside_javascript_comment_or_string(content, match) and _secret_random_guard(content, match)
 
 
 def _python_non_code_spans(content: str) -> list[tuple[int, int]]:
@@ -394,6 +448,8 @@ def _ast_finding(path: str, content: str, node: ast.AST, rule: str, message: str
         "evidence": evidence[:120],
         "confidence": "medium",
         "evidence_type": "deterministic_pattern",
+        "fix_suggestion": RULE_FIX_SUGGESTIONS.get(rule, "Review the deterministic evidence and apply the matching secure pattern."),
+        "source": "deterministic",
     }
 
 
@@ -1167,6 +1223,151 @@ def _cors_findings(content: str, path: str, language: str) -> list[dict]:
     return []
 
 
+_AUTH_COOKIE_NAME = re.compile(r"(?i)(auth|session|token|jwt)")
+_AUTH_SECRET_ENV_NAME = re.compile(r"(?i)(jwt|token|session|secret|signing[_-]?key)")
+
+
+def _constant_string(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _is_false_literal(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is False
+
+
+def _keyword_value(call: ast.Call, name: str) -> ast.AST | None:
+    return next((keyword.value for keyword in call.keywords if keyword.arg == name), None)
+
+
+def _jwt_options_disable_signature(node: ast.AST | None) -> bool:
+    if not isinstance(node, ast.Dict):
+        return False
+    for key, value in zip(node.keys, node.values):
+        if _constant_string(key) == "verify_signature" and _is_false_literal(value):
+            return True
+    return False
+
+
+def _jwt_allows_none_algorithm(node: ast.AST | None) -> bool:
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return any(_constant_string(item) == "none" for item in node.elts)
+    return _constant_string(node) == "none"
+
+
+def _python_auth_session_findings(content: str, path: str) -> list[dict]:
+    """Report only literal, executable auth/session misconfigurations."""
+    if not any(marker in content.lower() for marker in ("jwt", "getenv", "environ.get", "set_cookie")):
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+
+    jwt_modules = {"jwt"}
+    jwt_decode_functions: set[str] = set()
+    os_modules = {"os"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "jwt":
+                    jwt_modules.add(alias.asname or alias.name)
+                elif alias.name == "os":
+                    os_modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "jwt":
+                jwt_decode_functions.update(
+                    alias.asname or alias.name for alias in node.names if alias.name == "decode"
+                )
+
+    findings = []
+    ordered_nodes = sorted(ast.walk(tree), key=lambda node: (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)))
+    for node in ordered_nodes:
+        if isinstance(node, ast.Call):
+            is_jwt_decode = (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in jwt_modules
+                and node.func.attr == "decode"
+            ) or (isinstance(node.func, ast.Name) and node.func.id in jwt_decode_functions)
+            if is_jwt_decode:
+                if _jwt_options_disable_signature(_keyword_value(node, "options")):
+                    findings.append(_ast_finding(
+                        path, content, node, "jwt_signature_verification_disabled",
+                        "JWT signature verification is explicitly disabled",
+                    ))
+                if _jwt_allows_none_algorithm(_keyword_value(node, "algorithms")):
+                    findings.append(_ast_finding(
+                        path, content, node, "jwt_algorithm_verification_bypass",
+                        "JWT decode accepts the unsigned 'none' algorithm",
+                    ))
+
+            is_os_getenv = (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in os_modules
+                and node.func.attr == "getenv"
+            )
+            is_environ_get = (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and isinstance(node.func.value, ast.Attribute)
+                and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id in os_modules
+                and node.func.value.attr == "environ"
+            )
+            if (is_os_getenv or is_environ_get) and len(node.args) >= 2:
+                env_name, fallback = _constant_string(node.args[0]), _constant_string(node.args[1])
+                if env_name and fallback is not None and _AUTH_SECRET_ENV_NAME.search(env_name):
+                    findings.append(_ast_finding(
+                        path, content, node, "jwt_insecure_secret_fallback",
+                        "Authentication secret environment variable has a literal fallback",
+                    ))
+
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "set_cookie":
+                cookie_name = _constant_string(node.args[0]) if node.args else _constant_string(_keyword_value(node, "key"))
+                if cookie_name and _AUTH_COOKIE_NAME.search(cookie_name):
+                    insecure_flags = [
+                        name for name in ("httponly", "secure")
+                        if _is_false_literal(_keyword_value(node, name) or ast.Constant(value=True))
+                    ]
+                    if insecure_flags:
+                        findings.append(_ast_finding(
+                            path, content, node, "insecure_auth_cookie",
+                            f"Authentication cookie explicitly disables {', '.join(insecure_flags)}",
+                        ))
+    return findings
+
+
+def _javascript_auth_cookie_findings(content: str, path: str) -> list[dict]:
+    findings = []
+    for match in _RE_JS_AUTH_COOKIE.finditer(content):
+        if not _outside_javascript_comment_or_string(content, match):
+            continue
+        options = match.group("options")
+        insecure_flags = [
+            name for name, pattern in (
+                ("httpOnly", r"\bhttpOnly\s*:\s*false\b"),
+                ("secure", r"\bsecure\s*:\s*false\b"),
+            )
+            if re.search(pattern, options, re.IGNORECASE)
+        ]
+        if insecure_flags:
+            findings.append(
+                _finding(
+                    path,
+                    content,
+                    match,
+                    "insecure_auth_cookie",
+                    "high",
+                    "security",
+                    f"Authentication cookie explicitly disables {', '.join(insecure_flags)}",
+                )
+            )
+    return findings
+
+
 def run_rules(path: str, language: str, content: str) -> list[dict]:
     findings = []
 
@@ -1258,6 +1459,7 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
     )
 
     if language in ("javascript", "typescript"):
+        findings += _javascript_auth_cookie_findings(content, path)
         findings += _nosql_direct_filter_findings(content, path, language)
         findings += _findings_for_pattern(
             content, path, _RE_ARCHIVE_EXTRACT_JS, "unsafe_archive_extract", "high", "security",
@@ -1279,11 +1481,11 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         )
         findings += _guarded_findings(
             content, path, _RE_WEAK_CRYPTO_JS, "weak_crypto_hash", "medium", "security",
-            "Weak hash algorithm is used in security-adjacent code", _security_context_guard,
+            "Weak hash algorithm is used in security-adjacent code", _javascript_security_context_guard,
         )
         findings += _guarded_findings(
             content, path, _RE_INSECURE_RANDOM_JS, "insecure_random_secret", "medium", "security",
-            "Math.random is used near token/secret generation", _secret_random_guard,
+            "Math.random is used near token/secret generation", _javascript_secret_random_guard,
         )
         findings += _findings_for_pattern(
             content, path, _RE_SENSITIVE_LOG_JS, "sensitive_logging", "medium", "security",
@@ -1335,6 +1537,7 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         )
 
     if language == "python":
+        findings += _python_auth_session_findings(content, path)
         findings += _nosql_direct_filter_findings(content, path, language)
         findings += _path_traversal_findings(content, path, language)
         findings += _findings_for_pattern(
@@ -1349,11 +1552,11 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         )
         findings += _guarded_findings(
             content, path, _RE_WEAK_CRYPTO_PY, "weak_crypto_hash", "medium", "security",
-            "Weak hash algorithm is used in security-adjacent code", _security_context_guard,
+            "Weak hash algorithm is used in security-adjacent code", _python_security_context_guard,
         )
         findings += _guarded_findings(
             content, path, _RE_INSECURE_RANDOM_PY, "insecure_random_secret", "medium", "security",
-            "random module is used near token/secret generation", _secret_random_guard,
+            "random module is used near token/secret generation", _python_secret_random_guard,
         )
         findings += _findings_for_pattern(
             content, path, _RE_SENSITIVE_LOG_PY, "sensitive_logging", "medium", "security",

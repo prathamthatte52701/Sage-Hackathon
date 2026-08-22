@@ -45,6 +45,9 @@ _RULE_GROUPS = {
     "ssrf_untrusted_url": "ssrf",
     "dangerous_eval": "dynamic_code_execution",
     "sql_concat": "sql_injection",
+    "sensitive_logging": "sensitive_logging",
+    "weak_crypto_hash": "weak_crypto_random",
+    "insecure_random_secret": "weak_crypto_random",
 }
 
 
@@ -166,6 +169,18 @@ def _root_group(finding: dict) -> str:
         ("cors", "permissive_cors"),
         ("time.sleep", "blocking_async"),
         ("blocking", "blocking_async"),
+        ("written to logs", "sensitive_logging"),
+        ("logged in plaintext", "sensitive_logging"),
+        ("credential leakage", "sensitive_logging"),
+        ("token is logged", "sensitive_logging"),
+        ("sensitive data", "sensitive_logging"),
+        ("weak hash", "weak_crypto_random"),
+        ("weak cryptographic", "weak_crypto_random"),
+        ("password hashing using md5", "weak_crypto_random"),
+        ("hashing using md5", "weak_crypto_random"),
+        ("brute force", "weak_crypto_random"),
+        ("md5", "weak_crypto_random"),
+        ("sha1", "weak_crypto_random"),
     ):
         if needle in title:
             return group
@@ -177,6 +192,61 @@ def _dedupe_key(finding: dict) -> tuple:
     evidence = _normalize_text(finding.get("evidence", ""))
     sink = evidence[:90] or _normalize_text(finding.get("message", ""))[:90]
     return (finding.get("file"), _root_group(finding), line // 3, sink)
+
+
+def _line_at(content: str, line: int) -> str:
+    if line <= 0:
+        return ""
+    lines = (content or "").splitlines()
+    if line > len(lines):
+        return ""
+    return lines[line - 1]
+
+
+def _finding_source_signal(finding: dict, file_contents: dict[str, str] | None = None) -> str:
+    evidence = finding.get("evidence") or finding.get("evidence_snippet") or finding.get("snippet") or ""
+    if evidence:
+        return _normalize_text(evidence)
+    if file_contents:
+        return _normalize_text(_line_at(file_contents.get(finding.get("file"), ""), int(finding.get("line") or 0)))
+    return ""
+
+
+def _same_source_location_duplicate(qf: dict, deterministic: dict, file_contents: dict[str, str] | None = None) -> bool:
+    if qf.get("file") != deterministic.get("file"):
+        return False
+    qf_line = int(qf.get("line") or 0)
+    deterministic_line = int(deterministic.get("line") or 0)
+    same_line = qf_line == deterministic_line
+    nearby_line = qf_line > 0 and deterministic_line > 0 and abs(qf_line - deterministic_line) <= 2
+    same_root = _root_group(qf) == _root_group(deterministic)
+    if not same_line and not (same_root and nearby_line):
+        return False
+
+    qf_signal = _finding_source_signal(qf, file_contents)
+    det_signal = _finding_source_signal(deterministic, file_contents)
+    if not qf_signal or not det_signal:
+        return False
+
+    qf_line_signal = ""
+    det_line_signal = ""
+    if file_contents:
+        content = file_contents.get(qf.get("file"), "")
+        qf_line_signal = _normalize_text(_line_at(content, qf_line))
+        det_line_signal = _normalize_text(_line_at(content, deterministic_line))
+
+    same_code = qf_signal == det_signal or qf_signal in det_signal or det_signal in qf_signal
+    same_context = bool(
+        qf_line_signal
+        and det_line_signal
+        and (
+            qf_signal in det_line_signal
+            or det_signal in qf_line_signal
+            or qf_line_signal in det_line_signal
+            or det_line_signal in qf_line_signal
+        )
+    )
+    return (same_line and (same_root or same_code)) or (same_root and (same_code or same_context))
 
 
 def _merge_duplicate(base: dict, incoming: dict) -> dict:
@@ -194,7 +264,11 @@ def _merge_duplicate(base: dict, incoming: dict) -> dict:
     return merged
 
 
-def _dedupe_against_deterministic(quality_findings: list[dict], deterministic_by_file: dict[str, list[dict]]) -> list[dict]:
+def _dedupe_against_deterministic(
+    quality_findings: list[dict],
+    deterministic_by_file: dict[str, list[dict]],
+    file_contents: dict[str, str] | None = None,
+) -> list[dict]:
     kept = []
     existing_by_key = {}
     for deterministic in [item for values in deterministic_by_file.values() for item in values]:
@@ -203,6 +277,17 @@ def _dedupe_against_deterministic(quality_findings: list[dict], deterministic_by
         key = _dedupe_key(qf)
         if key in existing_by_key:
             _merge_duplicate(existing_by_key[key], qf)
+            continue
+        exact_overlap = next(
+            (
+                deterministic
+                for deterministic in deterministic_by_file.get(qf.get("file"), [])
+                if _same_source_location_duplicate(qf, deterministic, file_contents)
+            ),
+            None,
+        )
+        if exact_overlap is not None:
+            _merge_duplicate(exact_overlap, qf)
             continue
         if key in {_dedupe_key(item) for item in kept}:
             for idx, item in enumerate(kept):
@@ -268,6 +353,7 @@ async def run_ai_quality_review(project: dict) -> dict:
     deterministic_by_file: dict[str, list[dict]] = {}
     for finding in project.get("findings", []):
         deterministic_by_file.setdefault(finding.get("file"), []).append(finding)
+    file_contents = {f.get("path"): f.get("content") or "" for f in project.get("files", []) if f.get("path")}
 
     tasks = []
     task_meta = []
@@ -293,7 +379,7 @@ async def run_ai_quality_review(project: dict) -> dict:
         groq_calls += 1 if called else 0
 
     with tracer.stage("grounding_and_dedup_ms"):
-        deduped = _dedupe_against_deterministic(all_findings, deterministic_by_file)
+        deduped = _dedupe_against_deterministic(all_findings, deterministic_by_file, file_contents)
     project.setdefault("findings", []).extend(deduped)
 
     coverage = {

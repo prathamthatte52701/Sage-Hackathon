@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2] / "client" / "src"
 APP = (ROOT / "App.jsx").read_text()
 API = (ROOT / "api" / "client.js").read_text()
+EVIDENCE_PANEL = (ROOT / "components" / "EvidencePanel.jsx").read_text()
 
 
 def _body(name: str) -> str:
@@ -47,6 +48,18 @@ def test_generated_fix_modal_does_not_invent_a_passing_validation_state():
     assert "target_found: true" not in modal
     assert "Boolean(fixData.can_apply)" in modal
     assert "disabled={applying || !allPass}" in modal
+
+
+def test_evidence_panel_uses_finding_specific_remediation_before_generic_fallback():
+    assert "finding.fix_suggestion" in EVIDENCE_PANEL
+    assert "Apply parameterized query execution or sanitize user input before invocation." not in EVIDENCE_PANEL
+
+
+def test_project_apply_handler_does_not_call_api_for_a_failed_validation():
+    body = _body("handleApplyFix")
+
+    assert "if (!activeFixData.can_apply" in body
+    assert body.index("if (!activeFixData.can_apply") < body.index("await applyProjectFix(")
 
 
 def test_analysis_client_waits_for_job_before_loading_results():

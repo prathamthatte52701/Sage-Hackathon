@@ -37,6 +37,13 @@ def test_token_variable_name_detected():
     assert len(findings) == 1
 
 
+def test_framework_session_secret_key_detected():
+    findings = _secret_findings("app.secret_key = 'test-session-secret'")
+
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "SEC-HARDCODED-SECRET"
+
+
 def test_javascript_secret_detected():
     findings = _secret_findings('const apiKey = "aB3xQ9mK2pL7vN4wR8tY1uJ6";', language="javascript")
     assert len(findings) == 1

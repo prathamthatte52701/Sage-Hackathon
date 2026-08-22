@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from hashlib import sha256
 from pathlib import PurePosixPath
+import re
 
 
 class PatchError(ValueError):
@@ -35,11 +36,31 @@ def find_exact_span(content: str, original: str) -> tuple[int, int]:
     if original is None or original == "":
         raise PatchError("malformed_fix")
     first = content.find(original)
-    if first == -1:
+    if first != -1:
+        if content.find(original, first + 1) != -1:
+            raise PatchError("ambiguous_target")
+        return first, first + len(original)
+
+    # Model output commonly normalizes Windows CRLF source to LF. Treat only
+    # newline spelling as equivalent: every non-newline character remains an
+    # exact match and the target must still be unique.
+    normalized = original.replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" not in normalized:
         raise PatchError("target_not_found")
-    if content.find(original, first + 1) != -1:
+    pattern = r"\r?\n".join(re.escape(part) for part in normalized.split("\n"))
+    matches = list(re.finditer(pattern, content))
+    if not matches:
+        raise PatchError("target_not_found")
+    if len(matches) != 1:
         raise PatchError("ambiguous_target")
-    return first, first + len(original)
+    return matches[0].span()
+
+
+def _replacement_with_source_line_endings(content: str, fixed: str) -> str:
+    """Keep a CRLF source file CRLF after applying an LF-normalized patch."""
+    if "\r\n" not in content or "\n" not in fixed:
+        return fixed
+    return fixed.replace("\r\n", "\n").replace("\n", "\r\n")
 
 
 def validate_exact_patch(
@@ -119,8 +140,9 @@ def apply_structured_patch(
         expected_hash=expected_hash,
         existing_spans=existing_spans,
     )
-    patched = content[: metadata["target_start"]] + (fixed or "") + content[metadata["target_end"] :]
-    return AppliedPatch(patched=patched, diff=make_unified_diff(original, fixed or ""))
+    replacement = _replacement_with_source_line_endings(content, fixed or "")
+    patched = content[: metadata["target_start"]] + replacement + content[metadata["target_end"] :]
+    return AppliedPatch(patched=patched, diff=make_unified_diff(original, replacement))
 
 
 @dataclass(frozen=True)

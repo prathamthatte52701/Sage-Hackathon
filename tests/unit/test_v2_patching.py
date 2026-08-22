@@ -45,6 +45,19 @@ def test_exact_single_match_patch_validates_and_applies():
     assert "finally" in applied.patched
 
 
+def test_crlf_source_accepts_lf_generated_patch_and_preserves_line_endings():
+    content = "import random,string\r\n\r\ndef reset_token():\r\n    return ''.join(random.choice('abc') for _ in range(32))\r\n"
+    original = "import random,string\n\ndef reset_token():\n    return ''.join(random.choice('abc') for _ in range(32))"
+    fixed = "import random,string,secrets\n\ndef reset_token():\n    return ''.join(secrets.choice('abc') for _ in range(32))"
+
+    metadata = build_patch_metadata(content, original, fixed)
+    applied = apply_exact_replacement(content, original, fixed)
+
+    assert metadata["can_apply"] is True
+    assert "secrets.choice" in applied.patched
+    assert "\n" not in applied.patched.replace("\r\n", "")
+
+
 def test_stale_source_patch_rejected():
     metadata = build_patch_metadata(
         "const value = 2;\n",

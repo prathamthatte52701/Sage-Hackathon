@@ -698,6 +698,30 @@ async def reason_about_finding(
 _TRANSFORM_ERROR_RESPONSE = {"error": "Could not generate a fix for this finding, please try again"}
 
 
+def _deterministic_random_choice_fix(finding: dict, content: str) -> FindingTransform | None:
+    """Recover a safe, exact patch when the model preview missed source formatting."""
+    if finding.get("rule") != "insecure_random_secret" or content.count("random.choice(") != 1:
+        return None
+    if "import secrets" in content:
+        fixed = content.replace("random.choice(", "secrets.choice(", 1)
+    else:
+        import_match = re.search(
+            r"(?m)^(?P<imports>\s*import\s+[^\r\n#]*\brandom\b[^\r\n#]*)(?P<comment>\s*(?:#.*)?)$",
+            content,
+        )
+        if import_match is None:
+            return None
+        imports = import_match.group("imports").rstrip()
+        fixed = content[: import_match.start()] + f"{imports}, secrets{import_match.group('comment')}" + content[import_match.end() :]
+        fixed = fixed.replace("random.choice(", "secrets.choice(", 1)
+    return FindingTransform(
+        original_snippet=content,
+        proposed_fix=fixed,
+        explanation="Replaced predictable random.choice with secrets.choice and added the standard-library secrets import.",
+        confidence=0.96,
+    )
+
+
 def _enrich_transform(transform: FindingTransform, finding: dict, content: str | None = None) -> FindingTransform:
     original = transform.original_snippet or transform.original_code
     fixed = transform.proposed_fix or transform.fixed_code
@@ -706,6 +730,14 @@ def _enrich_transform(transform: FindingTransform, finding: dict, content: str |
     metadata = {}
     if content is not None and original and fixed:
         metadata = build_patch_metadata(content, original, fixed, filename=finding.get("file") or "file")
+        if metadata.get("apply_failure_reason") == "target_not_found":
+            fallback = _deterministic_random_choice_fix(finding, content)
+            if fallback is not None:
+                transform = fallback
+                original = fallback.original_snippet
+                fixed = fallback.proposed_fix
+                diff = make_unified_diff(original, fixed, finding.get("file") or "file")
+                metadata = build_patch_metadata(content, original, fixed, filename=finding.get("file") or "file")
         can_apply = metadata["can_apply"]
     transform.finding_id = f"{finding.get('file', '')}:{finding.get('line', '')}:{finding.get('rule', '')}"
     transform.rule_id = finding.get("rule", "")
