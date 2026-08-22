@@ -391,6 +391,63 @@ async def update_analysis_job(job_id: str, owner_user_id: str, updates: dict) ->
     )
 
 
+# Mirrors create_analysis_job/get_owned_analysis_job/update_analysis_job --
+# minimal Mongo-persisted run state so a Fix All run survives a Uvicorn
+# restart the same way an analysis job does. Deliberately does NOT persist
+# the full per-finding results list or report (those stay in-memory/
+# ephemeral, same tradeoff services/analysis_jobs.py makes for its result
+# payload) -- only enough to know a run existed, what it had reached, and
+# to correct it to "failed" instead of leaving it stuck at "running"
+# forever if the process that owned it is gone.
+async def create_fix_all_run(project_id: str, owner_user_id: str) -> str:
+    database = _require_db()
+    result = await database.fix_all_runs.insert_one(
+        {
+            "project_id": project_id,
+            "owner_user_id": owner_user_id,
+            "status": "running",
+            "started_at": datetime.now(timezone.utc),
+            "total": 0,
+            "processed": 0,
+            "fixed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "source_revision": None,
+        }
+    )
+    return str(result.inserted_id)
+
+
+async def update_fix_all_run(run_id: str, owner_user_id: str, updates: dict) -> None:
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(run_id)
+    except InvalidId:
+        return
+    await _require_db().fix_all_runs.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates}
+    )
+
+
+async def get_owned_fix_all_run(project_id: str, owner_user_id: str):
+    """Most recent Fix All run recorded for this project. Unlike
+    get_owned_analysis_job (looked up by a job id the caller already has),
+    GET /projects/{id}/fix-all/status is project-keyed, not run-keyed, and
+    there is at most one active run per project at a time (enforced by
+    fix_all.py's in-process guard) -- so "latest by started_at" is an
+    unambiguous "the current run" lookup."""
+    database = _require_db()
+    doc = await database.fix_all_runs.find_one(
+        {"project_id": project_id, "owner_user_id": owner_user_id},
+        sort=[("started_at", -1)],
+    )
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
 async def create_user(email: str, password_hash: str) -> str:
     """Raises pymongo.errors.DuplicateKeyError if the unique email index rejects it."""
     database = _require_db()
@@ -433,3 +490,4 @@ async def ensure_indexes() -> None:
     await database.users.create_index("email", unique=True)
     await database.projects.create_index("owner_user_id")
     await database.analysis_jobs.create_index([("owner_user_id", 1), ("project_id", 1), ("status", 1)])
+    await database.fix_all_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])

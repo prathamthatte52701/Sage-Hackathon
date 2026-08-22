@@ -45,6 +45,26 @@ def project_store(monkeypatch):
 
     monkeypatch.setattr(projects_router, "get_owned_project_metadata", get_owned_project_metadata)
     monkeypatch.setattr(projects_router, "get_owned_project", get_owned_project)
+
+    # start_fix_all's P1 run-state persistence (create_fix_all_run/
+    # update_fix_all_run/get_owned_fix_all_run) must never touch a real
+    # database from a unit test -- these endpoint tests call
+    # start_fix_all_endpoint for real, so without this a real MongoDB
+    # (whenever one is configured) ends up with leftover "proj-1"
+    # fix_all_runs documents that leak into and break other tests using the
+    # same hardcoded id, e.g. test_status_endpoint_reports_no_run_as_404.
+    async def create_fix_all_run(project_id, owner_user_id):
+        return None
+
+    async def update_fix_all_run(run_id, owner_user_id, updates):
+        return None
+
+    async def get_owned_fix_all_run(project_id, owner_user_id):
+        return None
+
+    monkeypatch.setattr(fix_all_module, "create_fix_all_run", create_fix_all_run)
+    monkeypatch.setattr(fix_all_module, "update_fix_all_run", update_fix_all_run)
+    monkeypatch.setattr(fix_all_module, "get_owned_fix_all_run", get_owned_fix_all_run)
     return store
 
 

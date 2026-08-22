@@ -12,20 +12,33 @@ actually executes (well after both modules finished loading), the lazy
 import is just a dict lookup.
 
 Concurrency model matches services/analysis_jobs.py's own documented
-choice: a single-process, in-memory, per-project job table. Not Mongo-
-persisted -- a Fix All run is a single request's lifetime, not something
-that needs to survive a server restart the way a long analysis job does.
+choice: a single-process, in-memory, per-project job table is still the
+source of truth while a run is live in this process. Unlike the very first
+version of this module, run state (status/counts/source_revision -- never
+the full per-finding results list, which stays in-memory/ephemeral) is
+also mirrored to Mongo, so a crash/restart doesn't strand the frontend
+polling a run that can now never complete; see get_fix_all_status_with_
+recovery below, which mirrors analysis_jobs.get_analysis_job_with_recovery.
 """
 
 import asyncio
 from ast import parse as _ast_parse
+from datetime import datetime, timezone
 
-from db.mongo import get_owned_project, update_owned_project
+from db.mongo import (
+    create_fix_all_run,
+    get_owned_fix_all_run,
+    get_owned_project_metadata,
+    hydrate_selected_files,
+    update_fix_all_run,
+    update_owned_project,
+)
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.context_expansion import build_finding_context
 from services.groq_client import GroqUnavailableError
 from services.patching import PatchError, apply_structured_patch
 from services.reasoning_engine import generate_fix
+from services.retrieval import build_import_graph, get_related_files
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD
 from services.standards import get_standard_by_id, get_standards_for
 
@@ -43,6 +56,92 @@ def is_fix_all_running(project_id: str) -> bool:
 
 def get_fix_all_status(project_id: str) -> dict | None:
     return _active_runs.get(project_id)
+
+
+# If Uvicorn crashes/restarts mid-run, Mongo is left holding a fix_all_runs
+# doc stuck at status="running" forever -- _active_runs (this process's only
+# record of which task actually owns it) is gone, and nothing will ever
+# transition that doc again. A brand-new process has an empty _active_runs,
+# so "not in the registry" is an unambiguous signal in this single-process
+# deployment, not a heuristic. Mirrors analysis_jobs.STALE_JOB_GRACE_SECONDS.
+FIX_ALL_STALE_RUN_GRACE_SECONDS = 30
+
+
+def _run_age_seconds(run: dict) -> float | None:
+    started = run.get("started_at")
+    if started is None:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - started).total_seconds()
+
+
+def _run_doc_to_status(run: dict) -> dict:
+    # Adapts a Mongo fix_all_runs doc to the same shape get_fix_all_status
+    # returns from _active_runs, so routers/projects.py's response building
+    # doesn't need to know which source it came from. results/report were
+    # never persisted (ephemeral, see module docstring) -- lost across a
+    # restart, same tradeoff analysis_jobs.py makes for its result payload.
+    return {
+        "job_id": run.get("_id", ""),
+        "status": run.get("status", "failed"),
+        "total": run.get("total", 0),
+        "processed": run.get("processed", 0),
+        "results": [],
+        "report": None,
+        "error": run.get("error"),
+    }
+
+
+async def get_fix_all_status_with_recovery(project_id: str, owner_user_id: str) -> dict | None:
+    """Same contract as get_fix_all_status, but when this process has no
+    in-memory record of the run (e.g. it started before a crash/restart),
+    falls back to the Mongo-persisted run doc instead of reporting "no run
+    found" for a run that actually existed -- and corrects an abandoned
+    "running" doc to "failed" so polling can't hang forever. Mirrors
+    services.analysis_jobs.get_analysis_job_with_recovery.
+
+    Best-effort like every other Mongo touch point in this module: if Mongo
+    isn't reachable/configured, that must degrade to "no persisted run
+    found" (None), not break the status endpoint -- persistence is an
+    enhancement over the in-memory path above, never a new failure mode.
+    """
+    state = _active_runs.get(project_id)
+    if state is not None:
+        return state  # this process's own live-or-finished record is authoritative
+
+    try:
+        run = await get_owned_fix_all_run(project_id, owner_user_id)
+    except Exception as exc:
+        print(f"[fix-all] run-state recovery lookup failed project_id={project_id}: {type(exc).__name__}: {exc}")
+        return None
+    if run is None or run.get("status") != "running":
+        return _run_doc_to_status(run) if run else None
+
+    age = _run_age_seconds(run)
+    if age is not None and age < FIX_ALL_STALE_RUN_GRACE_SECONDS:
+        return _run_doc_to_status(run)
+
+    interrupted_at = datetime.now(timezone.utc)
+    await _safe_update_fix_all_run(
+        run["_id"], owner_user_id,
+        {"status": "failed", "completed_at": interrupted_at, "error": "interrupted"},
+    )
+    run["status"] = "failed"
+    run["error"] = "interrupted"
+    return _run_doc_to_status(run)
+
+
+async def _safe_update_fix_all_run(run_id: str | None, owner_user_id: str, updates: dict) -> None:
+    # Best-effort: a Mongo hiccup while persisting run-state must never fail
+    # or interrupt the actual fix -- that's the P0 guarantee and it does not
+    # depend on this succeeding.
+    if not run_id:
+        return
+    try:
+        await update_fix_all_run(run_id, owner_user_id, updates)
+    except Exception as exc:
+        print(f"[fix-all] run-state persistence failed run_id={run_id}: {type(exc).__name__}: {exc}")
 
 
 def request_stop(project_id: str) -> bool:
@@ -76,8 +175,13 @@ async def start_fix_all(project_id: str, owner_user_id: str) -> dict:
             "results": [],
             "report": None,
             "error": None,
+            "run_id": None,
         }
         _active_runs[project_id] = state
+    try:
+        state["run_id"] = await create_fix_all_run(project_id, owner_user_id)
+    except Exception as exc:
+        print(f"[fix-all] run-state persistence unavailable, continuing in-memory only: {type(exc).__name__}: {exc}")
     asyncio.create_task(_run(project_id, owner_user_id, state), name=f"fix-all:{project_id}")
     return state
 
@@ -108,18 +212,31 @@ async def _process_one(project_id: str, owner_user_id: str, finding_snapshot: di
 
     Always re-fetches the project fresh -- this is what makes sequential
     processing safe: finding #2 sees whatever finding #1 actually persisted,
-    never the state the queue was originally built from.
+    never the state the queue was originally built from. Fetches metadata
+    only (no GridFS reads) and hydrates just the target file plus its
+    depth-1 import-graph neighbors -- the only files build_finding_context
+    below actually looks at -- instead of every file in the project. This
+    is what keeps a run findings x (1 file + a handful of neighbors)
+    instead of findings x (entire repository).
     """
     result = _base_result(finding_snapshot)
     finding_id = finding_snapshot.get("finding_id")
 
-    project = await get_owned_project(project_id, owner_user_id)
+    project = await get_owned_project_metadata(project_id, owner_user_id)
     if project is None:
         result["status"] = "failed"
         result["message"] = "Project no longer exists."
         return result
 
-    file_entry = next((f for f in project.get("files", []) if f.get("path") == finding_snapshot.get("file")), None)
+    target_path = finding_snapshot.get("file")
+    # build_import_graph only reads file paths and the pre-extracted
+    # project["imports"] list (see services/retrieval.py) -- no file
+    # content needed to know which files are worth hydrating.
+    graph = build_import_graph(project)
+    related_paths = get_related_files(target_path, graph, depth=1)
+    await hydrate_selected_files(project.get("files", []), paths=related_paths | {target_path})
+
+    file_entry = next((f for f in project.get("files", []) if f.get("path") == target_path), None)
     if file_entry is None or file_entry.get("content") is None:
         result["status"] = "stale"
         result["message"] = "Target file no longer exists in the project."
@@ -143,6 +260,14 @@ async def _process_one(project_id: str, owner_user_id: str, finding_snapshot: di
 
     try:
         context = build_finding_context(project, finding)
+        # Related files were hydrated only to build the snippets already
+        # captured in `context` above -- drop their content back out now so
+        # the update_owned_project call below (and its deepcopy) only ever
+        # carries the ONE file this finding actually changes, never a
+        # multi-file or whole-repo payload.
+        for f in project.get("files", []):
+            if f.get("path") != target_path:
+                f.pop("content", None)
         code_snippet = context["snippet"] or finding.get("evidence", "")
         language = context["language"]
 
@@ -255,6 +380,13 @@ async def _process_one(project_id: str, owner_user_id: str, finding_snapshot: di
     return result
 
 
+def _tally_counts(results: list[dict]) -> dict:
+    counts = {"fixed": 0, "failed": 0, "skipped": 0, "already_resolved": 0, "stale": 0}
+    for r in results:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    return counts
+
+
 def _empty_report() -> dict:
     return {
         "status": "completed",
@@ -273,7 +405,9 @@ def _empty_report() -> dict:
 
 async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
     try:
-        project = await get_owned_project(project_id, owner_user_id)
+        # Only security_findings/files metadata is needed to build the
+        # queue -- no file content, so no hydration call at all.
+        project = await get_owned_project_metadata(project_id, owner_user_id)
         if project is None:
             state["status"] = "failed"
             state["error"] = "Project not found."
@@ -287,6 +421,10 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
 
         state["total"] = len(queue)
         before_count = len(queue)
+        await _safe_update_fix_all_run(
+            state.get("run_id"), owner_user_id,
+            {"total": state["total"], "source_revision": project.get("source_revision")},
+        )
 
         for finding in queue:
             if state["stop_requested"]:
@@ -294,6 +432,16 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
             outcome = await _process_one(project_id, owner_user_id, finding)
             state["results"].append(outcome)
             state["processed"] += 1
+            tally = _tally_counts(state["results"])
+            await _safe_update_fix_all_run(
+                state.get("run_id"), owner_user_id,
+                {
+                    "processed": state["processed"],
+                    "fixed": tally.get("fixed", 0),
+                    "failed": tally.get("failed", 0) + tally.get("stale", 0),
+                    "skipped": tally.get("skipped", 0),
+                },
+            )
 
         stopped_early = state["stop_requested"]
         if stopped_early:
@@ -312,15 +460,15 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
         reanalysis_ok = True
         try:
             await _run_project_analysis(project_id, owner_user_id)
-            after_project = await get_owned_project(project_id, owner_user_id)
+            # Only the post-reanalysis finding count is needed here -- no
+            # file content, so metadata-only, no hydration.
+            after_project = await get_owned_project_metadata(project_id, owner_user_id)
             after_count = len(after_project.get("security_findings", [])) if after_project else before_count
         except Exception as exc:
             reanalysis_ok = False
             print(f"[fix-all] final reanalysis failed project_id={project_id}: {type(exc).__name__}: {exc}")
 
-        counts = {"fixed": 0, "failed": 0, "skipped": 0, "already_resolved": 0, "stale": 0}
-        for r in state["results"]:
-            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        counts = _tally_counts(state["results"])
 
         state["report"] = {
             "status": "completed" if reanalysis_ok else "completed_verification_failed",
@@ -351,3 +499,16 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
         if state["status"] == "running":
             state["status"] = "failed"
             state["error"] = state.get("error") or "Fix All ended unexpectedly."
+
+        final_update = {
+            "status": state["status"],
+            "error": state.get("error"),
+            "processed": state.get("processed", 0),
+            "completed_at": datetime.now(timezone.utc),
+        }
+        report = state.get("report")
+        if report:
+            final_update["fixed"] = report.get("fixed", 0)
+            final_update["failed"] = report.get("failed", 0)
+            final_update["skipped"] = report.get("skipped", 0)
+        await _safe_update_fix_all_run(state.get("run_id"), owner_user_id, final_update)

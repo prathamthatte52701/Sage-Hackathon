@@ -19,7 +19,7 @@ from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledg
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.auth import get_request_user
 from services.brutal_audit import run_brutal_audit
-from services.fix_all import get_fix_all_status, is_fix_all_running, request_stop, start_fix_all
+from services.fix_all import get_fix_all_status, get_fix_all_status_with_recovery, is_fix_all_running, request_stop, start_fix_all
 from services.hacker_lens import run_hacker_lens
 from services.project_review import run_ai_quality_review
 from services.context_expansion import build_finding_context
@@ -1192,7 +1192,11 @@ async def fix_all_status(project_id: str, current_user: dict = Depends(get_reque
     project = await get_owned_project_metadata(project_id, current_user["_id"])
     if project is None:
         return JSONResponse(status_code=404, content={"error": "Project not found"})
-    state = get_fix_all_status(project_id)
+    # Recovery-aware: falls back to the Mongo-persisted run doc (and
+    # corrects it to "failed") when this process has no in-memory record of
+    # the run, e.g. it was started before a crash/restart -- see
+    # services.fix_all.get_fix_all_status_with_recovery.
+    state = await get_fix_all_status_with_recovery(project_id, current_user["_id"])
     if state is None:
         return JSONResponse(status_code=404, content={"error": "No Fix All run found for this project"})
     return {

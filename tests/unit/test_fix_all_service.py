@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -45,14 +46,47 @@ def _project(findings, files, source_revision=1, analysis_status="completed"):
 
 
 class _FakeDB:
+    """Mirrors the real db.mongo split between a metadata-shaped project doc
+    and GridFS-hydrated file content, WITHOUT a separate blob store: doc's
+    "files" entries always keep full "content" inline as the source of
+    truth (so existing assertions reading db.projects[...]["files"][i]
+    ["content"] keep working unchanged); get_owned_project_metadata hands
+    out copies with "content" stripped, and hydrate_selected_files/
+    update_owned_project are the only two places that read or write it
+    back, exactly mirroring hydrate_selected_files/_replace_content_with_refs
+    in db/mongo.py.
+    """
+
     def __init__(self, project):
         self.projects = {project["_id"]: project}
+        self.hydrate_calls = []  # spy: list[set[str] | None], one entry per hydrate_selected_files call
+        self.metadata_fetch_count = 0
+        self.fix_all_runs: dict[str, dict] = {}
+        self._run_counter = 0
 
-    async def get_owned_project(self, project_id, owner_user_id):
+    async def get_owned_project_metadata(self, project_id, owner_user_id):
+        self.metadata_fetch_count += 1
         doc = self.projects.get(project_id)
         if doc is None or doc.get("owner_user_id") != owner_user_id:
             return None
-        return copy.deepcopy(doc)
+        doc_copy = copy.deepcopy(doc)
+        for f in doc_copy.get("files", []):
+            f.pop("content", None)
+        return doc_copy
+
+    async def hydrate_selected_files(self, files, paths=None, max_concurrency=12):
+        self.hydrate_calls.append(set(paths) if paths is not None else None)
+        content_by_path = {}
+        for doc in self.projects.values():
+            for f in doc.get("files", []):
+                if f.get("content") is not None:
+                    content_by_path[f.get("path")] = f["content"]
+        for entry in files:
+            path = entry.get("path")
+            if paths is not None and path not in paths:
+                continue
+            if path in content_by_path:
+                entry["content"] = content_by_path[path]
 
     async def update_owned_project(self, project_id, owner_user_id, updates, *, expected_source_revision=None):
         doc = self.projects.get(project_id)
@@ -60,8 +94,43 @@ class _FakeDB:
             return False
         if expected_source_revision is not None and int(doc.get("source_revision", 0)) != expected_source_revision:
             return False
-        doc.update(copy.deepcopy(updates))
+        updates = copy.deepcopy(updates)
+        if "files" in updates:
+            # An entry with no "content" in the update means "unchanged",
+            # not "deleted" -- backfill it from what's already persisted,
+            # exactly like an untouched content_ref still resolving to its
+            # existing GridFS blob in the real store.
+            old_content_by_path = {f.get("path"): f.get("content") for f in doc.get("files", [])}
+            for f in updates["files"]:
+                if f.get("content") is None:
+                    f["content"] = old_content_by_path.get(f.get("path"))
+        doc.update(updates)
         return True
+
+    async def create_fix_all_run(self, project_id, owner_user_id):
+        # Real create_fix_all_run/update_fix_all_run/get_owned_fix_all_run
+        # (services/fix_all.py's P1 run-state persistence) must never touch
+        # a real database from a unit test -- without these fakes, every
+        # test using the same hardcoded "proj-1" id left real leftover
+        # fix_all_runs documents behind, which then leaked into and broke
+        # OTHER tests (test_fix_all_endpoint.py's "no run" test) that
+        # happened to run afterward against a real configured MongoDB.
+        self._run_counter += 1
+        run_id = f"fake-run-{self._run_counter}"
+        self.fix_all_runs[run_id] = {"_id": run_id, "project_id": project_id, "owner_user_id": owner_user_id, "status": "running"}
+        return run_id
+
+    async def update_fix_all_run(self, run_id, owner_user_id, updates):
+        run = self.fix_all_runs.get(run_id)
+        if run is not None and run.get("owner_user_id") == owner_user_id:
+            run.update(updates)
+
+    async def get_owned_fix_all_run(self, project_id, owner_user_id):
+        matches = [
+            r for r in self.fix_all_runs.values()
+            if r.get("project_id") == project_id and r.get("owner_user_id") == owner_user_id
+        ]
+        return matches[-1] if matches else None
 
 
 @pytest.fixture(autouse=True)
@@ -73,8 +142,12 @@ def _reset_active_runs():
 
 def _install_db(monkeypatch, project):
     db = _FakeDB(project)
-    monkeypatch.setattr(fix_all_module, "get_owned_project", db.get_owned_project)
+    monkeypatch.setattr(fix_all_module, "get_owned_project_metadata", db.get_owned_project_metadata)
+    monkeypatch.setattr(fix_all_module, "hydrate_selected_files", db.hydrate_selected_files)
     monkeypatch.setattr(fix_all_module, "update_owned_project", db.update_owned_project)
+    monkeypatch.setattr(fix_all_module, "create_fix_all_run", db.create_fix_all_run)
+    monkeypatch.setattr(fix_all_module, "update_fix_all_run", db.update_fix_all_run)
+    monkeypatch.setattr(fix_all_module, "get_owned_fix_all_run", db.get_owned_fix_all_run)
     return db
 
 
@@ -446,3 +519,126 @@ def test_request_stop_only_affects_a_running_job():
     assert fix_all_module._active_runs["proj-y"]["stop_requested"] is True
     fix_all_module._active_runs["proj-y"]["status"] = "completed"
     assert request_stop("proj-y") is False
+
+
+# -------------------------------------------------------------- scenario 15
+
+@pytest.mark.asyncio
+async def test_fix_all_hydrates_only_the_target_file_not_the_whole_project(monkeypatch):
+    """Regression test for the findings x whole-repo hydration bug: a
+    3-file project with a single finding in one file must fetch metadata
+    only (never the old full-hydration get_owned_project) and hydrate only
+    that one file -- the other two files' content must never even be read,
+    let alone shipped back through update_owned_project."""
+    assert not hasattr(fix_all_module, "get_owned_project"), (
+        "fix_all.py must no longer import the full-hydration get_owned_project at all"
+    )
+
+    findings = [_finding("f1", "a.py", 'API_KEY = "hardcoded-secret-value-123"')]
+    files = [
+        _file("a.py", 'API_KEY = "hardcoded-secret-value-123"\n'),
+        _file("b.py", "print('unrelated file 1')\n"),
+        _file("c.py", "print('unrelated file 2')\n"),
+    ]
+    project = _project(findings, files)
+    db = _install_db(monkeypatch, project)
+    _stub_reanalysis(monkeypatch, db, "proj-1", after_findings=[])
+    _mock_generate_fix(monkeypatch, {
+        "f1": FindingTransform(original_snippet='API_KEY = "hardcoded-secret-value-123"', proposed_fix='API_KEY = os.environ["API_KEY"]'),
+    })
+
+    state = await _run_now("proj-1", OWNER)
+
+    assert state["report"]["results"][0]["status"] == "fixed"
+    files_by_path = {f["path"]: f for f in db.projects["proj-1"]["files"]}
+    assert files_by_path["a.py"]["content"] == 'API_KEY = os.environ["API_KEY"]\n'
+    assert files_by_path["b.py"]["content"] == "print('unrelated file 1')\n"  # untouched
+    assert files_by_path["c.py"]["content"] == "print('unrelated file 2')\n"  # untouched
+
+    # The fix: metadata-only fetches (2 in _run + 1 in _process_one), and
+    # exactly one narrow hydrate call for the one finding -- never None
+    # (which would mean "hydrate everything").
+    assert db.metadata_fetch_count == 3
+    assert db.hydrate_calls == [{"a.py"}]
+
+
+# -------------------------------------------------------------- scenario 16
+
+@pytest.mark.asyncio
+async def test_recovery_marks_abandoned_run_as_failed(monkeypatch):
+    """P1: if this process has no in-memory record of a run (e.g. it was
+    started before a crash/restart) but Mongo has a run doc stuck at
+    status="running" well past the grace period, get_fix_all_status_with_
+    recovery must correct it to "failed" instead of leaving a poller stuck
+    believing it's still active forever."""
+    old_started = datetime.now(timezone.utc) - timedelta(seconds=fix_all_module.FIX_ALL_STALE_RUN_GRACE_SECONDS + 5)
+    stored_run = {
+        "_id": "run-1", "project_id": "proj-1", "owner_user_id": OWNER,
+        "status": "running", "started_at": old_started, "total": 5, "processed": 2,
+    }
+    updated = {}
+
+    async def fake_get_owned_fix_all_run(project_id, owner_user_id):
+        assert project_id == "proj-1" and owner_user_id == OWNER
+        return dict(stored_run)
+
+    async def fake_update_fix_all_run(run_id, owner_user_id, updates):
+        updated["run_id"] = run_id
+        updated.update(updates)
+
+    monkeypatch.setattr(fix_all_module, "get_owned_fix_all_run", fake_get_owned_fix_all_run)
+    monkeypatch.setattr(fix_all_module, "update_fix_all_run", fake_update_fix_all_run)
+
+    result = await fix_all_module.get_fix_all_status_with_recovery("proj-1", OWNER)
+
+    assert result["status"] == "failed"
+    assert result["processed"] == 2
+    assert updated["run_id"] == "run-1"
+    assert updated["status"] == "failed"
+    assert updated["error"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_recovery_leaves_a_fresh_running_run_alone(monkeypatch):
+    """A run that started less than the grace period ago must NOT be
+    marked failed just because this process doesn't (yet) own it -- that
+    would false-positive on the brief startup window between the Mongo
+    write and the in-memory registry write in start_fix_all."""
+    stored_run = {
+        "_id": "run-2", "project_id": "proj-1", "owner_user_id": OWNER,
+        "status": "running", "started_at": datetime.now(timezone.utc), "total": 5, "processed": 1,
+    }
+
+    async def fake_get_owned_fix_all_run(project_id, owner_user_id):
+        return dict(stored_run)
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("must not mark a fresh run as failed")
+
+    monkeypatch.setattr(fix_all_module, "get_owned_fix_all_run", fake_get_owned_fix_all_run)
+    monkeypatch.setattr(fix_all_module, "update_fix_all_run", fail_if_called)
+
+    result = await fix_all_module.get_fix_all_status_with_recovery("proj-1", OWNER)
+
+    assert result["status"] == "running"
+    assert result["processed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_falls_back_to_none_when_mongo_unavailable(monkeypatch):
+    """Persistence is best-effort: if the Mongo lookup itself fails (e.g.
+    not configured, as in this test environment), recovery must degrade to
+    "no persisted run found" rather than raising and breaking the status
+    endpoint -- proven for real by test_fix_all_endpoint.py's
+    test_status_endpoint_reports_no_run_as_404, which exercises this
+    through the actual unmocked db.mongo call; this test just pins the
+    contract directly against an explicit failure."""
+
+    async def raises(*args, **kwargs):
+        raise RuntimeError("MONGO_URL is not configured")
+
+    monkeypatch.setattr(fix_all_module, "get_owned_fix_all_run", raises)
+
+    result = await fix_all_module.get_fix_all_status_with_recovery("proj-1", OWNER)
+
+    assert result is None
