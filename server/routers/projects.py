@@ -23,6 +23,7 @@ from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
 from services.patching import PatchError, apply_exact_replacement, apply_structured_patch, build_patch_metadata, make_unified_diff, safe_archive_path
 from services.retrieval import retrieve_relevant_files, retrieve_semantic_project_context
+from services.security_rules import to_closed_world_findings
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
 from services.analysis_jobs import enqueue_analysis
@@ -495,6 +496,13 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
         }
         analyzed["ai_review_coverage"] = coverage
     _assign_finding_ids(analyzed.get("findings", []))
+    # Phase 1 closed-world gate: additive, computed from the full (mixed
+    # deterministic + AI-quality) findings list. Only findings whose rule
+    # maps to one of the 12 locked SEC-* families with a real file/line
+    # survive -- nothing AI-produced can pass (see services/security_rules.py).
+    # `findings` itself is untouched so existing scoring/UI keep working;
+    # later phases switch the primary product surface to this field.
+    analyzed["security_findings"] = to_closed_world_findings(analyzed.get("findings", []))
 
     updates = {
         key: analyzed.get(key, [])
@@ -510,6 +518,7 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
             "findings",
             "warnings",
             "structuralMetadata",
+            "security_findings",
         )
     }
     updates.update(

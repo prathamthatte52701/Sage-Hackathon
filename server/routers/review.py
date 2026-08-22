@@ -13,6 +13,7 @@ from services.patching import build_patch_metadata
 from services.groq_client import GroqUnavailableError, call_groq
 from services.analyzers.rules import run_rules
 from services.grounding import ground_issues
+from services.security_rules import to_closed_world_findings
 from services.tracing import StageTracer
 from services.prompt_builder import build_quality_review_prompt, build_transform_prompt
 
@@ -767,6 +768,13 @@ async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_requ
             deterministic = _deterministic_review_response(payload.code, effective_language)
         deterministic_issues = deterministic.deterministic_findings
         tracer.count("deterministic_findings", len(deterministic_issues))
+        # Phase 1 closed-world gate: built from the RAW detector dicts (which
+        # carry a real file="snippet" + line), not the Issue objects above --
+        # Issue has no `file` field, so gating it directly would always
+        # reject everything. AI-quality findings are never included here;
+        # nothing about them can pass this gate (see security_rules.py).
+        security_findings = to_closed_world_findings(run_rules("snippet", effective_language, payload.code))
+        tracer.count("security_findings", len(security_findings))
 
         # Pre-review RAG: retrieve a small set of relevant standards BEFORE the
         # AI review runs, so the model knows what to check for instead of RAG
@@ -814,6 +822,7 @@ async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_requ
                 deterministic_findings=deterministic_issues,
                 ai_quality_review=[],
                 language_detection=language_detection,
+                security_findings=security_findings,
                 summary=deterministic.summary + "; AI quality review unavailable (model service)",
             )
             try:
@@ -842,6 +851,7 @@ async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_requ
                 deterministic_findings=deterministic_issues,
                 ai_quality_review=[],
                 language_detection=language_detection,
+                security_findings=security_findings,
                 summary=deterministic.summary + "; AI quality review unavailable (malformed model response)",
             )
             tracer.count("ai_candidates", 0)
@@ -879,6 +889,7 @@ async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_requ
             deterministic_findings=deterministic_issues,
             ai_quality_review=quality_issues,
             language_detection=language_detection,
+            security_findings=security_findings,
             summary=(
                 f"{len(deterministic_issues)} deterministic finding(s); "
                 f"{len(quality_issues)} AI quality finding(s). {quality_summary}"
