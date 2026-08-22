@@ -22,6 +22,7 @@ recovery below, which mirrors analysis_jobs.get_analysis_job_with_recovery.
 """
 
 import asyncio
+import time
 from ast import parse as _ast_parse
 from datetime import datetime, timezone
 
@@ -404,6 +405,8 @@ def _empty_report() -> dict:
 
 
 async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
+    stage_start = time.monotonic()
+    print(f"[stage] FIX_ALL_START project_id={project_id}")
     try:
         # Only security_findings/files metadata is needed to build the
         # queue -- no file content, so no hydration call at all.
@@ -432,6 +435,10 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
             outcome = await _process_one(project_id, owner_user_id, finding)
             state["results"].append(outcome)
             state["processed"] += 1
+            print(
+                f"[stage] FIX_ALL_FINDING project_id={project_id} finding_id={finding.get('finding_id')} "
+                f"status={outcome.get('status')} processed={state['processed']}/{state['total']}"
+            )
             tally = _tally_counts(state["results"])
             await _safe_update_fix_all_run(
                 state.get("run_id"), owner_user_id,
@@ -512,3 +519,7 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
             final_update["failed"] = report.get("failed", 0)
             final_update["skipped"] = report.get("skipped", 0)
         await _safe_update_fix_all_run(state.get("run_id"), owner_user_id, final_update)
+        print(
+            f"[stage] FIX_ALL_COMPLETE project_id={project_id} status={state['status']} "
+            f"processed={state.get('processed', 0)} duration_ms={round((time.monotonic() - stage_start) * 1000)}"
+        )

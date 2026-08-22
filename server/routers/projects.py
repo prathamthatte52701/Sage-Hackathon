@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import zipfile
 from hashlib import sha256
 from io import BytesIO
@@ -439,6 +440,8 @@ async def upload_project(
     session_id: str = Form(...),
     current_user: dict = Depends(get_request_user),
 ):
+    stage_start = time.monotonic()
+    print(f"[stage] UPLOAD_START user_id={current_user['_id']} filename={file.filename!r}")
     try:
         spool = await _read_upload_capped(file, MAX_ZIP_SIZE)
         if spool is None:
@@ -453,11 +456,17 @@ async def upload_project(
         if error is not None:
             return JSONResponse(status_code=400, content=error)
 
+        eligible_count = len(project_representation.get("files", []))
+        print(f"[stage] UPLOAD_FILTER_COMPLETE eligible_files={eligible_count} duration_ms={round((time.monotonic() - stage_start) * 1000)}")
+
+        gridfs_start = time.monotonic()
+        print(f"[stage] GRIDFS_STORE_START files={eligible_count}")
         project_id = await save_project(project_representation, session_id, current_user["_id"])
+        print(f"[stage] GRIDFS_STORE_COMPLETE project_id={project_id} duration_ms={round((time.monotonic() - gridfs_start) * 1000)}")
         for file_entry in project_representation["files"]:
             file_entry.pop("binary_content", None)
 
-        print(f"[projects] upload user_id={current_user['_id']} project_id={project_id}")
+        print(f"[stage] UPLOAD_COMPLETE project_id={project_id} eligible_files={eligible_count} total_duration_ms={round((time.monotonic() - stage_start) * 1000)}")
         return {"project_id": project_id, "project": project_representation, "warnings": warnings}
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
@@ -595,9 +604,13 @@ def _resolve_finding(findings: list[dict], finding_index: int, finding_id: str =
 
 async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
     """Canonical analysis pipeline used by both initial analysis and reanalysis."""
+    stage_start = time.monotonic()
+    print(f"[stage] ANALYSIS_START project_id={project_id}")
     project = await get_owned_project(project_id, owner_user_id)
     if project is None:
         raise LookupError("Project disappeared before analysis started")
+    hydrated_bytes = sum(len(f.get("content") or "") for f in project.get("files", []))
+    print(f"[stage] ANALYSIS_HYDRATED project_id={project_id} hydrated_files={len(project.get('files', []))} hydrated_bytes={hydrated_bytes}")
 
     # AST/regex/taint work is CPU-bound. Keep the event loop available for
     # health checks and other users while a large project is being scanned.
@@ -658,6 +671,7 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
     if not committed:
         # A source-changing request won the race while this job was running.
         # Never label its old findings as analysis of the newer source.
+        print(f"[stage] ANALYSIS_COMPLETE project_id={project_id} stale=true duration_ms={round((time.monotonic() - stage_start) * 1000)}")
         return {
             "project_id": project_id,
             "finding_count": 0,
@@ -665,6 +679,11 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
             "partial": True,
             "stale": True,
         }
+    print(
+        f"[stage] ANALYSIS_COMPLETE project_id={project_id} finding_count={len(analyzed.get('security_findings', []))} "
+        f"analysis_revision={updates['analysis_revision']} partial={updates['analysis_status'] == 'partial'} "
+        f"duration_ms={round((time.monotonic() - stage_start) * 1000)}"
+    )
     return {
         "project_id": project_id,
         "finding_count": len(analyzed.get("security_findings", [])),
@@ -968,12 +987,18 @@ async def hacker_lens_report(project_id: str, current_user: dict = Depends(get_r
     # Deliberately does NOT touch security_findings, RAG/knowledge retrieval,
     # or the deterministic analyzer -- failure here must never affect Normal
     # SAGE, which is why this is its own try/except around its own call.
+    stage_start = time.monotonic()
+    print(f"[stage] HACKER_START project_id={project_id}")
     try:
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
         report = await run_hacker_lens(project)
+        print(
+            f"[stage] HACKER_COMPLETE project_id={project_id} hydrated_files={len(getattr(report, 'files_analyzed', []) or [])} "
+            f"error={bool(getattr(report, 'error', ''))} duration_ms={round((time.monotonic() - stage_start) * 1000)}"
+        )
         return report
     except Exception as exc:
         print(f"[projects] hacker-lens unhandled error: {exc}")
@@ -987,12 +1012,18 @@ _BRUTAL_AUDIT_ERROR_RESPONSE = {"error": "Brutal Audit failed, please retry"}
 async def brutal_audit_report(project_id: str, current_user: dict = Depends(get_request_user)):
     # Independent production-readiness review. Reuses the existing stored
     # project and does not touch normal findings, Hacker Mode, or RAG.
+    stage_start = time.monotonic()
+    print(f"[stage] BRUTAL_START project_id={project_id}")
     try:
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
         report = await run_brutal_audit(project)
+        print(
+            f"[stage] BRUTAL_COMPLETE project_id={project_id} hydrated_files={len(getattr(report, 'files_analyzed', []) or [])} "
+            f"error={bool(getattr(report, 'error', ''))} duration_ms={round((time.monotonic() - stage_start) * 1000)}"
+        )
         return report
     except Exception as exc:
         print(f"[projects] brutal-audit unhandled error: {exc}")
