@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import re
+import tempfile
 import zipfile
 from hashlib import sha256
 from io import BytesIO
@@ -10,7 +11,7 @@ from pathlib import PurePosixPath
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_project, get_owned_project_file, get_owned_project_metadata, save_project, update_owned_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
@@ -823,6 +824,18 @@ _APPLY_ERROR_RESPONSE = {"error": "Could not apply this fix safely"}
 _DOWNLOAD_ERROR_RESPONSE = {"error": "Could not create fixed ZIP"}
 
 
+async def _stream_spooled_file(spool):
+    """Yield bounded chunks and close the temporary archive after the response."""
+    try:
+        while True:
+            chunk = await asyncio.to_thread(spool.read, 1024 * 1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        spool.close()
+
+
 @router.post("/projects/{project_id}/fixes/apply")
 async def apply_project_fix(
     project_id: str, payload: ApplyProjectFixRequest, current_user: dict = Depends(get_current_user)
@@ -915,7 +928,9 @@ async def download_fixed_project(
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
-        buffer = BytesIO()
+        # Spool to disk once the archive grows beyond a small in-memory buffer
+        # instead of duplicating the complete ZIP with BytesIO.getvalue().
+        buffer = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for file_entry in project.get("files", []):
                 path = safe_archive_path(file_entry.get("path", ""))
@@ -933,8 +948,8 @@ async def download_fixed_project(
         safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", filename or f"{project_name}-code-master-ai-fixed.zip").strip("-")
         if not safe_name.endswith(".zip"):
             safe_name += ".zip"
-        return Response(
-            content=buffer.getvalue(),
+        return StreamingResponse(
+            _stream_spooled_file(buffer),
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
         )
