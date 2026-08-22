@@ -9,7 +9,7 @@ from argon2.exceptions import InvalidHash, VerifyMismatchError
 from email_validator import EmailNotValidError, validate_email
 from fastapi import Cookie, HTTPException, status
 
-from config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET
+from config import AUTH_ENABLED, DEMO_USER_ID, JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET
 
 COOKIE_NAME = "sage_session"
 MIN_PASSWORD_LENGTH = 8
@@ -71,17 +71,27 @@ def decode_session_token(token: str) -> str | None:
 
 
 async def get_current_user(session_token: str | None = Cookie(default=None, alias=COOKIE_NAME)):
-    """Temporary anonymous identity while login/session auth is disabled."""
-    # AUTH DISABLED: restore the commented dependency body below to require a session.
-    # from db.mongo import get_user_by_id
-    # unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    # if not session_token:
-    #     raise unauthorized
-    # user_id = decode_session_token(session_token)
-    # if not user_id:
-    #     raise unauthorized
-    # user = await get_user_by_id(user_id)
-    # if user is None:
-    #     raise unauthorized
-    # return user
-    return {"_id": "anonymous", "email": "anonymous@local"}
+    """Require a valid session and resolve its user server-side."""
+    from db.mongo import get_user_by_id
+
+    unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    if not session_token:
+        raise unauthorized
+    user_id = decode_session_token(session_token)
+    if not user_id:
+        raise unauthorized
+    user = await get_user_by_id(user_id)
+    if user is None:
+        raise unauthorized
+    return user
+
+
+async def get_request_user(session_token: str | None = Cookie(default=None, alias=COOKIE_NAME)):
+    """Central identity dependency for all SAGE workspaces.
+
+    Demo mode has one server-owned identity, while enabled auth delegates to
+    the existing strict JWT/cookie validation path.
+    """
+    if not AUTH_ENABLED:
+        return {"_id": DEMO_USER_ID, "email": "demo@sage.local", "demo_mode": True}
+    return await get_current_user(session_token)

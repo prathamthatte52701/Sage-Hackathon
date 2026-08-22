@@ -2,12 +2,19 @@ import { createContext, useContext, useEffect, useState } from "react";
 import api, { getMe, login as apiLogin, logout as apiLogout, signup as apiSignup } from "../api/client";
 
 const AuthContext = createContext(null);
+const demoUser = { id: "demo-user", email: "demo@sage.local", demo_mode: true };
 
-export function AuthProvider({ children }) {
+export function AuthProvider({ children, enabled = import.meta.env.VITE_AUTH_ENABLED === "true" }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!enabled) {
+      setUser(demoUser);
+      setLoading(false);
+      return undefined;
+    }
+
     getMe()
       .then(setUser)
       .catch(() => setUser(null))
@@ -24,27 +31,30 @@ export function AuthProvider({ children }) {
       }
     );
     return () => api.interceptors.response.eject(interceptor);
-  }, []);
+  }, [enabled]);
 
   async function login(email, password) {
+    if (!enabled) return demoUser;
     const loggedInUser = await apiLogin(email, password);
     setUser(loggedInUser);
     return loggedInUser;
   }
 
   async function signup(email, password) {
+    if (!enabled) return demoUser;
     const newUser = await apiSignup(email, password);
     setUser(newUser);
     return newUser;
   }
 
   async function logout() {
+    if (!enabled) return;
     await apiLogout();
     setUser(null);
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, enabled }}>
       {children}
     </AuthContext.Provider>
   );

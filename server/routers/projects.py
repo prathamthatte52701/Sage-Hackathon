@@ -17,7 +17,7 @@ from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_pro
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
-from services.auth import get_current_user
+from services.auth import get_request_user
 from services.project_review import run_ai_quality_review
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
@@ -93,6 +93,11 @@ def _is_unsafe_path(name: str) -> bool:
     if resolved == ".." or resolved.startswith(".." + os.sep) or not resolved.startswith("ROOT"):
         return True
     return False
+
+
+def _canonical_archive_path(name: str) -> str:
+    """Normalize safe archive names to the single form used in storage."""
+    return str(PurePosixPath((name or "").replace("\\", "/")))
 
 
 def _should_read_text(display_name: str, language: str) -> bool:
@@ -200,6 +205,7 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
         prefix = _strip_common_top_level(names) if strip_top_level else ""
 
         files_index = []
+        stored_paths: set[str] = set()
         ignored_counts: dict[str, int] = {}
         actual_uncompressed_total = 0
 
@@ -208,8 +214,12 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
                 continue  # directory entry
 
             display_name = name[len(prefix):] if prefix and name.startswith(prefix) else name
+            display_name = _canonical_archive_path(display_name)
             if not display_name:
                 continue
+
+            if display_name in stored_paths:
+                return None, None, {"error": "ZIP contains duplicate file paths"}
 
             if _is_ignored(display_name):
                 top_ignored = next(
@@ -217,6 +227,8 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
                 )
                 ignored_counts[top_ignored] = ignored_counts.get(top_ignored, 0) + 1
                 continue
+
+            stored_paths.add(display_name)
 
             info = zf.getinfo(name)
             language = _guess_language(display_name)
@@ -320,7 +332,7 @@ async def _read_upload_capped(file: UploadFile, max_size: int) -> bytes | None:
 async def upload_project(
     file: UploadFile = File(...),
     session_id: str = Form(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_request_user),
 ):
     try:
         raw_bytes = await _read_upload_capped(file, MAX_ZIP_SIZE)
@@ -363,7 +375,7 @@ def _parse_github_repo(repo_url: str):
 
 
 @router.post("/projects/github")
-async def import_from_github(payload: GithubImportRequest, current_user: dict = Depends(get_current_user)):
+async def import_from_github(payload: GithubImportRequest, current_user: dict = Depends(get_request_user)):
     try:
         parsed = _parse_github_repo(payload.repo_url)
         if parsed is None:
@@ -409,7 +421,7 @@ async def import_from_github(payload: GithubImportRequest, current_user: dict = 
 
 
 @router.get("/projects/{project_id}")
-async def get_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
+async def get_project_by_id(project_id: str, current_user: dict = Depends(get_request_user)):
     try:
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
@@ -421,7 +433,7 @@ async def get_project_by_id(project_id: str, current_user: dict = Depends(get_cu
 
 
 @router.get("/projects/{project_id}/metadata")
-async def get_project_metadata(project_id: str, current_user: dict = Depends(get_current_user)):
+async def get_project_metadata(project_id: str, current_user: dict = Depends(get_request_user)):
     project = await get_owned_project_metadata(project_id, current_user["_id"])
     if project is None:
         return JSONResponse(status_code=404, content={"error": "Project not found"})
@@ -429,7 +441,7 @@ async def get_project_metadata(project_id: str, current_user: dict = Depends(get
 
 
 @router.get("/projects/{project_id}/files/{file_path:path}")
-async def get_project_file(project_id: str, file_path: str, current_user: dict = Depends(get_current_user)):
+async def get_project_file(project_id: str, file_path: str, current_user: dict = Depends(get_request_user)):
     file_entry = await get_owned_project_file(project_id, current_user["_id"], file_path)
     if file_entry is None:
         return JSONResponse(status_code=404, content={"error": "Project file not found"})
@@ -532,7 +544,7 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
 
 
 @router.post("/projects/{project_id}/analyze")
-async def analyze_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
+async def analyze_project_by_id(project_id: str, current_user: dict = Depends(get_request_user)):
     try:
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
@@ -552,7 +564,7 @@ async def analyze_project_by_id(project_id: str, current_user: dict = Depends(ge
 
 
 @router.get("/analysis-jobs/{job_id}")
-async def get_analysis_job(job_id: str, current_user: dict = Depends(get_current_user)):
+async def get_analysis_job(job_id: str, current_user: dict = Depends(get_request_user)):
     job = await get_owned_analysis_job(job_id, current_user["_id"])
     if job is None:
         return JSONResponse(status_code=404, content={"error": "Analysis job not found"})
@@ -563,7 +575,7 @@ _SCORE_ERROR_RESPONSE = {"error": "Could not score this project, please try agai
 
 
 @router.post("/projects/{project_id}/score")
-async def score_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
+async def score_project_by_id(project_id: str, current_user: dict = Depends(get_request_user)):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
@@ -603,7 +615,7 @@ _REASON_ERROR_RESPONSE = {"error": "Could not reason about this finding, please 
 
 @router.post("/projects/{project_id}/findings/reason", response_model=FindingReasoning)
 async def reason_about_finding(
-    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_current_user)
+    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_request_user)
 ):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
@@ -717,7 +729,7 @@ def _enrich_transform(transform: FindingTransform, finding: dict, content: str |
 
 @router.post("/projects/{project_id}/findings/transform", response_model=FindingTransform)
 async def transform_finding(
-    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_current_user)
+    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_request_user)
 ):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
@@ -818,7 +830,7 @@ def _verification_note(before_project: dict) -> str:
 
 @router.post("/projects/{project_id}/reanalyze")
 async def reanalyze_project(
-    project_id: str, payload: FindingReasonRequest | None = None, current_user: dict = Depends(get_current_user)
+    project_id: str, payload: FindingReasonRequest | None = None, current_user: dict = Depends(get_request_user)
 ):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
@@ -853,7 +865,7 @@ async def _stream_spooled_file(spool):
 
 @router.post("/projects/{project_id}/fixes/apply")
 async def apply_project_fix(
-    project_id: str, payload: ApplyProjectFixRequest, current_user: dict = Depends(get_current_user)
+    project_id: str, payload: ApplyProjectFixRequest, current_user: dict = Depends(get_request_user)
 ):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
@@ -937,7 +949,7 @@ async def apply_project_fix(
 
 @router.get("/projects/{project_id}/download-fixed")
 async def download_fixed_project(
-    project_id: str, filename: str | None = None, current_user: dict = Depends(get_current_user)
+    project_id: str, filename: str | None = None, current_user: dict = Depends(get_request_user)
 ):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
@@ -994,7 +1006,7 @@ def _looks_like_guidance_question(question: str) -> bool:
 
 
 @router.post("/projects/{project_id}/chat")
-async def chat_about_project(project_id: str, payload: ChatRequest, current_user: dict = Depends(get_current_user)):
+async def chat_about_project(project_id: str, payload: ChatRequest, current_user: dict = Depends(get_request_user)):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:

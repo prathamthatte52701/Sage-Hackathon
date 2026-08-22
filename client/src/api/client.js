@@ -22,19 +22,33 @@ function toFriendlyMessage(err, fallback) {
   return fallback;
 }
 
-// AUTH DISABLED: restore these functions with AuthProvider to re-enable login/session UI.
-// export async function signup(email, password) {
-//   return (await api.post("/api/auth/signup", { email, password })).data;
-// }
-// export async function login(email, password) {
-//   return (await api.post("/api/auth/login", { email, password })).data;
-// }
-// export async function logout() {
-//   await api.post("/api/auth/logout");
-// }
-// export async function getMe() {
-//   return (await api.get("/api/auth/me")).data;
-// }
+export async function signup(email, password) {
+  try {
+    return (await api.post("/api/auth/signup", { email, password })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not create account. Please try again."));
+  }
+}
+
+export async function login(email, password) {
+  try {
+    return (await api.post("/api/auth/login", { email, password })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Login failed. Please try again."));
+  }
+}
+
+export async function logout() {
+  try {
+    await api.post("/api/auth/logout");
+  } catch {
+    // Logout is best effort; the local auth state is cleared regardless.
+  }
+}
+
+export async function getMe() {
+  return (await api.get("/api/auth/me")).data;
+}
 
 export async function reviewCode(code, language, sessionId) {
   try {
