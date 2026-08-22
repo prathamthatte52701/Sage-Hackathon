@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Network, FileCode, ArrowDown, ShieldAlert, CheckCircle2, ChevronRight, Layers } from "lucide-react";
+import { Network, FileCode, ArrowDown } from "lucide-react";
 
 export default function ArchitectureView({ project, onSelectFile }) {
   const files = project?.files ?? [];
