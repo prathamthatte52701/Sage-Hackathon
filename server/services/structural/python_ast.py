@@ -42,6 +42,7 @@ class PythonModule:
     functions: list[PythonFunction] = field(default_factory=list)
     classes: list[PythonClass] = field(default_factory=list)
     parse_error: str | None = None
+    tree: ast.Module | None = field(default=None, repr=False)
 
 
 def _name(node: ast.AST) -> str:
@@ -128,7 +129,7 @@ def analyze_python_source(content: str) -> PythonModule:
     except SyntaxError as exc:
         return PythonModule(parse_error=str(exc))
 
-    module = PythonModule()
+    module = PythonModule(tree=tree)
     parent_by_child = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
