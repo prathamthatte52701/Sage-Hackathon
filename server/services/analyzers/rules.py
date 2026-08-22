@@ -5,6 +5,7 @@ framework analyzer; each rule below only fires on concrete source/config signals
 with language gating and small false-positive guards where practical.
 """
 
+import ast
 import io
 import re
 import tokenize
@@ -71,14 +72,7 @@ _RE_SQL_CONCAT = re.compile(
 # database at all (e.g. msg = "SELECT this: " + name). Require a real SQL
 # execution call nearby before treating the construction as a finding.
 _RE_SQL_EXECUTION_SINK = re.compile(r"\.\s*execute(?:many|script)?\s*\(|\braw\s*\(")
-_RE_SUBPROCESS_SHELL = re.compile(r"subprocess\.\w+\([^)]*shell\s*=\s*True")
-_RE_OS_SYSTEM = re.compile(r"\b(os\.system|os\.popen|commands\.getoutput)\s*\(")
-_RE_SHELL_JS = re.compile(r"child_process\.(exec|execSync)\s*\(")
-_RE_SPAWN_SHELL_JS = re.compile(r"child_process\.(spawn|spawnSync)\s*\([^)]*shell\s*:\s*true", re.DOTALL)
-_RE_TLS_PY = re.compile(r"verify\s*=\s*False")
 _RE_TLS_NODE = re.compile(r"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0")
-_RE_PICKLE = re.compile(r"pickle\.loads?\(")
-_RE_YAML_LOAD = re.compile(r"yaml\.load\((?!.*Loader=yaml\.SafeLoader)")
 _RE_UNSAFE_DESERIALIZE_JS = re.compile(r"node-serialize|\bunserialize\s*\(")
 _RE_TODO = re.compile(r"(?i)#\s*(TODO|FIXME)|//\s*(TODO|FIXME)")
 _RE_WEAK_CRYPTO_PY = re.compile(r"\b(hashlib\.(md5|sha1)\s*\(|Crypto\.Hash\.(MD5|SHA1)\b)")
@@ -86,16 +80,33 @@ _RE_WEAK_CRYPTO_JS = re.compile(r"\bcreateHash\s*\(\s*['\"](md5|sha1)['\"]\s*\)"
 _RE_INSECURE_RANDOM_PY = re.compile(r"\brandom\.(random|randint|choice|choices|randrange)\s*\(")
 _RE_INSECURE_RANDOM_JS = re.compile(r"\bMath\.random\s*\(")
 _RE_SECURITY_TOKEN_WORD = re.compile(r"(?i)(token|secret|password|api[_-]?key|session|reset|otp|nonce)")
-_RE_NOSQL_INJECTION_JS = re.compile(r"\b(find|findOne|findMany|updateOne|deleteOne)\s*\(\s*(req\.(body|query)|request\.(body|query))")
-_RE_NOSQL_INJECTION_PY = re.compile(r"\b(find_one|find|update_one|delete_one)\s*\(\s*(request\.(json|args)|req\.(json|args))")
+# Phase 3.3: a NoSQL finding needs both a recognized database receiver and a
+# direct, attacker-controlled *object* used as its filter. A bare `.find()` is
+# not enough: it could be an Array/String/application helper. Likewise,
+# `{email: req.body.email}` is a deliberate scalar lookup, not raw operator
+# injection. Broader propagation is deferred to Phase 4.
+_RE_NOSQL_DIRECT_FILTER_JS = re.compile(
+    r"(?P<receiver>"
+    r"(?:\b(?:db|mongo|mongoose)\b(?:\.[A-Za-z_$][\w$]*)+"
+    r"|\b[A-Z][A-Za-z0-9_$]*\b"
+    r"|\b[A-Za-z_$][\w$]*(?:Collection|Model)\b)"
+    r")\.(?P<method>find|findOne|findMany|findOneAndUpdate|"
+    r"updateOne|updateMany|deleteOne|deleteMany)\s*\(\s*"
+    r"(?P<source>(?:req|request)\.(?:body|query))\b"
+)
+_RE_NOSQL_DIRECT_FILTER_PY = re.compile(
+    r"(?P<receiver>"
+    r"(?:\b(?:db|mongo|database)\b(?:\.[A-Za-z_]\w*)+"
+    r"|\b(?:self\.)?[A-Za-z_]\w*(?:_collection|_repo(?:sitory)?)\b"
+    r"|\bcollection\b)"
+    r")\.(?P<method>find_one|find|find_many|find_one_and_update|"
+    r"update_one|update_many|delete_one|delete_many)\s*\(\s*"
+    r"(?P<source>request\.(?:json|args)|request\.get_json\s*\([^)]*\)|req\.(?:json|args))"
+)
 _RE_ARCHIVE_EXTRACT_PY = re.compile(r"\b(zipfile\.)?ZipFile\s*\([^)]*\)\.extractall\s*\(|\.extractall\s*\(")
 _RE_ARCHIVE_EXTRACT_JS = re.compile(r"\bextractAllTo\s*\([^)]*(req\.|request\.)")
-_RE_SSRF_PY = re.compile(r"\b(requests|httpx)\.(get|post|put|delete|request)\s*\(\s*(request\.(args|json)|req\.(args|json))")
-_RE_SSRF_JS = re.compile(r"\b(axios|fetch|got|request)\.(get|post|put|delete|request)?\s*\(\s*(req\.(query|body)|request\.(query|body))")
 _RE_XSS_JS = re.compile(r"\b(innerHTML|outerHTML)\s*=\s*[^;]*(req\.|request\.|props\.|state\.|location\.|document\.location)")
 _RE_REACT_DANGEROUS_HTML = re.compile(r"dangerouslySetInnerHTML\s*=\s*\{\s*\{[^}]*(__html|html)\s*:")
-_RE_CORS_WILDCARD_PY = re.compile(r"(allow_origins\s*=\s*\[\s*['\"]\*['\"]\s*\]|CORS\s*\([^)]*origins\s*=\s*['\"]\*['\"])", re.DOTALL)
-_RE_CORS_WILDCARD_JS = re.compile(r"cors\s*\(\s*\{[^}]*origin\s*:\s*['\"]\*['\"]", re.DOTALL)
 _RE_DEBUG_PY = re.compile(r"\b(debug\s*=\s*True|DEBUG\s*=\s*True|app\.run\s*\([^)]*debug\s*=\s*True)")
 _RE_DEBUG_JS = re.compile(r"\b(DEBUG|NODE_ENV)\s*=\s*['\"]development['\"]|debug\s*:\s*true")
 _RE_SENSITIVE_LOG_PY = re.compile(r"\b(log|logger)\.(debug|info|warning|error|exception)\s*\([^)]*(password|secret|token|api[_-]?key)", re.IGNORECASE)
@@ -134,6 +145,7 @@ RULE_METADATA = {
     "os_system_call": {"title": "OS command execution API", "languages": ["python"], "category": "security"},
     "spawn_shell_true": {"title": "Node spawn with shell enabled", "languages": ["javascript", "typescript"], "category": "security"},
     "nosql_untrusted_filter": {"title": "Untrusted object used as NoSQL filter", "languages": ["python", "javascript", "typescript"], "category": "security"},
+    "path_traversal_file": {"title": "Request-controlled path reaches file operation", "languages": ["python"], "category": "security"},
     "unsafe_archive_extract": {"title": "Archive extraction without containment", "languages": ["python", "javascript", "typescript"], "category": "security"},
     "ssrf_untrusted_url": {"title": "Outbound request to untrusted URL", "languages": ["python", "javascript", "typescript"], "category": "security"},
     "xss_unsafe_html_sink": {"title": "Unsafe HTML rendering sink", "languages": ["javascript", "typescript"], "category": "security"},
@@ -163,13 +175,7 @@ EMPTY_CATCH_PATTERNS = {
     "javascript": _RE_EMPTY_CATCH_JS,
     "typescript": _RE_EMPTY_CATCH_JS,
 }
-SHELL_INJECTION_PATTERNS = {
-    "python": _RE_SUBPROCESS_SHELL,
-    "javascript": _RE_SHELL_JS,
-    "typescript": _RE_SHELL_JS,
-}
 DESERIALIZATION_PATTERNS = {
-    "python": [_RE_PICKLE, _RE_YAML_LOAD],
     "javascript": [_RE_UNSAFE_DESERIALIZE_JS],
     "typescript": [_RE_UNSAFE_DESERIALIZE_JS],
 }
@@ -304,6 +310,863 @@ def _outside_python_comment_or_string(content: str, match: re.Match) -> bool:
     return not any(span_start <= start < span_end for span_start, span_end in _python_non_code_spans(content))
 
 
+def _javascript_non_code_spans(content: str) -> list[tuple[int, int]]:
+    """Small lexical guard for the direct NoSQL detector.
+
+    This is not a JavaScript parser. It only prevents comment and string text
+    from becoming executable-looking evidence, which is all this local rule
+    needs before dedicated JS AST support is introduced in Phase 5.
+    """
+    spans = []
+    index = 0
+    length = len(content)
+    while index < length:
+        if content.startswith("//", index):
+            end = content.find("\n", index)
+            spans.append((index, length if end == -1 else end))
+            index = length if end == -1 else end
+            continue
+        if content.startswith("/*", index):
+            end = content.find("*/", index + 2)
+            end = length if end == -1 else end + 2
+            spans.append((index, end))
+            index = end
+            continue
+        if content[index] in {"'", '"', "`"}:
+            quote = content[index]
+            end = index + 1
+            while end < length:
+                if content[end] == "\\":
+                    end += 2
+                    continue
+                if content[end] == quote:
+                    end += 1
+                    break
+                end += 1
+            spans.append((index, min(end, length)))
+            index = end
+            continue
+        index += 1
+    return spans
+
+
+def _outside_javascript_comment_or_string(content: str, match: re.Match) -> bool:
+    start = match.start()
+    return not any(span_start <= start < span_end for span_start, span_end in _javascript_non_code_spans(content))
+
+
+def _nosql_direct_filter_findings(content: str, path: str, language: str) -> list[dict]:
+    if language == "python":
+        pattern = _RE_NOSQL_DIRECT_FILTER_PY
+        is_code = _outside_python_comment_or_string
+    elif language in {"javascript", "typescript"}:
+        pattern = _RE_NOSQL_DIRECT_FILTER_JS
+        is_code = _outside_javascript_comment_or_string
+    else:
+        return []
+
+    findings = []
+    for match in pattern.finditer(content):
+        if is_code(content, match):
+            findings.append(
+                _finding(
+                    path,
+                    content,
+                    match,
+                    "nosql_untrusted_filter",
+                    "high",
+                    "security",
+                    "Request-controlled object is passed directly as a recognized NoSQL query filter",
+                )
+            )
+    return findings
+
+
+def _ast_finding(path: str, content: str, node: ast.AST, rule: str, message: str) -> dict:
+    evidence = ast.get_source_segment(content, node) or "command execution call"
+    return {
+        "file": path,
+        "line": getattr(node, "lineno", 1),
+        "rule": rule,
+        "severity": "high",
+        "category": "security",
+        "message": message,
+        "evidence": evidence[:120],
+        "confidence": "medium",
+        "evidence_type": "deterministic_pattern",
+    }
+
+
+def _python_request_controlled(expression: ast.AST, tainted_names: set[str]) -> bool:
+    """Return true only for direct or locally-propagated request input."""
+    if isinstance(expression, ast.Name):
+        return expression.id in {"request", "req"} or expression.id in tainted_names
+    if isinstance(expression, ast.Subscript):
+        return _python_request_controlled(expression.value, tainted_names)
+    if isinstance(expression, ast.Attribute):
+        return _python_request_controlled(expression.value, tainted_names)
+    if isinstance(expression, ast.Call):
+        if isinstance(expression.func, ast.Name) and expression.func.id == "input":
+            return True
+        return any(_python_request_controlled(argument, tainted_names) for argument in expression.args)
+    if isinstance(expression, ast.JoinedStr):
+        return any(
+            isinstance(value, ast.FormattedValue)
+            and _python_request_controlled(value.value, tainted_names)
+            for value in expression.values
+        )
+    if isinstance(expression, ast.BinOp):
+        return _python_request_controlled(expression.left, tainted_names) or _python_request_controlled(expression.right, tainted_names)
+    if isinstance(expression, (ast.List, ast.Tuple, ast.Set)):
+        return any(_python_request_controlled(element, tainted_names) for element in expression.elts)
+    if isinstance(expression, ast.Dict):
+        return any(_python_request_controlled(value, tainted_names) for value in expression.values)
+    return False
+
+
+def _python_assignment_names(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [name for element in node.elts for name in _python_assignment_names(element)]
+    return []
+
+
+def _python_command_injection_findings(content: str, path: str) -> list[dict]:
+    """Detect direct/local attacker flow to supported command execution APIs."""
+    if not any(marker in content for marker in ("subprocess", "os.system", "os.popen")):
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+
+    subprocess_modules = {"subprocess"}
+    os_modules = {"os"}
+    subprocess_functions = set()
+    os_functions = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "subprocess":
+                    subprocess_modules.add(alias.asname or alias.name)
+                elif alias.name == "os":
+                    os_modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "subprocess":
+                subprocess_functions.update(alias.asname or alias.name for alias in node.names)
+            elif node.module == "os":
+                os_functions.update(alias.asname or alias.name for alias in node.names)
+
+    tainted_names: set[str] = set()
+    findings = []
+    command_methods = {"run", "Popen", "call", "check_call", "check_output"}
+    os_methods = {"system", "popen"}
+    ordered_nodes = sorted(ast.walk(tree), key=lambda node: (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)))
+    for node in ordered_nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            if value is not None and _python_request_controlled(value, tainted_names):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    tainted_names.update(_python_assignment_names(target))
+            continue
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+
+        rule = None
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            receiver = node.func.value.id
+            if receiver in subprocess_modules and node.func.attr in command_methods:
+                rule = "subprocess_shell_true"
+            elif receiver in os_modules and node.func.attr in os_methods:
+                rule = "os_system_call"
+        elif isinstance(node.func, ast.Name):
+            if node.func.id in subprocess_functions:
+                rule = "subprocess_shell_true"
+            elif node.func.id in os_functions:
+                rule = "os_system_call"
+        if rule is None:
+            continue
+
+        shell_enabled = any(
+            keyword.arg == "shell"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+        if shell_enabled or any(_python_request_controlled(argument, tainted_names) for argument in node.args):
+            findings.append(
+                _ast_finding(
+                    path,
+                    content,
+                    node,
+                    rule,
+                    "Attacker-controlled data reaches a supported OS command execution API",
+                )
+            )
+    return findings
+
+
+_RE_JS_CHILD_PROCESS_REQUIRE = re.compile(
+    r"\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['\"]child_process['\"]\s*\)"
+)
+_RE_JS_CHILD_PROCESS_NAMESPACE_IMPORT = re.compile(
+    r"\bimport\s+\*\s+as\s+(?P<name>[A-Za-z_$][\w$]*)\s+from\s+['\"]child_process['\"]"
+)
+_RE_JS_CHILD_PROCESS_DEFAULT_IMPORT = re.compile(
+    r"\bimport\s+(?P<name>[A-Za-z_$][\w$]*)\s+from\s+['\"]child_process['\"]"
+)
+_RE_JS_CHILD_PROCESS_FUNCTION_ALIAS = re.compile(
+    r"\b(?:const|let|var)\s*\{(?P<body>[^}]+)\}\s*=\s*require\s*\(\s*['\"]child_process['\"]\s*\)"
+    r"|\bimport\s*\{(?P<imports>[^}]+)\}\s*from\s*['\"]child_process['\"]"
+)
+_RE_JS_ASSIGNMENT = re.compile(r"\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*(?P<value>[^;\n]+)")
+_RE_JS_COMMAND_CALL = re.compile(r"(?P<callee>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\(")
+_RE_JS_REQUEST_SOURCE = re.compile(r"\b(?:req|request)\.(?:body|query|params)\b")
+
+
+def _javascript_call_arguments(content: str, opening_paren: int) -> tuple[str, int] | None:
+    depth = 0
+    index = opening_paren
+    quote = None
+    while index < len(content):
+        char = content[index]
+        if quote:
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return content[opening_paren + 1:index], index + 1
+        index += 1
+    return None
+
+
+def _javascript_command_injection_findings(content: str, path: str) -> list[dict]:
+    """Local source-to-sink command checks for Node's child_process APIs."""
+    module_aliases = {"child_process"}
+    function_aliases = {}
+    for pattern in (
+        _RE_JS_CHILD_PROCESS_REQUIRE,
+        _RE_JS_CHILD_PROCESS_NAMESPACE_IMPORT,
+        _RE_JS_CHILD_PROCESS_DEFAULT_IMPORT,
+    ):
+        module_aliases.update(match.group("name") for match in pattern.finditer(content))
+    for match in _RE_JS_CHILD_PROCESS_FUNCTION_ALIAS.finditer(content):
+        aliases = match.group("body") or match.group("imports") or ""
+        for entry in aliases.split(","):
+            pieces = re.split(r"\s+as\s+|\s*:\s*", entry.strip())
+            original = pieces[0].strip()
+            alias = pieces[-1].strip()
+            if original in {"exec", "execSync", "spawn", "spawnSync"}:
+                function_aliases[alias] = original
+
+    tainted_names: set[str] = set()
+    for match in _RE_JS_ASSIGNMENT.finditer(content):
+        if not _outside_javascript_comment_or_string(content, match):
+            continue
+        value = match.group("value")
+        if _RE_JS_REQUEST_SOURCE.search(value) or any(re.search(rf"\b{re.escape(name)}\b", value) for name in tainted_names):
+            tainted_names.add(match.group("name"))
+
+    findings = []
+    seen_starts = set()
+    for match in _RE_JS_COMMAND_CALL.finditer(content):
+        if not _outside_javascript_comment_or_string(content, match):
+            continue
+        callee = match.group("callee")
+        receiver, dot, method = callee.partition(".")
+        if dot:
+            supported = receiver in module_aliases and method in {"exec", "execSync", "spawn", "spawnSync"}
+        else:
+            supported = callee in function_aliases
+            method = function_aliases.get(callee, "")
+        if not supported or match.start() in seen_starts:
+            continue
+        opening_paren = content.find("(", match.start(), match.end())
+        parsed = _javascript_call_arguments(content, opening_paren)
+        if parsed is None:
+            continue
+        arguments, end = parsed
+        shell_enabled = bool(re.search(r"\bshell\s*:\s*true\b", arguments))
+        command_is_shell_string = method in {"exec", "execSync"}
+        arguments_are_untrusted = _RE_JS_REQUEST_SOURCE.search(arguments) or any(
+            re.search(rf"\b{re.escape(name)}\b", arguments) for name in tainted_names
+        )
+        if not (shell_enabled or command_is_shell_string or arguments_are_untrusted):
+            continue
+        seen_starts.add(match.start())
+        rule = "spawn_shell_true" if method in {"spawn", "spawnSync"} else "subprocess_shell_true"
+        findings.append(
+            {
+                "file": path,
+                "line": _line_of(content, match.start()),
+                "rule": rule,
+                "severity": "high",
+                "category": "security",
+                "message": "Attacker-controlled data reaches a supported OS command execution API",
+                "evidence": content[match.start():end][:120],
+                "confidence": "medium",
+                "evidence_type": "deterministic_pattern",
+            }
+        )
+    return findings
+
+
+def _command_injection_findings(content: str, path: str, language: str) -> list[dict]:
+    if language == "python":
+        return _python_command_injection_findings(content, path)
+    if language in {"javascript", "typescript"}:
+        return _javascript_command_injection_findings(content, path)
+    return []
+
+
+def _ast_name(node: ast.AST | None) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _ast_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
+
+
+def _python_ssrf_controlled(expression: ast.AST, tainted_names: set[str]) -> bool:
+    if isinstance(expression, ast.Name):
+        return expression.id in {"request", "req"} or expression.id in tainted_names
+    if isinstance(expression, (ast.Attribute, ast.Subscript)):
+        return _python_ssrf_controlled(expression.value, tainted_names)
+    if isinstance(expression, ast.Call):
+        return _python_ssrf_controlled(expression.func, tainted_names) or any(
+            _python_ssrf_controlled(argument, tainted_names) for argument in expression.args
+        )
+    if isinstance(expression, ast.JoinedStr):
+        return any(
+            isinstance(value, ast.FormattedValue)
+            and _python_ssrf_controlled(value.value, tainted_names)
+            for value in expression.values
+        )
+    if isinstance(expression, ast.BinOp):
+        return _python_ssrf_controlled(expression.left, tainted_names) or _python_ssrf_controlled(expression.right, tainted_names)
+    return False
+
+
+def _python_fixed_host_destination(expression: ast.AST) -> bool:
+    """Recognize a server-controlled host with only a variable path/query."""
+    if isinstance(expression, ast.JoinedStr) and expression.values:
+        first = expression.values[0]
+        return isinstance(first, ast.Constant) and isinstance(first.value, str) and bool(
+            re.match(r"https?://[^/?#]+(?:[/?#]|$)", first.value)
+        )
+    if isinstance(expression, ast.BinOp) and isinstance(expression.left, ast.Constant) and isinstance(expression.left.value, str):
+        return bool(re.match(r"https?://[^/?#]+(?:[/?#]|$)", expression.left.value))
+    return False
+
+
+def _static_string_collection_names(tree: ast.Module) -> set[str]:
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        value = node.value
+        if not isinstance(value, (ast.List, ast.Set, ast.Tuple)):
+            continue
+        if not value.elts or not all(isinstance(element, ast.Constant) and isinstance(element.value, str) for element in value.elts):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            names.update(_python_assignment_names(target))
+    return names
+
+
+def _allowlist_guarded_names(statement: ast.If, allowlist_names: set[str]) -> set[str]:
+    if not any(isinstance(item, (ast.Return, ast.Raise)) for item in statement.body):
+        return set()
+    test = statement.test
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.NotIn):
+        return set()
+    if not isinstance(test.left, ast.Name) or len(test.comparators) != 1 or not isinstance(test.comparators[0], ast.Name):
+        return set()
+    return {test.left.id} if test.comparators[0].id in allowlist_names else set()
+
+
+def _python_http_aliases(tree: ast.Module) -> tuple[dict[str, str], dict[str, str]]:
+    modules = {"requests": "requests", "httpx": "httpx", "aiohttp": "aiohttp", "urllib": "urllib"}
+    functions = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in modules:
+                    modules[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            if node.module in {"requests", "httpx", "aiohttp"}:
+                for alias in node.names:
+                    functions[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+            elif node.module == "urllib.request":
+                for alias in node.names:
+                    functions[alias.asname or alias.name] = f"urllib.request.{alias.name}"
+    return modules, functions
+
+
+def _python_http_url_argument(call: ast.Call, canonical_name: str) -> ast.AST | None:
+    for keyword in call.keywords:
+        if keyword.arg in {"url", "uri"}:
+            return keyword.value
+    if canonical_name.endswith(".request"):
+        return call.args[1] if len(call.args) >= 2 else None
+    return call.args[0] if call.args else None
+
+
+def _python_ssrf_sink_name(call: ast.Call, modules: dict[str, str], functions: dict[str, str]) -> str:
+    raw = _ast_name(call.func)
+    if raw in functions:
+        return functions[raw]
+    parts = raw.split(".")
+    if len(parts) == 2 and parts[0] in modules:
+        return f"{modules[parts[0]]}.{parts[1]}"
+    if raw == "urllib.request.urlopen":
+        return raw
+    return ""
+
+
+def _python_ssrf_scope_findings(
+    statements: list[ast.stmt],
+    content: str,
+    path: str,
+    initial_tainted: set[str],
+    allowlist_names: set[str],
+    modules: dict[str, str],
+    functions: dict[str, str],
+) -> list[dict]:
+    tainted_names = set(initial_tainted)
+    validated_names: set[str] = set()
+    findings = []
+    methods = {"get", "post", "put", "patch", "delete", "request", "urlopen"}
+    for statement in statements:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(statement, ast.If):
+            validated_names.update(_allowlist_guarded_names(statement, allowlist_names))
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            value = statement.value
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            for target in targets:
+                for name in _python_assignment_names(target):
+                    if value is not None and _python_ssrf_controlled(value, tainted_names) and not _python_fixed_host_destination(value):
+                        tainted_names.add(name)
+                    else:
+                        tainted_names.discard(name)
+                        validated_names.discard(name)
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call):
+                continue
+            canonical_name = _python_ssrf_sink_name(node, modules, functions)
+            if not canonical_name or canonical_name.rsplit(".", 1)[-1] not in methods:
+                continue
+            url = _python_http_url_argument(node, canonical_name)
+            if url is None or _python_fixed_host_destination(url):
+                continue
+            if isinstance(url, ast.Name) and url.id in validated_names:
+                continue
+            if _python_ssrf_controlled(url, tainted_names):
+                findings.append(
+                    _ast_finding(
+                        path,
+                        content,
+                        node,
+                        "ssrf_untrusted_url",
+                        "Attacker-controlled URL reaches a supported outbound HTTP client",
+                    )
+                )
+    return findings
+
+
+def _python_ssrf_findings(content: str, path: str) -> list[dict]:
+    if not any(marker in content for marker in ("requests", "httpx", "aiohttp", "urllib", "urlopen(")):
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    allowlist_names = _static_string_collection_names(tree)
+    modules, functions = _python_http_aliases(tree)
+    findings = _python_ssrf_scope_findings(tree.body, content, path, set(), allowlist_names, modules, functions)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        is_route_handler = any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr in {"get", "post", "put", "patch", "delete", "route", "api_route"}
+            for decorator in node.decorator_list
+        )
+        parameters = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        parameter_names = {parameter.arg for parameter in parameters if parameter.arg in {"request", "req"}}
+        if is_route_handler:
+            parameter_names.update(
+                parameter.arg
+                for parameter in parameters
+                if parameter.arg.lower() in {"url", "uri", "target_url", "webhook_url", "callback_url"}
+            )
+        if not parameter_names:
+            continue
+        findings.extend(
+            _python_ssrf_scope_findings(node.body, content, path, parameter_names, allowlist_names, modules, functions)
+        )
+    return findings
+
+
+_RE_JS_HTTP_CALL = re.compile(r"(?P<callee>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\(")
+
+
+def _javascript_fixed_host_destination(arguments: str) -> bool:
+    return bool(re.match(r"\s*[`'\"]https?://[^/?#]+(?:[/?#]|$)", arguments))
+
+
+def _javascript_ssrf_findings(content: str, path: str) -> list[dict]:
+    tainted_names: set[str] = set()
+    for match in _RE_JS_ASSIGNMENT.finditer(content):
+        if not _outside_javascript_comment_or_string(content, match):
+            continue
+        value = match.group("value")
+        if _RE_JS_REQUEST_SOURCE.search(value) or any(re.search(rf"\b{re.escape(name)}\b", value) for name in tainted_names):
+            if not _javascript_fixed_host_destination(value):
+                tainted_names.add(match.group("name"))
+
+    findings = []
+    supported_methods = {"get", "post", "put", "patch", "delete", "request"}
+    for match in _RE_JS_HTTP_CALL.finditer(content):
+        if not _outside_javascript_comment_or_string(content, match):
+            continue
+        callee = match.group("callee")
+        receiver, dot, method = callee.partition(".")
+        supported = callee == "fetch" or (dot and receiver in {"axios", "got", "request"} and method in supported_methods)
+        if not supported:
+            continue
+        parsed = _javascript_call_arguments(content, match.end() - 1)
+        if parsed is None:
+            continue
+        arguments, end = parsed
+        if _javascript_fixed_host_destination(arguments):
+            continue
+        if not (_RE_JS_REQUEST_SOURCE.search(arguments) or any(re.search(rf"\b{re.escape(name)}\b", arguments) for name in tainted_names)):
+            continue
+        findings.append(
+            {
+                "file": path,
+                "line": _line_of(content, match.start()),
+                "rule": "ssrf_untrusted_url",
+                "severity": "high",
+                "category": "security",
+                "message": "Attacker-controlled URL reaches a supported outbound HTTP client",
+                "evidence": content[match.start():end][:120],
+                "confidence": "medium",
+                "evidence_type": "deterministic_pattern",
+            }
+        )
+    return findings
+
+
+def _ssrf_findings(content: str, path: str, language: str) -> list[dict]:
+    if language == "python":
+        return _python_ssrf_findings(content, path)
+    if language in {"javascript", "typescript"}:
+        return _javascript_ssrf_findings(content, path)
+    return []
+
+
+def _python_static_root(expression: ast.AST, root_names: set[str]) -> bool:
+    if isinstance(expression, ast.Name):
+        return expression.id in root_names
+    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+        return expression.value.startswith(("/", "\\"))
+    if isinstance(expression, ast.Call) and _ast_name(expression.func) in {"Path", "pathlib.Path"} and expression.args:
+        return _python_static_root(expression.args[0], root_names)
+    return False
+
+
+def _python_path_risky(expression: ast.AST, tainted_names: set[str], root_names: set[str], filename_names: set[str]) -> bool:
+    if _python_ssrf_controlled(expression, tainted_names):
+        return True
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Div):
+        return _python_static_root(expression.left, root_names) and isinstance(expression.right, ast.Name) and expression.right.id in filename_names
+    if isinstance(expression, ast.Call):
+        return any(_python_path_risky(argument, tainted_names, root_names, filename_names) for argument in expression.args)
+    return False
+
+
+def _path_guarded_names(statement: ast.If, root_names: set[str]) -> set[str]:
+    """Recognize ``if ROOT not in target.parents: raise/return`` containment."""
+    if not any(isinstance(item, (ast.Return, ast.Raise)) for item in statement.body):
+        return set()
+    test = statement.test
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.NotIn):
+        return set()
+    if not isinstance(test.left, ast.Name) or test.left.id not in root_names or len(test.comparators) != 1:
+        return set()
+    comparator = test.comparators[0]
+    if isinstance(comparator, ast.Attribute) and comparator.attr == "parents" and isinstance(comparator.value, ast.Name):
+        return {comparator.value.id}
+    return set()
+
+
+def _python_path_sink_argument(call: ast.Call) -> ast.AST | None:
+    name = _ast_name(call.func)
+    if name in {"open", "os.open", "os.remove", "os.unlink", "os.mkdir", "os.makedirs", "send_file", "FileResponse"}:
+        return call.args[0] if call.args else None
+    if name.rsplit(".", 1)[-1] in {"read_text", "read_bytes", "write_text", "write_bytes", "unlink", "mkdir", "rmdir"}:
+        return call.func.value if isinstance(call.func, ast.Attribute) else None
+    return None
+
+
+def _python_path_scope_findings(
+    statements: list[ast.stmt], content: str, path: str, initial_tainted: set[str], filename_names: set[str], initial_roots: set[str] | None = None
+) -> list[dict]:
+    root_names = set(initial_roots or ())
+    tainted_names = set(initial_tainted)
+    validated_names: set[str] = set()
+    findings = []
+    for statement in statements:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(statement, ast.If):
+            validated_names.update(_path_guarded_names(statement, root_names))
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            value = statement.value
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            for target in targets:
+                for name in _python_assignment_names(target):
+                    if value is not None and _python_static_root(value, root_names):
+                        root_names.add(name)
+                    elif value is not None and _python_path_risky(value, tainted_names, root_names, filename_names):
+                        tainted_names.add(name)
+                    else:
+                        tainted_names.discard(name)
+                        validated_names.discard(name)
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call):
+                continue
+            target = _python_path_sink_argument(node)
+            if target is None or (isinstance(target, ast.Name) and target.id in validated_names):
+                continue
+            if _python_path_risky(target, tainted_names, root_names, filename_names):
+                findings.append(
+                    _ast_finding(
+                        path,
+                        content,
+                        node,
+                        "path_traversal_file",
+                        "Attacker-controlled path reaches a supported file operation",
+                    )
+                )
+    return findings
+
+
+def _python_path_traversal_findings(content: str, path: str) -> list[dict]:
+    if not any(marker in content for marker in ("open(", ".read_text(", ".read_bytes(", ".write_text(", ".write_bytes(", "os.remove", "os.unlink", "os.mkdir", "os.makedirs", "send_file(", "FileResponse(")):
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    module_roots = set()
+    for statement in tree.body:
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None and _python_static_root(statement.value, module_roots):
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            for target in targets:
+                module_roots.update(_python_assignment_names(target))
+    findings = _python_path_scope_findings(tree.body, content, path, set(), set(), module_roots)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        parameters = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        request_names = {parameter.arg for parameter in parameters if parameter.arg in {"request", "req"}}
+        filename_names = {
+            parameter.arg for parameter in parameters if parameter.arg.lower() in {"filename", "file_name", "relative_path"}
+        }
+        if request_names or filename_names:
+            findings.extend(_python_path_scope_findings(node.body, content, path, request_names, filename_names, module_roots))
+    return findings
+
+
+def _path_traversal_findings(content: str, path: str, language: str) -> list[dict]:
+    return _python_path_traversal_findings(content, path) if language == "python" else []
+
+
+def _python_unsafe_deserialization_findings(content: str, path: str) -> list[dict]:
+    if "pickle" not in content and "yaml" not in content:
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    pickle_modules = {"pickle"}
+    yaml_modules = {"yaml"}
+    pickle_functions = set()
+    yaml_functions = {}
+    safe_loader_names = {"SafeLoader", "BaseLoader"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "pickle":
+                    pickle_modules.add(alias.asname or alias.name)
+                elif alias.name == "yaml":
+                    yaml_modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "pickle":
+                pickle_functions.update(alias.asname or alias.name for alias in node.names)
+            elif node.module == "yaml":
+                for alias in node.names:
+                    local_name = alias.asname or alias.name
+                    if alias.name in {"SafeLoader", "BaseLoader"}:
+                        safe_loader_names.add(local_name)
+                    else:
+                        yaml_functions[local_name] = alias.name
+
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        rule_match = False
+        raw = _ast_name(node.func)
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            if node.func.value.id in pickle_modules and node.func.attr in {"load", "loads"}:
+                rule_match = True
+            elif node.func.value.id in yaml_modules and node.func.attr in {"unsafe_load", "load"}:
+                if node.func.attr == "unsafe_load":
+                    rule_match = True
+                else:
+                    loaders = [keyword.value for keyword in node.keywords if keyword.arg == "Loader"]
+                    if len(node.args) >= 2:
+                        loaders.append(node.args[1])
+                    rule_match = not any(_ast_name(loader).rsplit(".", 1)[-1] in safe_loader_names for loader in loaders)
+        elif isinstance(node.func, ast.Name):
+            if node.func.id in pickle_functions:
+                rule_match = True
+            elif node.func.id in yaml_functions:
+                if yaml_functions[node.func.id] == "unsafe_load":
+                    rule_match = True
+                elif yaml_functions[node.func.id] == "load":
+                    loaders = [keyword.value for keyword in node.keywords if keyword.arg == "Loader"]
+                    if len(node.args) >= 2:
+                        loaders.append(node.args[1])
+                    rule_match = not any(_ast_name(loader).rsplit(".", 1)[-1] in safe_loader_names for loader in loaders)
+        if rule_match:
+            findings.append(
+                _ast_finding(
+                    path,
+                    content,
+                    node,
+                    "unsafe_deserialization",
+                    "Unsafe deserializer is invoked without a safe loader",
+                )
+            )
+    return findings
+
+
+def _unsafe_deserialization_findings(content: str, path: str, language: str) -> list[dict]:
+    return _python_unsafe_deserialization_findings(content, path) if language == "python" else []
+
+
+def _python_tls_findings(content: str, path: str) -> list[dict]:
+    if "verify" not in content or not any(module in content for module in ("requests", "httpx")):
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _ast_name(node.func)
+        if name.split(".", 1)[0] not in {"requests", "httpx"}:
+            continue
+        disabled = any(
+            keyword.arg == "verify"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in node.keywords
+        )
+        if disabled:
+            findings.append(_ast_finding(path, content, node, "tls_verification_disabled", "TLS certificate verification is disabled for an outbound HTTP client"))
+    return findings
+
+
+def _cors_wildcard_value(value: ast.AST) -> bool:
+    if isinstance(value, ast.Constant):
+        return value.value == "*"
+    return isinstance(value, (ast.List, ast.Tuple, ast.Set)) and any(
+        isinstance(element, ast.Constant) and element.value == "*" for element in value.elts
+    )
+
+
+def _python_cors_findings(content: str, path: str) -> list[dict]:
+    if "CORS" not in content and "cors" not in content:
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _ast_name(node.func)
+        middleware_target = name.endswith(("CORSMiddleware", ".add_middleware")) or name in {"CORS", "cors"}
+        if not middleware_target:
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords if keyword.arg}
+        origin = next((keywords[key] for key in ("allow_origins", "origins", "origin") if key in keywords), None)
+        credentials = next((keywords[key] for key in ("allow_credentials", "supports_credentials", "credentials") if key in keywords), None)
+        credentialed = isinstance(credentials, ast.Constant) and credentials.value is True
+        if origin is not None and credentialed and _cors_wildcard_value(origin):
+            findings.append(_ast_finding(path, content, node, "permissive_cors", "Credentialed wildcard CORS configuration exposes authenticated responses cross-origin"))
+    return findings
+
+
+_RE_JS_CORS_CALL = re.compile(r"\bcors\s*\(\s*\{")
+
+
+def _javascript_cors_findings(content: str, path: str) -> list[dict]:
+    findings = []
+    for match in _RE_JS_CORS_CALL.finditer(content):
+        if not _outside_javascript_comment_or_string(content, match):
+            continue
+        opening_paren = content.find("(", match.start(), match.end())
+        parsed = _javascript_call_arguments(content, opening_paren)
+        if parsed is None:
+            continue
+        arguments, end = parsed
+        wildcard = bool(re.search(r"\borigin\s*:\s*['\"]\*['\"]", arguments))
+        credentialed = bool(re.search(r"\bcredentials\s*:\s*true\b", arguments))
+        if wildcard and credentialed:
+            findings.append({
+                "file": path, "line": _line_of(content, match.start()), "rule": "permissive_cors",
+                "severity": "high", "category": "security",
+                "message": "Credentialed wildcard CORS configuration exposes authenticated responses cross-origin",
+                "evidence": content[match.start():end][:120], "confidence": "medium", "evidence_type": "deterministic_pattern",
+            })
+    return findings
+
+
+def _cors_findings(content: str, path: str, language: str) -> list[dict]:
+    if language == "python":
+        return _python_cors_findings(content, path)
+    if language in {"javascript", "typescript"}:
+        return _javascript_cors_findings(content, path)
+    return []
+
+
 def run_rules(path: str, language: str, content: str) -> list[dict]:
     findings = []
 
@@ -343,9 +1206,9 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
             "Use of eval/exec on potentially untrusted input", _outside_python_comment_or_string,
         )
     elif language in ("javascript", "typescript"):
-        findings += _findings_for_pattern(
+        findings += _guarded_findings(
             content, path, _RE_EVAL_JS, "dangerous_eval", "critical", "security",
-            "Use of eval/exec on potentially untrusted input",
+            "Use of eval/exec on potentially untrusted input", _outside_javascript_comment_or_string,
         )
 
     # 3. empty / catch-all exception handling — python + js/ts
@@ -366,38 +1229,22 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         _sql_execution_sink_guard,
     )
 
-    # 5. shell / command injection risk — python + js/ts
-    pattern = SHELL_INJECTION_PATTERNS.get(language)
-    if pattern:
-        findings += _findings_for_pattern(
-            content, path, pattern, "subprocess_shell_true", "high", "security",
-            "Shell/subprocess call with an unsanitized command string risks command injection",
-        )
-
-    if language == "python":
-        findings += _findings_for_pattern(
-            content, path, _RE_OS_SYSTEM, "os_system_call", "high", "security",
-            "Direct OS command execution API is used; ensure command input is fixed and validated",
-        )
-    elif language in ("javascript", "typescript"):
-        findings += _findings_for_pattern(
-            content, path, _RE_SPAWN_SHELL_JS, "spawn_shell_true", "high", "security",
-            "child_process spawn is configured with shell=true",
-        )
+    # 5. command injection: only report supported command sinks when direct
+    # request/input data reaches the executable or an argument. Static argv or
+    # constant command strings are intentionally not command-injection evidence.
+    findings += _command_injection_findings(content, path, language)
 
     # 6. disabled TLS verification — python or node pattern, run both, language-gated
     if language == "python":
-        findings += _findings_for_pattern(
-            content, path, _RE_TLS_PY, "tls_verification_disabled", "high", "security",
-            "TLS/SSL certificate verification is disabled",
-        )
+        findings += _python_tls_findings(content, path)
     if language in ("javascript", "typescript"):
-        findings += _findings_for_pattern(
+        findings += _guarded_findings(
             content, path, _RE_TLS_NODE, "tls_verification_disabled", "high", "security",
-            "TLS/SSL certificate verification is disabled",
+            "TLS/SSL certificate verification is disabled", _outside_javascript_comment_or_string,
         )
 
     # 7. unsafe deserialization — python + js/ts
+    findings += _unsafe_deserialization_findings(content, path, language)
     for pattern in DESERIALIZATION_PATTERNS.get(language, []):
         findings += _findings_for_pattern(
             content, path, pattern, "unsafe_deserialization", "high", "security",
@@ -411,18 +1258,12 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
     )
 
     if language in ("javascript", "typescript"):
-        findings += _findings_for_pattern(
-            content, path, _RE_NOSQL_INJECTION_JS, "nosql_untrusted_filter", "high", "security",
-            "Request-controlled object is passed directly as a NoSQL query filter",
-        )
+        findings += _nosql_direct_filter_findings(content, path, language)
         findings += _findings_for_pattern(
             content, path, _RE_ARCHIVE_EXTRACT_JS, "unsafe_archive_extract", "high", "security",
             "Archive extraction target is influenced by request input",
         )
-        findings += _findings_for_pattern(
-            content, path, _RE_SSRF_JS, "ssrf_untrusted_url", "high", "security",
-            "Outbound request URL appears to come directly from request input",
-        )
+        findings += _ssrf_findings(content, path, language)
         findings += _findings_for_pattern(
             content, path, _RE_XSS_JS, "xss_unsafe_html_sink", "high", "security",
             "Request, location, props, or state data is assigned to an HTML sink",
@@ -431,10 +1272,7 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
             content, path, _RE_REACT_DANGEROUS_HTML, "react_dangerous_html", "medium", "security",
             "React dangerouslySetInnerHTML is used and needs trusted sanitized HTML evidence",
         )
-        findings += _findings_for_pattern(
-            content, path, _RE_CORS_WILDCARD_JS, "permissive_cors", "medium", "security",
-            "CORS is configured with a wildcard origin",
-        )
+        findings += _cors_findings(content, path, language)
         findings += _findings_for_pattern(
             content, path, _RE_DEBUG_JS, "debug_config_enabled", "medium", "best_practice",
             "Development/debug configuration appears enabled in source",
@@ -497,22 +1335,14 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         )
 
     if language == "python":
-        findings += _findings_for_pattern(
-            content, path, _RE_NOSQL_INJECTION_PY, "nosql_untrusted_filter", "high", "security",
-            "Request-controlled object is passed directly as a NoSQL query filter",
-        )
+        findings += _nosql_direct_filter_findings(content, path, language)
+        findings += _path_traversal_findings(content, path, language)
         findings += _findings_for_pattern(
             content, path, _RE_ARCHIVE_EXTRACT_PY, "unsafe_archive_extract", "high", "security",
             "Archive extraction uses extractall without visible path containment",
         )
-        findings += _findings_for_pattern(
-            content, path, _RE_SSRF_PY, "ssrf_untrusted_url", "high", "security",
-            "Outbound request URL appears to come directly from request input",
-        )
-        findings += _findings_for_pattern(
-            content, path, _RE_CORS_WILDCARD_PY, "permissive_cors", "medium", "security",
-            "CORS is configured with a wildcard origin",
-        )
+        findings += _ssrf_findings(content, path, language)
+        findings += _cors_findings(content, path, language)
         findings += _findings_for_pattern(
             content, path, _RE_DEBUG_PY, "debug_config_enabled", "medium", "best_practice",
             "Debug configuration appears enabled in source",

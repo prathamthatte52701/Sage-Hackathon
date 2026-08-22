@@ -58,6 +58,7 @@ DETECTOR_RULE_TO_CANONICAL = {
     "os_system_call": "SEC-COMMAND-INJECTION",
     "spawn_shell_true": "SEC-COMMAND-INJECTION",
     "ssrf_untrusted_url": "SEC-SSRF",
+    "path_traversal_file": "SEC-PATH-TRAVERSAL-FILE",
     "unsafe_archive_extract": "SEC-PATH-TRAVERSAL-FILE",
     "unsafe_deserialization": "SEC-UNSAFE-DESERIALIZATION",
     "dangerous_eval": "SEC-EVAL-EXEC",

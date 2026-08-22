@@ -75,7 +75,7 @@ def test_javascript_security_detectors_positive_cases():
     content = """
 const crypto = require('crypto');
 const child_process = require('child_process');
-app.use(cors({ origin: '*' }));
+    app.use(cors({ origin: '*', credentials: true }));
 const DEBUG = 'development';
 async function handler(req, res) {
   child_process.spawn('sh', ['-c', req.body.cmd], { shell: true });
