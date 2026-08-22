@@ -647,7 +647,7 @@ def dedupe_ai_findings(issues: list[Issue]) -> list[Issue]:
         identifiers = _issue_identifiers(issue)
         match_index = None
         for index, existing in enumerate(merged):
-            if abs((existing.line or 0) - (issue.line or 0)) > 2:
+            if abs((existing.line or 0) - (issue.line or 0)) > 5:
                 continue
             shared_identifier = bool(identifiers & _issue_identifiers(existing))
             existing_theme = _issue_theme_tokens(existing)

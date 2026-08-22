@@ -63,6 +63,9 @@ _RE_JS_PERCENT_ZERO_BASELINE = re.compile(r"if\s*\(\s*!\s*(previous|prev|oldValu
 _RE_JS_UNKNOWN_TYPE_DEFAULT = re.compile(r"if\s*\([^)]*\.type\s*={2,3}\s*['\"][^'\"]+['\"][^)]*\)\s*\{[^{}]*\}\s*else\s*\{", re.DOTALL)
 _RE_PLAINTEXT_PASSWORD_PY = re.compile(r"password\s*=\s*(request\.(json|form)|req\.(json|form)|input\s*\()", re.IGNORECASE)
 _RE_PLAINTEXT_PASSWORD_JS = re.compile(r"(password)\s*=\s*(req\.body|request\.body)", re.IGNORECASE)
+_RE_MONGOOSE_MONEY_NUMBER = re.compile(
+    r"(?i)\b(balance|amount|price|total|subtotal|credit|debit|fee|cost)\w*\s*:\s*\{[^{}]*type\s*:\s*Number(?![^{}]*(min\s*:|validate\s*:))[^{}]*\}"
+)
 _NON_SECRET_CONTEXT = re.compile(r"(?i)(example|sample|dummy|fake|placeholder|documentation|test fixture)")
 _HASH_SECURITY_CONTEXT = re.compile(r"(?i)(password|token|secret|signature|auth|credential|session)")
 
@@ -92,6 +95,7 @@ RULE_METADATA = {
     "unsafe_redirect": {"title": "Redirect target controlled by request input", "languages": ["python", "javascript", "typescript"], "category": "security"},
     "frontend_token_storage": {"title": "Auth token stored in browser storage", "languages": ["javascript", "typescript"], "category": "security"},
     "plaintext_password_handling": {"title": "Plaintext password read without hashing evidence", "languages": ["python", "javascript", "typescript"], "category": "security"},
+    "mongoose_money_number_no_validation": {"title": "Monetary Number field lacks validation", "languages": ["javascript", "typescript"], "category": "data_integrity"},
     "js_numeric_coercion_default": {"title": "Silent numeric coercion to zero", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_date_slice_without_validation": {"title": "Date slicing without visible validation", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_zero_baseline_fallback": {"title": "Zero baseline treated as missing", "languages": ["javascript", "typescript"], "category": "logic"},
@@ -380,6 +384,10 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         findings += _findings_for_pattern(
             content, path, _RE_PLAINTEXT_PASSWORD_JS, "plaintext_password_handling", "high", "security",
             "Password is read from request body without visible hashing or verification context",
+        )
+        findings += _findings_for_pattern(
+            content, path, _RE_MONGOOSE_MONEY_NUMBER, "mongoose_money_number_no_validation", "medium", "data_integrity",
+            "Mongoose monetary Number field has no visible minimum or validation; use Decimal128/cents and validate opening balance/amount values",
         )
         findings += _findings_for_pattern(
             content, path, _RE_JS_NUMERIC_COERCION_DEFAULT, "js_numeric_coercion_default", "medium", "logic",
