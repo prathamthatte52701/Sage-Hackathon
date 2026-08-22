@@ -1,0 +1,21 @@
+{
+  "test_id": 1,
+  "name": "py_001_hardcoded_secret",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 4,
+  "expected_findings": [
+    {
+      "theme": "hardcoded_secret",
+      "severity": "high",
+      "category": "security",
+      "evidence": "Credential-like literal is assigned to API_KEY.",
+      "expected": "Hard-coded secret should be stored in secure configuration."
+    }
+  ],
+  "negative_assertions": [
+    "Do not report missing timeout; timeout=5 is present."
+  ],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

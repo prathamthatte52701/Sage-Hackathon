@@ -1,0 +1,21 @@
+{
+  "test_id": 6,
+  "name": "py_006_ssrf",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 4,
+  "expected_findings": [
+    {
+      "theme": "ssrf",
+      "severity": "high",
+      "category": "security",
+      "evidence": "Arbitrary caller-provided URL is fetched by the server.",
+      "expected": "Allowlist/validate outbound destinations."
+    }
+  ],
+  "negative_assertions": [
+    "Do not report missing timeout; timeout=4 is present."
+  ],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

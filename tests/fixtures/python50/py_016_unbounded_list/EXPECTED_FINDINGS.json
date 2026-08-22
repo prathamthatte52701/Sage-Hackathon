@@ -1,0 +1,19 @@
+{
+  "test_id": 16,
+  "name": "py_016_unbounded_list",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 5,
+  "expected_findings": [
+    {
+      "theme": "unbounded_collection_response",
+      "severity": "medium",
+      "category": "performance",
+      "evidence": "Endpoint returns the full collection with no limit/pagination.",
+      "expected": "Bound collection responses with pagination."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

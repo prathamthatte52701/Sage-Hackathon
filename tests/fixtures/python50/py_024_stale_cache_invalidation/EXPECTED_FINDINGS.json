@@ -1,0 +1,19 @@
+{
+  "test_id": 24,
+  "name": "py_024_stale_cache_invalidation",
+  "language": "python",
+  "difficulty": "medium",
+  "source_file": "app.py",
+  "source_lines": 7,
+  "expected_findings": [
+    {
+      "theme": "stale_cache",
+      "severity": "medium",
+      "category": "data_integrity",
+      "evidence": "Source data changes without invalidating derived summary_cache.",
+      "expected": "Invalidate/version derived caches when source data changes."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}
