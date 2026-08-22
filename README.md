@@ -81,6 +81,53 @@ When validation fails, the API returns a specific reason such as `target_not_fou
 
 ---
 
+## The Complete SAGE Flow, A to Z
+
+This is the exact product journey for a repository review.
+
+| Step | User action | SAGE does | What remains true |
+| --- | --- | --- | --- |
+| A | Open the workspace | Starts in demo mode or validates the configured session mode | The browser never chooses an owner identity |
+| B | Upload a ZIP or enter `owner/repo` | Validates archive/repository input and creates a stored project | Archive paths, sizes, duplicate paths, and binary files are handled safely |
+| C | Start analysis | Enqueues one canonical analysis job | The request returns quickly instead of holding the browser open for a long scan |
+| D | Watch scan state | Polls the job until it is `completed`, `partial`, or `failed` | The UI does not invent completion or percentage progress |
+| E | Open the report | Loads project metadata, findings, score, and source revision state | Metadata reads do not need to hydrate every source file |
+| F | Select a finding | Fetches the real stored file and highlights the evidence location | If source is unavailable, SAGE says so rather than fabricating code |
+| G | Ask for reasoning | Uses the verified finding and repository context to retrieve relevant guidance | Guidance explains a finding; it does not create one |
+| H | Generate a fix | Produces a scoped proposal, unified diff, source hash, and validation result | No source code changes during generation or preview |
+| I | Review validation | Checks target presence, uniqueness, source freshness, overlap, and patch structure | Apply stays disabled unless the backend returns `can_apply: true` |
+| J | Apply the fix | Changes only the validated target file and records the patch | A stale, ambiguous, duplicate, or malformed patch is rejected safely |
+| K | Reanalyze | Queues the same canonical pipeline against the current stored source | Reanalysis never applies the proposal a second time |
+| L | Download | Streams a fixed ZIP with changed source plus preserved unrelated project files | The download reflects stored source, not a client-side approximation |
+
+### Request and data flow
+
+```text
+Browser
+  |
+  +-- POST upload/import ---------------------------> Project router
+  |                                                     |
+  |                                                     +-- normalized project + owner-scoped persistence
+  |
+  +-- POST analyze/reanalyze -----------------------> Analysis job service
+  |                                                     |
+  |                                                     +-- deterministic analysis
+  |                                                     +-- guarded enrichment
+  |                                                     +-- stable findings + revisions
+  |
+  +-- GET job / project / file ---------------------> Owner-scoped reads
+  |
+  +-- POST finding transform -----------------------> Patch validation metadata + diff
+  |
+  +-- POST apply -----------------------------------> One structured source mutation
+  |
+  +-- GET download-fixed ---------------------------> Streamed ZIP of stored project state
+```
+
+The same server-side identity travels through every project, job, finding, file, patch, chat, and download request. Frontend state is presentation state; persisted source and backend validation are the authority.
+
+---
+
 ## What You Can Do Today
 
 - Review pasted Python, JavaScript, TypeScript, Java, or C/C++ snippets.
