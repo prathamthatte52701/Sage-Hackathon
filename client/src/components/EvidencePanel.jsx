@@ -64,7 +64,12 @@ export default function EvidencePanel({
   // Engineering standards dynamic binding
   const cweCode = finding.cwe || finding.standard || finding.rule_id || (title.toLowerCase().includes("sql") ? "CWE-89" : "CWE-Security");
   const impactText = finding.description || finding.impact || finding.message || "Potential vulnerability detected during codebase scan.";
-  const recommendationText = finding.recommendation || finding.suggested_fix || finding.remediation || "Apply parameterized query execution or sanitize user input before invocation.";
+  const recommendationText =
+    finding.fix_suggestion ||
+    finding.recommendation ||
+    finding.suggested_fix ||
+    finding.remediation ||
+    "Review the highlighted evidence and apply the secure pattern for this finding.";
 
   return (
     <div className="cm-card border-[#232936] bg-[#10131A] overflow-y-auto h-full p-5 space-y-6">

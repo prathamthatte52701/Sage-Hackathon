@@ -193,7 +193,7 @@ export default function FixValidationModal({
             </button>
             <button
               onClick={onApply}
-              disabled={applying}
+              disabled={applying || !allPass}
               className="cm-btn-primary text-xs px-6 py-2.5 shadow-lg shadow-[#36D399]/20 disabled:opacity-50"
               style={{
                 boxShadow: applying ? "0 0 20px rgba(54,211,153,0.3)" : undefined,

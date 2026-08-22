@@ -196,6 +196,14 @@ export default function App() {
   // Apply changes source once, then run the canonical analysis job on stored source.
   const handleApplyFix = async () => {
     if (!projectBundle?.project_id || !activeFixData || applyingFix) return;
+    if (!activeFixData.can_apply || !Object.values(activeFixData.validation || {}).every(Boolean)) {
+      setToast({
+        type: "error",
+        title: "Fix Is Not Applyable",
+        message: "Regenerate the fix after resolving the failed patch validation check.",
+      });
+      return;
+    }
     setApplyingFix(true);
     try {
       // Step 1: Apply the validated patch to stored source.
