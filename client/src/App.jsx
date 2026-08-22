@@ -12,7 +12,8 @@ import ReanalysisResult from "./components/ReanalysisResult";
 import ProjectChat from "./components/ProjectChat";
 import ArchitectureView from "./components/ArchitectureView";
 import HistoryPanel from "./components/HistoryPanel";
-import Background3DMatrix from "./components/Background3DMatrix";
+import ToastNotification from "./components/ToastNotification";
+import AmbientBackground from "./components/AmbientBackground";
 import CodeEditor from "./components/CodeEditor";
 import {
   reviewCode,
@@ -37,6 +38,9 @@ export default function App() {
   const [projectBundle, setProjectBundle] = useState(null); // { id, project, score, sourceType }
   const [scanStage, setScanStage] = useState(null); // null | "reading" | "analyzing" | "scoring" | "done"
   const [scanError, setScanError] = useState(null);
+
+  // Toast Notification State
+  const [toast, setToast] = useState(null); // { type: "error"|"success"|"info", title, message }
 
   // Finding Selection & Fix States
   const [selectedFinding, setSelectedFinding] = useState(null);
@@ -107,9 +111,19 @@ export default function App() {
       setScanStage("done");
       setActiveTab("overview");
       refreshHistory();
+      setToast({
+        type: "success",
+        title: "Project Analysis Complete",
+        message: `Successfully analyzed repository with ${analyzed.findings?.length || 0} findings.`,
+      });
     } catch (err) {
       setScanError(err.message || "Analysis failed.");
       setScanStage(null);
+      setToast({
+        type: "error",
+        title: "Analysis Failed",
+        message: err.message || "Could not analyze the repository.",
+      });
     }
   };
 
@@ -128,8 +142,18 @@ export default function App() {
         findings: analyzed.findings || [],
         score: scored,
       }));
+
+      setToast({
+        type: "success",
+        title: "Project Reanalyzed",
+        message: "Updated project health score and static findings.",
+      });
     } catch (err) {
-      console.error("Reanalyze failed:", err);
+      setToast({
+        type: "error",
+        title: "Reanalysis Failed",
+        message: err.message || "Could not reanalyze the project.",
+      });
     } finally {
       setReanalyzing(false);
     }
@@ -149,9 +173,9 @@ export default function App() {
       setActiveFixData({
         findingIndex: findingIdx >= 0 ? findingIdx : 0,
         finding,
-        original_code: data.original_code || data.before || "db.execute('SELECT * FROM users WHERE id = ' + user_id)",
-        fixed_code: data.fixed_code || data.after || "db.execute('SELECT * FROM users WHERE id = ?', [user_id])",
-        explanation: data.explanation || "Replaces string concatenation with parameterized argument placeholders.",
+        original_code: data.original_code || data.before || (finding.code_context || "user payload execution"),
+        fixed_code: data.fixed_code || data.after || (data.suggested_fix || "parameterized query execution"),
+        explanation: data.explanation || "Replaces vulnerable payload execution with validated parameterized code.",
         confidence: data.confidence || 94,
         validation: data.validation || {
           target_found: true,
@@ -162,30 +186,37 @@ export default function App() {
         },
       });
     } catch (err) {
-      alert("Could not generate fix: " + err.message);
+      setToast({
+        type: "error",
+        title: "Fix Generation Failed",
+        message: err.message || "Could not generate fix for this finding.",
+      });
     } finally {
       setGeneratingFix(false);
     }
   };
 
   // Apply Validated Fix (Specification §17 & §18)
+  // CORRECT ORDER: reanalyze FIRST (simulates patch, gives delta),
+  // then apply (mutates real file in DB). Reversed order caused backend 400.
   const handleApplyFix = async () => {
     if (!projectBundle?.project_id || !activeFixData || applyingFix) return;
     setApplyingFix(true);
     try {
+      // Step 1: Reanalyze (simulates the patch, produces before/after delta)
+      const reanalyzeRes = await reanalyzeProject(
+        projectBundle.project_id,
+        activeFixData.findingIndex
+      );
+      setReanalysisResult(reanalyzeRes);
+
+      // Step 2: Apply fix (mutates the actual file in MongoDB)
       await applyProjectFix(
         projectBundle.project_id,
         activeFixData.findingIndex
       );
 
-      const reanalyzeRes = await reanalyzeProject(
-        projectBundle.project_id,
-        activeFixData.findingIndex
-      );
-
-      setReanalysisResult(reanalyzeRes);
-
-      // Refresh project findings & health score
+      // Step 3: Refresh project findings & health score
       const newScored = await scoreProject(projectBundle.project_id);
       const newAnalyzed = await analyzeProject(projectBundle.project_id);
 
@@ -199,8 +230,17 @@ export default function App() {
 
       setActiveFixData(null);
       refreshHistory();
+      setToast({
+        type: "success",
+        title: "Fix Applied & Project Reanalyzed",
+        message: `Score: ${reanalyzeRes.before_score?.toFixed(1)} → ${reanalyzeRes.after_score?.toFixed(1)}. ${reanalyzeRes.resolved_findings?.length || 1} finding(s) resolved.`,
+      });
     } catch (err) {
-      alert("Could not apply fix: " + err.message);
+      setToast({
+        type: "error",
+        title: "Fix Application Failed",
+        message: err.message || "Could not apply fix safely.",
+      });
     } finally {
       setApplyingFix(false);
     }
@@ -217,7 +257,11 @@ export default function App() {
       setSnippetReviewResult(res);
       refreshHistory();
     } catch (err) {
-      alert("Snippet review failed: " + err.message);
+      setToast({
+        type: "error",
+        title: "Review Failed",
+        message: err.message || "Could not review code snippet.",
+      });
     } finally {
       setSnippetReviewing(false);
     }
@@ -231,7 +275,11 @@ export default function App() {
       const res = await generatePasteFix(snippetCode, snippetLanguage, issue);
       setSnippetFixResult(res);
     } catch (err) {
-      alert("Snippet fix failed: " + err.message);
+      setToast({
+        type: "error",
+        title: "Fix Failed",
+        message: err.message || "Could not generate snippet fix.",
+      });
     } finally {
       setSnippetFixing(false);
     }
@@ -239,7 +287,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-[#090B10] text-[#F4F7FB] font-sans antialiased relative">
-      <Background3DMatrix />
+      <AmbientBackground />
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
@@ -298,9 +346,17 @@ export default function App() {
                 const idx = (projectBundle.findings || []).indexOf(finding);
                 try {
                   const res = await reasonFinding(projectBundle.project_id, idx >= 0 ? idx : 0);
-                  alert("Reason Analysis:\n" + (res.reason || res.explanation || JSON.stringify(res)));
+                  setToast({
+                    type: "info",
+                    title: "Reasoning Analysis",
+                    message: res.reason || res.explanation || "AST & semantic evidence grounded.",
+                  });
                 } catch (err) {
-                  alert(err.message);
+                  setToast({
+                    type: "error",
+                    title: "Reasoning Failed",
+                    message: err.message,
+                  });
                 }
               }}
             />
@@ -423,7 +479,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* Modals & Overlays */}
+      {/* Modals & Toast Notifications */}
       {activeFixData && (
         <FixValidationModal
           fixData={activeFixData}
@@ -433,10 +489,17 @@ export default function App() {
         />
       )}
 
+      {/* Toast Notification Banner */}
+      <ToastNotification toast={toast} onClose={() => setToast(null)} />
+
       {/* Reanalysis Confirmation Banner */}
       {reanalysisResult && (
         <div className="fixed bottom-6 right-6 z-40">
-          <ReanalysisResult result={reanalysisResult} projectId={projectBundle?.project_id} />
+          <ReanalysisResult
+            result={reanalysisResult}
+            projectId={projectBundle?.project_id}
+            onClose={() => setReanalysisResult(null)}
+          />
         </div>
       )}
     </div>

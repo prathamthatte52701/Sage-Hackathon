@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ShieldAlert,
   Search,
@@ -44,12 +44,12 @@ export default function FindingExplorer({
     return `// File: ${filePath || "source"}\n// Evidence line ${activeFinding.line || 1}`;
   })();
 
-  // Filter findings
+  // Filter findings dynamically
   const filteredFindings = findings.filter((f) => {
     const matchesSev = severityFilter === "all" || f.severity === severityFilter;
     const matchesSearch =
       !searchQuery.trim() ||
-      (f.title || f.type || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (f.title || f.type || f.message || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
       (f.file || "").toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSev && matchesSearch;
   });
@@ -62,9 +62,35 @@ export default function FindingExplorer({
     low: findings.filter((f) => f.severity === "low").length,
   };
 
+  // Keyboard navigation (Up/Down arrow keys to switch findings)
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (filteredFindings.length === 0) return;
+
+      const currentIndex = filteredFindings.indexOf(activeFinding);
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const nextIndex = (currentIndex + 1) % filteredFindings.length;
+        onSelectFinding?.(filteredFindings[nextIndex]);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prevIndex = (currentIndex - 1 + filteredFindings.length) % filteredFindings.length;
+        onSelectFinding?.(filteredFindings[prevIndex]);
+      } else if (e.key === "Enter" && activeFinding) {
+        e.preventDefault();
+        onGenerateFix?.(activeFinding);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [filteredFindings, activeFinding, onSelectFinding, onGenerateFix]);
+
   return (
-    <div className="min-h-[calc(100vh-5rem)] lg:h-[calc(100vh-5rem)] grid grid-cols-1 lg:grid-cols-12 gap-4 p-0 sm:p-2 lg:p-4 overflow-visible lg:overflow-hidden">
-      {/* COLUMN 1: Findings Sidebar List (3 cols) */}
+    <div className="min-h-[calc(100vh-5rem)] lg:h-[calc(100vh-5rem)] grid grid-cols-1 lg:grid-cols-12 gap-4 p-0 sm:p-2 lg:p-4 overflow-visible lg:overflow-hidden select-none">
+      {/* COLUMN 1: Findings Navigation Sidebar (3 cols) */}
       <div className="lg:col-span-3 cm-card border-[#232936] bg-[#10131A] flex flex-col h-[360px] lg:h-full overflow-hidden">
         {/* Header & Filter Controls */}
         <div className="p-3 border-b border-[#232936] space-y-2">
@@ -114,6 +140,9 @@ export default function FindingExplorer({
           ) : (
             filteredFindings.map((finding, idx) => {
               const isSelected = activeFinding === finding;
+              const isDeterministic = finding.source === "AST" || Boolean(finding.line);
+              const isGrounded = finding.grounded !== false;
+
               return (
                 <div
                   key={idx}
@@ -131,19 +160,24 @@ export default function FindingExplorer({
                           ? "cm-badge-critical"
                           : finding.severity === "high"
                           ? "cm-badge-high"
-                          : "cm-badge-medium"
+                          : finding.severity === "medium"
+                          ? "cm-badge-medium"
+                          : "cm-badge-low"
                       }`}
                     >
                       {finding.severity || "HIGH"}
                     </span>
-                    <span className="text-[10px] font-mono text-[#7C8CFF] flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3 text-[#36D399]" />
-                      Grounded
-                    </span>
+                    
+                    {isGrounded && (
+                      <span className="text-[10px] font-mono text-[#7C8CFF] flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-[#36D399]" />
+                        {isDeterministic ? "Deterministic" : "Grounded"}
+                      </span>
+                    )}
                   </div>
 
                   <h4 className="text-xs font-semibold text-[#F4F7FB] truncate">
-                    {finding.title || finding.type || "Finding"}
+                    {finding.title || finding.message || finding.type || "Finding"}
                   </h4>
 
                   <div className="text-[11px] font-mono text-[#687386] truncate mt-1 flex items-center justify-between">
