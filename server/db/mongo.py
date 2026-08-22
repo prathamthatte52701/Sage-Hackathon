@@ -95,6 +95,11 @@ async def store_file_content(content: str, project_id_hint: str = "") -> str:
     return str(file_id)
 
 
+async def store_binary_content(content: bytes, project_id_hint: str = "") -> str:
+    file_id = await _require_fs_bucket().upload_from_stream(f"{project_id_hint}-asset", content)
+    return str(file_id)
+
+
 async def fetch_file_content(content_ref: str) -> str:
     """Fetches previously stored content by its GridFS id string."""
     from bson import ObjectId
@@ -103,6 +108,13 @@ async def fetch_file_content(content_ref: str) -> str:
     stream = await bucket.open_download_stream(ObjectId(content_ref))
     data = await stream.read()
     return data.decode("utf-8")
+
+
+async def fetch_binary_content(content_ref: str) -> bytes:
+    from bson import ObjectId
+
+    stream = await _require_fs_bucket().open_download_stream(ObjectId(content_ref))
+    return await stream.read()
 
 
 async def delete_file_content(content_ref: str) -> None:
@@ -134,6 +146,12 @@ async def _replace_content_with_refs(files: list[dict], project_id_hint: str = "
     text (the thing that blew past Mongo's 16MB document limit)."""
     replaced_refs = []
     for file_entry in files:
+        binary_content = file_entry.pop("binary_content", None)
+        if binary_content is not None:
+            old_ref = file_entry.get("binary_ref")
+            file_entry["binary_ref"] = await store_binary_content(binary_content, project_id_hint or file_entry.get("path", "asset"))
+            if old_ref:
+                replaced_refs.append(old_ref)
         content = file_entry.get("content")
         if content is not None:
             digest = _content_hash(content)

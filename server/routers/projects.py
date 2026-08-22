@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from db.mongo import get_owned_analysis_job, get_owned_project, save_project, update_owned_project
+from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_project, save_project, update_owned_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
@@ -220,16 +220,14 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
             info = zf.getinfo(name)
             language = _guess_language(display_name)
 
-            content = None
-            if _should_read_text(display_name, language):
-                with zf.open(name) as entry:
-                    raw = entry.read(MAX_SINGLE_FILE_UNCOMPRESSED + 1)
-                if len(raw) > MAX_SINGLE_FILE_UNCOMPRESSED:
-                    return None, None, {"error": f"{display_name}: file too large after decompression"}
-                actual_uncompressed_total += len(raw)
-                if actual_uncompressed_total > MAX_UNCOMPRESSED_SIZE:
-                    return None, None, {"error": "ZIP uncompressed contents exceed the 600MB limit"}
-                content = raw.decode("utf-8", errors="replace")
+            with zf.open(name) as entry:
+                raw = entry.read(MAX_SINGLE_FILE_UNCOMPRESSED + 1)
+            if len(raw) > MAX_SINGLE_FILE_UNCOMPRESSED:
+                return None, None, {"error": f"{display_name}: file too large after decompression"}
+            actual_uncompressed_total += len(raw)
+            if actual_uncompressed_total > MAX_UNCOMPRESSED_SIZE:
+                return None, None, {"error": "ZIP uncompressed contents exceed the 600MB limit"}
+            content = raw.decode("utf-8", errors="replace") if _should_read_text(display_name, language) else None
 
             files_index.append(
                 {
@@ -237,6 +235,7 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
                     "language": language,
                     "size": info.file_size,
                     "content": content,
+                    "binary_content": raw if content is None else None,
                     "large_file": bool(content is not None and len(content) > MAX_CONTENT_SIZE),
                 }
             )
@@ -334,6 +333,8 @@ async def upload_project(
             return JSONResponse(status_code=400, content=error)
 
         project_id = await save_project(project_representation, session_id, current_user["_id"])
+        for file_entry in project_representation["files"]:
+            file_entry.pop("binary_content", None)
 
         print(f"[projects] upload user_id={current_user['_id']} project_id={project_id}")
         return {"project_id": project_id, "project": project_representation, "warnings": warnings}
@@ -396,6 +397,8 @@ async def import_from_github(payload: GithubImportRequest, current_user: dict = 
             return JSONResponse(status_code=400, content=error)
 
         project_id = await save_project(project_representation, payload.session_id, current_user["_id"])
+        for file_entry in project_representation["files"]:
+            file_entry.pop("binary_content", None)
 
         print(f"[projects] upload user_id={current_user['_id']} project_id={project_id}")
         return {"project_id": project_id, "project": project_representation, "warnings": warnings}
@@ -883,9 +886,10 @@ async def download_fixed_project(
                 if first in IGNORE_DIRS or path.endswith((".env", ".pyc")):
                     continue
                 content = file_entry.get("content")
-                if content is None:
-                    continue
-                zf.writestr(path, content)
+                if content is not None:
+                    zf.writestr(path, content)
+                elif file_entry.get("binary_ref"):
+                    zf.writestr(path, await fetch_binary_content(file_entry["binary_ref"]))
         buffer.seek(0)
         print(f"[projects] download user_id={current_user['_id']} project_id={project_id}")
         project_name = project.get("project", {}).get("name") or "project"

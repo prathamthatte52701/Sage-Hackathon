@@ -296,7 +296,7 @@ def retrieve_relevant_files(project: dict, question: str, top_k: int = 5) -> lis
     return results
 
 
-async def retrieve_semantic_project_context(project: dict, question: str, top_k: int = 2) -> list[dict]:
+async def retrieve_semantic_project_context(project: dict, question: str, top_k: int = 2, owner_user_id: str = "") -> list[dict]:
     """Stage 3 (optional, additive): cross-project semantic context via the
     `projects.embedding` vector search index. Project embeddings in this repo
     are one vector per project (built from concatenated file text — see
@@ -307,10 +307,8 @@ async def retrieve_semantic_project_context(project: dict, question: str, top_k:
     that job precisely via keyword/import matching and remain the sole
     source of PROJECT EVIDENCE for the current project.
 
-    Scoped to the current project's own session_id (when present) so one
-    user's uploaded projects don't surface into another user's chat, and the
-    current project itself is always excluded so this can't just rediscover
-    the document the caller already has.
+    Scoped to the authenticated owner (and session_id when present), so a
+    client-controlled session ID can never become the authorization boundary.
 
     Fails silently (returns []) on any error — no MONGO_URL, embedding model
     unavailable, Atlas index down, bad ObjectId — so this optional enrichment
@@ -328,6 +326,7 @@ async def retrieve_semantic_project_context(project: dict, question: str, top_k:
 
         current_id = project.get("_id")
         session_id = project.get("session_id")
+        owner = owner_user_id or project.get("owner_user_id")
 
         # model.encode() is synchronous/CPU-bound; running it directly on the
         # event loop can starve Starlette's BaseHTTPMiddleware task group
@@ -351,6 +350,7 @@ async def retrieve_semantic_project_context(project: dict, question: str, top_k:
                 "$project": {
                     "_id": 1,
                     "session_id": 1,
+                    "owner_user_id": 1,
                     "name": "$project.name",
                     "projectType": "$project.projectType",
                     "languages": "$project.languages",
@@ -367,10 +367,13 @@ async def retrieve_semantic_project_context(project: dict, question: str, top_k:
     for c in candidates:
         if str(c.get("_id")) == str(current_id):
             continue
+        if owner and c.get("owner_user_id") != owner:
+            continue
         if session_id and c.get("session_id") != session_id:
             continue
         c["_id"] = str(c["_id"])
         c.pop("session_id", None)
+        c.pop("owner_user_id", None)
         results.append(c)
         if len(results) >= top_k:
             break
