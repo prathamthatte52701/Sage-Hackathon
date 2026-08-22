@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import useSessionId from "./hooks/useSessionId";
+import { useAuth } from "./context/AuthContext";
+import AuthScreen from "./components/AuthScreen";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import LandingHero from "./components/LandingHero";
@@ -29,6 +31,7 @@ import {
 
 export default function App() {
   const sessionId = useSessionId();
+  const { user, loading: authLoading } = useAuth();
 
   // Navigation State: "overview" | "findings" | "paste_review" | "projects" | "chat" | "architecture" | "history"
   const [activeTab, setActiveTab] = useState("projects");
@@ -284,6 +287,10 @@ export default function App() {
       setSnippetFixing(false);
     }
   };
+
+  // AUTH FROZEN: unfreeze karne pe ye 2 lines uncomment kar do
+  // if (authLoading) return null;
+  // if (!user) return <AuthScreen />;
 
   return (
     <div className="flex min-h-screen bg-[#090B10] text-[#F4F7FB] font-sans antialiased relative">
