@@ -1,0 +1,30 @@
+{
+  "zip": "py_038_query_string_logging.zip",
+  "sha256": "ef31ae45df1768cc35c218762cc261282fdfd10b59eb60e64d1159b668c91167",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 593,
+      "sha256": "98789285ee57ab115059007293e018d125094dd94cec893ee7dc879cacdd28d0",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 90,
+      "sha256": "26fca2c4069eb42ea331d72add7f26505e1ac30048f674ae9edc7e4c0b37e541",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 264,
+      "sha256": "6677bc401c991a7b35aa3295694ce322d1f191876c2f9d634754a440eafa4425",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "73fb365065be5f54d66cbfc7d896797d2d869cd27a084b4efd701a4a062d5f02",
+      "type": "text"
+    }
+  ]
+}

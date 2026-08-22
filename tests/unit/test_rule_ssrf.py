@@ -42,6 +42,18 @@ def test_python_route_url_parameter_reaching_http_sink_is_reported():
     assert len(_ssrf_findings(code)) == 1
 
 
+def test_python_url_parameter_reaching_http_sink_without_route_decorator_is_reported():
+    code = "def preview(url: str):\n    r = requests.get(url, timeout=4)\n    return r.text"
+
+    assert len(_ssrf_findings(code)) == 1
+
+
+def test_python_download_function_url_parameter_reaching_http_sink_is_reported():
+    code = "def download_manifest(url: str):\n    return requests.get(url, timeout=5, verify=False).text"
+
+    assert len(_ssrf_findings(code)) == 1
+
+
 def test_python_request_method_uses_second_positional_url_argument():
     assert len(_ssrf_findings("requests.request('GET', request.args['url'])")) == 1
 
@@ -70,6 +82,31 @@ def preview(url):
     if url not in ALLOWED_URLS:
         return None
     return requests.get(url)
+"""
+
+    assert _ssrf_findings(code) == []
+
+
+def test_python_plain_function_url_allowlist_guard_is_respected():
+    code = """
+ALLOWED_URLS = {'https://api.example.com/health'}
+def preview(url):
+    if url not in ALLOWED_URLS:
+        return None
+    return requests.get(url)
+"""
+
+    assert _ssrf_findings(code) == []
+
+
+def test_python_internal_retry_helper_url_parameter_is_not_reported_without_entrypoint_evidence():
+    code = """
+def fetch_until_success(url: str):
+    while True:
+        try:
+            return requests.get(url, timeout=3).json()
+        except requests.RequestException:
+            time.sleep(1)
 """
 
     assert _ssrf_findings(code) == []

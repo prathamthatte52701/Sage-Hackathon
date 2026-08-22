@@ -1,0 +1,24 @@
+{
+  "zip": "py_023_unbounded_memory_list.zip",
+  "sha256": "610b141ce4dd097df86400c32ec7040e7053fd706194eb3eb55ed44307503621",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 596,
+      "sha256": "52cc8641fd5916bcac3672c9ff3282f74b6d489d80dc6c306d1c4b49a97a2560",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 93,
+      "sha256": "4f96611f48f165a4e45be329b015e2d626960c20e02bd27758b4da54f71b3aa9",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 157,
+      "sha256": "390bdd0a1a82fd0931e5bf47414d633c72bba95ee5c86735eb80fc659c572009",
+      "type": "text"
+    }
+  ]
+}

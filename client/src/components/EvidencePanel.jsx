@@ -39,37 +39,47 @@ export default function EvidencePanel({
   const lineNum = finding.line || finding.start_line;
   const severity = (finding.severity || "high").toLowerCase();
   
-  const isDeterministic = finding.source === "AST" || finding.is_deterministic || Boolean(finding.line);
+  const isDeterministic =
+    finding.deterministic_evidence === true ||
+    finding.is_deterministic === true ||
+    finding.source === "deterministic" ||
+    finding.source === "AST" ||
+    String(finding.evidence_type || "").startsWith("deterministic") ||
+    String(finding.evidence_type || "").startsWith("ast_") ||
+    String(finding.evidence_type || "").startsWith("literal_");
 
   // Dynamic evidence chain items derived strictly from API finding properties
   const evidenceChain = [];
-  if (finding.source_variable || finding.entry_point || finding.source) {
-    evidenceChain.push({ label: "SOURCE", detail: finding.source_variable || finding.entry_point || finding.source });
+  if (finding.source_variable || finding.entry_point) {
+    evidenceChain.push({ label: "SOURCE", detail: finding.source_variable || finding.entry_point });
   }
   if (finding.variable || finding.param || finding.symbol) {
     evidenceChain.push({ label: "VARIABLE", detail: finding.variable || finding.param || finding.symbol });
   }
-  if (finding.evidence_snippet || finding.query_snippet || finding.snippet || finding.code_context) {
+  if (finding.evidence || finding.evidence_snippet || finding.query_snippet || finding.snippet || finding.code_context) {
     evidenceChain.push({
-      label: "EXPRESSION",
-      detail: (finding.evidence_snippet || finding.query_snippet || finding.snippet || finding.code_context).trim(),
+      label: "EVIDENCE",
+      detail: (finding.evidence || finding.evidence_snippet || finding.query_snippet || finding.snippet || finding.code_context).trim(),
     });
   } else if (lineNum) {
     evidenceChain.push({ label: "LOCATION", detail: `Line ${lineNum} in ${filePath}` });
   }
-  if (finding.sink || finding.target_sink || finding.rule) {
-    evidenceChain.push({ label: "SINK", detail: finding.sink || finding.target_sink || finding.rule });
+  if (finding.sink || finding.target_sink) {
+    evidenceChain.push({ label: "SINK", detail: finding.sink || finding.target_sink });
+  }
+  if (finding.rule_id || finding.cwe) {
+    evidenceChain.push({ label: "RULE", detail: finding.rule_id || finding.cwe });
   }
 
   // Engineering standards dynamic binding
-  const cweCode = finding.cwe || finding.standard || finding.rule_id || (title.toLowerCase().includes("sql") ? "CWE-89" : "CWE-Security");
+  const cweCode = finding.cwe || finding.standard || finding.rule_id || "CWE mapping unavailable";
   const impactText = finding.description || finding.impact || finding.message || "Potential vulnerability detected during codebase scan.";
   const recommendationText =
     finding.fix_suggestion ||
     finding.recommendation ||
     finding.suggested_fix ||
     finding.remediation ||
-    "Review the highlighted evidence and apply the secure pattern for this finding.";
+    "Curated guidance unavailable.";
 
   return (
     <div className="cm-card border-[#232936] bg-[#10131A] overflow-y-auto h-full p-5 space-y-6">
@@ -92,7 +102,7 @@ export default function EvidencePanel({
 
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#7C8CFF] bg-[#7C8CFF]/10 px-2 py-0.5 rounded border border-[#7C8CFF]/20">
             <CheckCircle2 className="w-3 h-3 text-[#36D399]" />
-            <span>{isDeterministic ? "Deterministic AST" : "AI Grounded"}</span>
+            <span>{isDeterministic ? "Deterministic Evidence" : "Grounded Evidence"}</span>
           </div>
         </div>
 

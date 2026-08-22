@@ -122,6 +122,30 @@ async def test_exact_detector_rule_id_retrieves_matching_detector_knowledge(monk
 
     assert result["records"][0]["rule_id"] == "js_numeric_coercion_default"
     assert result["records"][0]["retrieval_method"] == "exact_rule"
+    assert result["mode"] == "exact_rule_only"
+
+
+@pytest.mark.asyncio
+async def test_exact_detector_rule_id_never_adds_semantic_wrong_family_guidance(monkeypatch):
+    monkeypatch.setattr(retrieval, "get_db", lambda: _FakeDb([
+        {"rule_id": "sql_concat", "title": "SQL injection guidance", "score": 0.99}
+    ]))
+
+    async def fake_embed(text):
+        return [0.1, 0.2, 0.3]
+
+    monkeypatch.setattr(retrieval, "embed_text", fake_embed)
+
+    result = await retrieve_knowledge(
+        "RULE: ssrf_untrusted_url\nEVIDENCE: requests.get(url)",
+        language="python",
+        category="security",
+        top_k=3,
+        exact_rule_id="ssrf_untrusted_url",
+    )
+
+    assert result["mode"] == "exact_rule_only"
+    assert [record["rule_id"] for record in result["records"]] == ["ssrf_untrusted_url"]
 
 
 @pytest.mark.asyncio

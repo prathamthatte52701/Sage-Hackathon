@@ -1,0 +1,24 @@
+{
+  "zip": "py_003_sql_injection.zip",
+  "sha256": "1bfcfc6f0fe16d7f1a4f2ab298cade9fcbb1c875f9d4bf66d0e5f84db7648b3b",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 554,
+      "sha256": "23e8371521607c0c122d554961e1d8a4705d80225086a1eb828bb74e8192d637",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 75,
+      "sha256": "ef6cc761db6045435d8f612c811a07baa1d93e3262387cb431a6a0cba9e3a80b",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 173,
+      "sha256": "687477935f70528e0af9a378b2d0e478b014035abb0449912025365fad729160",
+      "type": "text"
+    }
+  ]
+}

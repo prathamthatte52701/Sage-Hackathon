@@ -1,0 +1,30 @@
+{
+  "zip": "py_011_missing_admin_auth.zip",
+  "sha256": "e5edfffc92e66ef059e3dabdc23a752999949c12048e800db2db062fd1cb69fb",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 595,
+      "sha256": "082702f1273e755ea3a597716400977e74c9aa9896992c3e010c9e81130a16b2",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 88,
+      "sha256": "3cc183798d063a8170c14d3ee0cef47ddf79fb3a8ee8aa14c5cfeb74f8d2d943",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 218,
+      "sha256": "f50d87515a041fbf3564210b5b5b3866f9206a94f837d9748f6ab6cff18e8a91",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "73fb365065be5f54d66cbfc7d896797d2d869cd27a084b4efd701a4a062d5f02",
+      "type": "text"
+    }
+  ]
+}

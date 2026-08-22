@@ -1,0 +1,24 @@
+{
+  "zip": "py_026_money_float_precision.zip",
+  "sha256": "b9cf1c2ca8e463b08aedb02af823afff53027f2fa90f495c4b3b5e926d775533",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 615,
+      "sha256": "a50455ebe1a4105a7bf59f2f3b46259fa236a6a9b8150056455621421772e48a",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 95,
+      "sha256": "49c3af7ca960f42c30d475a58ef26e0a6d5ea427f3542cd4276daff559e59915",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 208,
+      "sha256": "14b9b3d817da3f1d3ffeac0011132e1c0e067c19c15e93bce64822c10ca90829",
+      "type": "text"
+    }
+  ]
+}

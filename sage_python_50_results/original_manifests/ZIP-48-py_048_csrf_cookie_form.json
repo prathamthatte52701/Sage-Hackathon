@@ -1,0 +1,30 @@
+{
+  "zip": "py_048_csrf_cookie_form.zip",
+  "sha256": "e7457ae08417765ad5ab4428aa4512ebdd95a2cd659293c9e3dcdae47f99981d",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 861,
+      "sha256": "e402f5f9eb9e69721c017a11cec601efd8965e39d34036be3ed7cca24a462245",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 103,
+      "sha256": "3d41a3eb8100aee26b96872d55d4a8895a93def0e8953a6669858c1d4a99be26",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 318,
+      "sha256": "1459657b7a0f3b8862fb705c50abb4b2c407945b023c8b83d9710ac787ea9dfe",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 13,
+      "sha256": "267e2c6c3a55cf611ef9f26a7eaee92be8667769659b6546fdfe17f40d130384",
+      "type": "text"
+    }
+  ]
+}

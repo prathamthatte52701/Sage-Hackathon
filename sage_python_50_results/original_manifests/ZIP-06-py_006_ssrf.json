@@ -1,0 +1,30 @@
+{
+  "zip": "py_006_ssrf.zip",
+  "sha256": "034a98c7c4f4391fa84743376e0deb6876e2e364422f5bddac4715f7b6a8155c",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 613,
+      "sha256": "311d758d688c77660db400633fb11c9e313dcda6eea70d2f9c309f8c8221947e",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 57,
+      "sha256": "c506c7aadc4316081412d6447a4d4a85ce12183407a80e727b9b1f6b8344eedf",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 135,
+      "sha256": "b5b6f59992f30ea5d1c9cd5304f521eaf4e4e499d6b63661c60479504a3d7070",
+      "type": "text"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 17,
+      "sha256": "4b8183101fd19f071771805a42a31fbb234a7961921fdb8b783a279755a1b5d5",
+      "type": "text"
+    }
+  ]
+}

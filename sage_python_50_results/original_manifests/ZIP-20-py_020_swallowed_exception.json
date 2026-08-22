@@ -1,0 +1,24 @@
+{
+  "zip": "py_020_swallowed_exception.zip",
+  "sha256": "83e923b24623dbcff042884c0599044d2d71336636dfd9f116b5da4bd0660470",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 566,
+      "sha256": "3fcde4b63481ebf9d87933d956083a6c4ec9706d9d5965fabc0cdbc29c84da57",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 87,
+      "sha256": "8c18beabfb15043c526f0e7cc462ee44f2e122615be2a551791e806f0285cacb",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 138,
+      "sha256": "1a89366522e418300eb26e841da6aaf8aebf12c05480e166bdf522651ae77eac",
+      "type": "text"
+    }
+  ]
+}

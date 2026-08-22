@@ -1,0 +1,24 @@
+{
+  "zip": "py_036_predictable_token.zip",
+  "sha256": "831e2305caa0d294e63e4a8fd0c961415838fa6d90345694233c39b887c108f4",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 581,
+      "sha256": "34cd30a706525618734f4199e6c1c03d6f0462d8f6aa909c441f023d45e2e5a3",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 87,
+      "sha256": "db5ba7926b3245cec5eed60ed9a9c9336dd7839adcd6347e71a3eef26cecb22a",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 151,
+      "sha256": "f6c775391f5db43656995e39f9167f597a69e60ef50d776dc80b6fd44456f365",
+      "type": "text"
+    }
+  ]
+}

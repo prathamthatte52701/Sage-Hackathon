@@ -1,0 +1,24 @@
+{
+  "zip": "py_005_path_traversal.zip",
+  "sha256": "ac868b6ed0e90742635d600cf67c85cff1dadc17e5a6f86bfa78c73729ca3846",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 559,
+      "sha256": "a660120c6bad73eea126b35fc775f8004df646585bf70db31edee31c41dd0a8e",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 77,
+      "sha256": "1a26b0405e87346681d977d3ffb2dc0cfcc938faa977a665847adba636f530d0",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 160,
+      "sha256": "1dec903d075718c310bf4f664e4dda336d10d0f4ff02795f0bd6912cbce7fb1d",
+      "type": "text"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "zip": "py_037_sensitive_token_logging.zip",
+  "sha256": "6103e3ed09c6411e600962dfa56c6ec57a4b3a7f4e5f64651960cce3999e7755",
+  "files": [
+    {
+      "path": "EXPECTED_FINDINGS.json",
+      "size": 569,
+      "sha256": "8abbb7a8bd7abf8b6ef5add61577b03637c55788729097391fd40092aab4d26b",
+      "type": "text"
+    },
+    {
+      "path": "README.md",
+      "size": 89,
+      "sha256": "e7935a2d789b0178ddfbeed32ad3d154e7f196eb71bce23532383198ce0d668a",
+      "type": "text"
+    },
+    {
+      "path": "app.py",
+      "size": 167,
+      "sha256": "2f859b0cbb80301a1a03a70d8ed2bb2ce83d4ff59429cee27875bf65bb611b47",
+      "type": "text"
+    }
+  ]
+}
