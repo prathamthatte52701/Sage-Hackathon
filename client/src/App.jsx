@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import useSessionId from "./hooks/useSessionId";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
@@ -7,19 +7,16 @@ import ProjectUpload from "./components/ProjectUpload";
 import ScanProgress from "./components/ScanProgress";
 import ProjectOverview from "./components/ProjectOverview";
 import FindingExplorer from "./components/FindingExplorer";
-import EvidencePanel from "./components/EvidencePanel";
-import CodeViewer from "./components/CodeViewer";
 import FixValidationModal from "./components/FixValidationModal";
 import ReanalysisResult from "./components/ReanalysisResult";
 import ProjectChat from "./components/ProjectChat";
 import ArchitectureView from "./components/ArchitectureView";
 import HistoryPanel from "./components/HistoryPanel";
-import CodeEditor, { MAX_CHARS, LANGUAGES } from "./components/CodeEditor";
-import ErrorBanner from "./components/ErrorBanner";
+import Background3DMatrix from "./components/Background3DMatrix";
+import CodeEditor from "./components/CodeEditor";
 import {
   reviewCode,
   generatePasteFix,
-  explainIssue,
   analyzeProject,
   scoreProject,
   transformFinding,
@@ -34,6 +31,7 @@ export default function App() {
 
   // Navigation State: "overview" | "findings" | "paste_review" | "projects" | "chat" | "architecture" | "history"
   const [activeTab, setActiveTab] = useState("projects");
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Active Project Data State
   const [projectBundle, setProjectBundle] = useState(null); // { id, project, score, sourceType }
@@ -62,18 +60,20 @@ export default function App() {
   const [historyItems, setHistoryItems] = useState([]);
 
   // Fetch History Logs
-  const refreshHistory = async () => {
+  const refreshHistory = useCallback(async () => {
     try {
       const data = await getHistory(sessionId);
       setHistoryItems(data.history || data.reviews || []);
     } catch (err) {
-      console.error("Could not fetch history:", err);
+      if (import.meta.env.DEV) {
+        console.info("History unavailable:", err.message || err);
+      }
     }
-  };
+  }, [sessionId]);
 
   useEffect(() => {
     refreshHistory();
-  }, [sessionId]);
+  }, [refreshHistory]);
 
   // Project Import Handler
   const handleProjectUploaded = async (uploadData) => {
@@ -173,7 +173,7 @@ export default function App() {
     if (!projectBundle?.project_id || !activeFixData || applyingFix) return;
     setApplyingFix(true);
     try {
-      const applyRes = await applyProjectFix(
+      await applyProjectFix(
         projectBundle.project_id,
         activeFixData.findingIndex
       );
@@ -238,27 +238,34 @@ export default function App() {
   };
 
   return (
-    <div className="flex min-h-screen bg-[#090B10] text-[#F4F7FB] font-sans antialiased">
+    <div className="flex min-h-screen bg-[#090B10] text-[#F4F7FB] font-sans antialiased relative">
+      <Background3DMatrix />
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => {
+          setActiveTab(tab);
+          setMobileSidebarOpen(false);
+        }}
         project={projectBundle}
         hasFindings={Boolean(projectBundle?.findings?.length)}
+        mobileOpen={mobileSidebarOpen}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
       />
 
       {/* Main Workspace Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden relative z-10 lg:ml-0">
         {/* Top Header */}
         <Header
           activeTab={activeTab}
           project={projectBundle}
           onReanalyze={projectBundle ? handleReanalyzeProject : null}
           reanalyzing={reanalyzing}
+          onToggleSidebar={() => setMobileSidebarOpen(true)}
         />
 
         {/* Content View Switcher */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
           {/* View: Overview */}
           {activeTab === "overview" && (
             projectBundle ? (

@@ -10,8 +10,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Terminal,
-  Activity,
   CheckCircle2,
+  Lock,
 } from "lucide-react";
 
 export default function Sidebar({
@@ -19,8 +19,11 @@ export default function Sidebar({
   setActiveTab,
   project,
   hasFindings,
+  mobileOpen = false,
+  onCloseMobile,
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const hasProject = Boolean(project);
 
   const navItems = [
     {
@@ -36,6 +39,7 @@ export default function Sidebar({
       icon: ShieldAlert,
       badge: project?.findings?.length || null,
       badgeColor: "text-[#FF5D73]",
+      disabled: !hasFindings,
     },
     {
       id: "paste_review",
@@ -51,11 +55,13 @@ export default function Sidebar({
       id: "chat",
       label: "Codebase Chat",
       icon: MessageSquareCode,
+      disabled: !hasProject,
     },
     {
       id: "architecture",
       label: "Architecture",
       icon: Network,
+      disabled: !hasProject,
     },
     {
       id: "history",
@@ -65,9 +71,20 @@ export default function Sidebar({
   ];
 
   return (
+    <>
+    {mobileOpen && (
+      <button
+        type="button"
+        aria-label="Close navigation"
+        onClick={onCloseMobile}
+        className="fixed inset-0 z-40 bg-[#090B10]/70 backdrop-blur-sm lg:hidden"
+      />
+    )}
     <aside
-      className={`h-screen sticky top-0 bg-[#090B10] border-r border-[#232936] flex flex-col justify-between transition-all duration-200 z-30 select-none ${
-        collapsed ? "w-[72px]" : "w-[220px]"
+      className={`fixed lg:sticky top-0 left-0 h-screen bg-[#090B10] border-r border-[#232936] flex flex-col justify-between transition-all duration-200 z-50 lg:z-30 select-none ${
+        collapsed ? "lg:w-[72px]" : "lg:w-[220px]"
+      } w-[220px] ${
+        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       }`}
     >
       {/* Top Header Logo */}
@@ -101,25 +118,32 @@ export default function Sidebar({
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const disabled = Boolean(item.disabled);
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                title={collapsed ? item.label : undefined}
+                onClick={() => {
+                  if (!disabled) setActiveTab(item.id);
+                }}
+                disabled={disabled}
+                title={collapsed || disabled ? disabled ? `${item.label} requires an imported project` : item.label : undefined}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
                   isActive
                     ? "bg-[#151922] text-[#F4F7FB] border border-[#232936]"
+                    : disabled
+                    ? "text-[#4B5565] cursor-not-allowed"
                     : "text-[#9AA4B2] hover:text-[#F4F7FB] hover:bg-[#10131A]"
                 }`}
               >
                 <Icon
                   className={`w-4 h-4 shrink-0 ${
-                    isActive ? "text-[#7C8CFF]" : "text-[#687386]"
+                    isActive ? "text-[#7C8CFF]" : disabled ? "text-[#343D50]" : "text-[#687386]"
                   }`}
                 />
                 {!collapsed && (
                   <div className="flex items-center justify-between w-full">
                     <span className="truncate">{item.label}</span>
+                    {disabled && <Lock className="w-3 h-3 text-[#4B5565]" />}
                     {item.badge !== null && item.badge !== undefined && (
                       <span
                         className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#10131A] border border-[#232936] ${item.badgeColor}`}
@@ -165,5 +189,6 @@ export default function Sidebar({
         </button>
       </div>
     </aside>
+    </>
   );
 }

@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle2, TrendingUp, Download, ShieldCheck, ArrowRight, RefreshCw } from "lucide-react";
+import { CheckCircle2, TrendingUp, Download, ArrowRight } from "lucide-react";
 import { fixedProjectZipUrl } from "../api/client";
 
 export default function ReanalysisResult({ result, projectId }) {
@@ -59,12 +59,14 @@ export default function ReanalysisResult({ result, projectId }) {
           <div className="text-base font-bold text-[#36D399] mt-0.5">{resolved.length || 1}</div>
         </div>
         <div className="p-2.5 rounded-lg bg-[#090B10] border border-[#232936]">
-          <div className="text-[10px] text-[#687386]">NEW ISSUES</div>
-          <div className="text-base font-bold text-[#F4F7FB] mt-0.5">{fresh.length}</div>
+          <div className="text-[10px] text-[#687386]">REMAINING</div>
+          <div className={`text-base font-bold mt-0.5 ${remaining.length ? "text-[#F4C95D]" : "text-[#36D399]"}`}>
+            {remaining.length}
+          </div>
         </div>
         <div className="p-2.5 rounded-lg bg-[#090B10] border border-[#232936]">
-          <div className="text-[10px] text-[#687386]">REGRESSIONS</div>
-          <div className="text-base font-bold text-[#36D399] mt-0.5">0</div>
+          <div className="text-[10px] text-[#687386]">NEW ISSUES</div>
+          <div className="text-base font-bold text-[#F4F7FB] mt-0.5">{fresh.length}</div>
         </div>
       </div>
 

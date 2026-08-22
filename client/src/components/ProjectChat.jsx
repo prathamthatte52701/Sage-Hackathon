@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { MessageSquareCode, Send, FileCode, ArrowRight, Loader2, Cpu, CheckCircle2 } from "lucide-react";
+import { MessageSquareCode, Send, FileCode, ArrowRight, Loader2, Cpu } from "lucide-react";
 import { chatAboutProject } from "../api/client";
 
-export default function ProjectChat({ projectId, onOpenFinding }) {
+export default function ProjectChat({ projectId }) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -15,7 +15,7 @@ export default function ProjectChat({ projectId, onOpenFinding }) {
 
   async function handleAsk(qToAsk) {
     const q = (qToAsk || question).trim();
-    if (!q || loading) return;
+    if (!q || loading || !projectId) return;
     setQuestion("");
     setLoading(true);
     try {
@@ -53,8 +53,17 @@ export default function ProjectChat({ projectId, onOpenFinding }) {
         </div>
       </div>
 
+      {!projectId && (
+        <div className="cm-card p-8 border-[#232936] bg-[#10131A] text-center space-y-2">
+          <p className="text-sm font-semibold text-[#F4F7FB]">Import a repository to start codebase chat.</p>
+          <p className="text-xs text-[#9AA4B2]">
+            The assistant answers from indexed files, findings, and call paths after analysis completes.
+          </p>
+        </div>
+      )}
+
       {/* Suggested Questions */}
-      {messages.length === 0 && (
+      {projectId && messages.length === 0 && (
         <div className="space-y-2">
           <span className="text-xs font-mono text-[#687386] uppercase tracking-wider block">
             SUGGESTED INVESTIGATIONS
@@ -115,36 +124,38 @@ export default function ProjectChat({ projectId, onOpenFinding }) {
       </div>
 
       {/* Input Form */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleAsk();
-        }}
-        className="flex gap-2"
-      >
-        <input
-          type="text"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          disabled={loading}
-          placeholder="Ask where a variable flow, query, or function is defined..."
-          className="flex-1 rounded-lg border border-[#232936] bg-[#090B10] px-4 py-3 text-sm text-[#F4F7FB] font-mono placeholder:text-[#687386] focus:border-[#7C8CFF] focus:outline-none disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={!question.trim() || loading}
-          className="cm-btn-primary px-5 py-3 text-xs shrink-0 disabled:opacity-50"
+      {projectId && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleAsk();
+          }}
+          className="flex gap-2"
         >
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <>
-              <span>Ask</span>
-              <Send className="w-3.5 h-3.5" />
-            </>
-          )}
-        </button>
-      </form>
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            disabled={loading}
+            placeholder="Ask where a variable flow, query, or function is defined..."
+            className="flex-1 rounded-lg border border-[#232936] bg-[#090B10] px-4 py-3 text-sm text-[#F4F7FB] font-mono placeholder:text-[#687386] focus:border-[#7C8CFF] focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={!question.trim() || loading}
+            className="cm-btn-primary px-5 py-3 text-xs shrink-0 disabled:opacity-50"
+          >
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <>
+                <span>Ask</span>
+                <Send className="w-3.5 h-3.5" />
+              </>
+            )}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

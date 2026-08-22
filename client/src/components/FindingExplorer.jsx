@@ -1,12 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   ShieldAlert,
   Search,
-  Filter,
-  FileCode,
   CheckCircle2,
   ChevronRight,
-  Sparkles,
 } from "lucide-react";
 import CodeViewer from "./CodeViewer";
 import EvidencePanel from "./EvidencePanel";
@@ -25,33 +22,27 @@ export default function FindingExplorer({
 
   const [severityFilter, setSeverityFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeFileContent, setActiveFileContent] = useState("");
 
   // Select first finding by default if none selected
   const activeFinding = selectedFinding || (findings.length > 0 ? findings[0] : null);
 
-  // Retrieve source code of the active finding file
-  useEffect(() => {
-    if (activeFinding && activeFinding.file) {
-      // Find file content in project.files or generate placeholder snippet
-      const matchingFile = files.find(
-        (f) => f.path === activeFinding.file || f.filename === activeFinding.file
-      );
-      if (matchingFile && matchingFile.content) {
-        setActiveFileContent(matchingFile.content);
-      } else if (activeFinding.code_context) {
-        setActiveFileContent(activeFinding.code_context);
-      } else {
-        // Construct fallback readable snippet around line if file content missing
-        setActiveFileContent(
-          `// File: ${activeFinding.file}\n// Grounded finding at line ${activeFinding.line || 42}\n\n` +
-          (activeFinding.evidence_snippet || `const user = req.query.user;\ndb.execute("SELECT * FROM users WHERE id = " + user);`)
-        );
-      }
-    } else {
-      setActiveFileContent("");
+  const activeFileContent = (() => {
+    if (!activeFinding) return "";
+
+    const filePath = activeFinding.file || activeFinding.path;
+    const matchingFile = files.find(
+      (f) => f.path === filePath || f.filename === filePath || f.name === filePath
+    );
+
+    if (matchingFile?.content) return matchingFile.content;
+    if (activeFinding.code_context) return activeFinding.code_context;
+    if (activeFinding.evidence_snippet || activeFinding.snippet) {
+      return `// File: ${filePath || "source"}\n// Line ${activeFinding.line || 1}\n\n${
+        activeFinding.evidence_snippet || activeFinding.snippet
+      }`;
     }
-  }, [activeFinding, files]);
+    return `// File: ${filePath || "source"}\n// Evidence line ${activeFinding.line || 1}`;
+  })();
 
   // Filter findings
   const filteredFindings = findings.filter((f) => {
@@ -72,9 +63,9 @@ export default function FindingExplorer({
   };
 
   return (
-    <div className="h-[calc(100vh-5rem)] grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden">
+    <div className="min-h-[calc(100vh-5rem)] lg:h-[calc(100vh-5rem)] grid grid-cols-1 lg:grid-cols-12 gap-4 p-0 sm:p-2 lg:p-4 overflow-visible lg:overflow-hidden">
       {/* COLUMN 1: Findings Sidebar List (3 cols) */}
-      <div className="lg:col-span-3 cm-card border-[#232936] bg-[#10131A] flex flex-col h-full overflow-hidden">
+      <div className="lg:col-span-3 cm-card border-[#232936] bg-[#10131A] flex flex-col h-[360px] lg:h-full overflow-hidden">
         {/* Header & Filter Controls */}
         <div className="p-3 border-b border-[#232936] space-y-2">
           <div className="flex items-center justify-between">
@@ -169,7 +160,7 @@ export default function FindingExplorer({
       </div>
 
       {/* COLUMN 2: Code Viewer / Editor Workspace (5 cols) */}
-      <div className="lg:col-span-5 h-full overflow-hidden">
+      <div className="lg:col-span-5 h-[520px] lg:h-full overflow-hidden">
         <CodeViewer
           fileContent={activeFileContent}
           filePath={activeFinding?.file}
@@ -179,7 +170,7 @@ export default function FindingExplorer({
       </div>
 
       {/* COLUMN 3: Evidence & Explanation Panel (4 cols) */}
-      <div className="lg:col-span-4 h-full overflow-hidden">
+      <div className="lg:col-span-4 h-auto lg:h-full overflow-hidden">
         <EvidencePanel
           finding={activeFinding}
           onGenerateFix={() => onGenerateFix?.(activeFinding)}

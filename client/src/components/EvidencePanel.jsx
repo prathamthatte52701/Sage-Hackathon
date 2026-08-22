@@ -2,10 +2,8 @@ import React, { useState } from "react";
 import {
   ShieldAlert,
   ArrowDown,
-  Sparkles,
   BookOpen,
   CheckCircle2,
-  Cpu,
   Layers,
   Wrench,
   HelpCircle,
@@ -35,18 +33,38 @@ export default function EvidencePanel({
     );
   }
 
-  // Parse or extract evidence details if available
-  const isDeterministic = finding.source === "AST" || finding.type?.toLowerCase().includes("sql") || Boolean(finding.line);
-  const isGrounded = finding.grounded !== false;
-  const cweCode = finding.cwe || finding.standard || (finding.title?.toLowerCase().includes("sql") ? "CWE-89" : "CWE-79");
+  // Extract dynamic attributes directly from the finding payload
+  const title = finding.title || finding.message || finding.rule || finding.type || "Security Finding";
+  const filePath = finding.file || finding.path || "source_file";
+  const lineNum = finding.line || finding.start_line;
+  const severity = (finding.severity || "high").toLowerCase();
+  
+  const isDeterministic = finding.source === "AST" || finding.is_deterministic || Boolean(finding.line);
 
-  // Sample data-flow chain representation (Specification §14)
-  const evidenceChain = [
-    { label: "SOURCE", detail: finding.source_variable || "request.query.id / user input" },
-    { label: "VARIABLE", detail: finding.variable || "userId" },
-    { label: "EXPRESSION", detail: finding.query_snippet || finding.evidence_snippet || `Line ${finding.line || 42}: ${finding.code_context || "user payload execution"}` },
-    { label: "SINK", detail: finding.sink || "database.execute(query)" },
-  ];
+  // Dynamic evidence chain items derived strictly from API finding properties
+  const evidenceChain = [];
+  if (finding.source_variable || finding.entry_point || finding.source) {
+    evidenceChain.push({ label: "SOURCE", detail: finding.source_variable || finding.entry_point || finding.source });
+  }
+  if (finding.variable || finding.param || finding.symbol) {
+    evidenceChain.push({ label: "VARIABLE", detail: finding.variable || finding.param || finding.symbol });
+  }
+  if (finding.evidence_snippet || finding.query_snippet || finding.snippet || finding.code_context) {
+    evidenceChain.push({
+      label: "EXPRESSION",
+      detail: (finding.evidence_snippet || finding.query_snippet || finding.snippet || finding.code_context).trim(),
+    });
+  } else if (lineNum) {
+    evidenceChain.push({ label: "LOCATION", detail: `Line ${lineNum} in ${filePath}` });
+  }
+  if (finding.sink || finding.target_sink || finding.rule) {
+    evidenceChain.push({ label: "SINK", detail: finding.sink || finding.target_sink || finding.rule });
+  }
+
+  // Engineering standards dynamic binding
+  const cweCode = finding.cwe || finding.standard || finding.rule_id || (title.toLowerCase().includes("sql") ? "CWE-89" : "CWE-Security");
+  const impactText = finding.description || finding.impact || finding.message || "Potential vulnerability detected during codebase scan.";
+  const recommendationText = finding.recommendation || finding.suggested_fix || finding.remediation || "Apply parameterized query execution or sanitize user input before invocation.";
 
   return (
     <div className="cm-card border-[#232936] bg-[#10131A] overflow-y-auto h-full p-5 space-y-6">
@@ -55,14 +73,16 @@ export default function EvidencePanel({
         <div className="flex items-center justify-between">
           <span
             className={`cm-badge ${
-              finding.severity === "critical"
+              severity === "critical"
                 ? "cm-badge-critical"
-                : finding.severity === "high"
+                : severity === "high"
                 ? "cm-badge-high"
-                : "cm-badge-medium"
+                : severity === "medium"
+                ? "cm-badge-medium"
+                : "cm-badge-low"
             }`}
           >
-            {finding.severity || "HIGH"}
+            {severity}
           </span>
 
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#7C8CFF] bg-[#7C8CFF]/10 px-2 py-0.5 rounded border border-[#7C8CFF]/20">
@@ -73,43 +93,45 @@ export default function EvidencePanel({
 
         <div>
           <h3 className="text-base font-bold text-[#F4F7FB] tracking-tight">
-            {finding.title || finding.type || "Security Finding"}
+            {title}
           </h3>
           <p className="text-xs font-mono text-[#687386] mt-1 truncate">
-            {finding.file}:{finding.line || 1}
+            {filePath}{lineNum ? `:${lineNum}` : ""}
           </p>
         </div>
       </div>
 
-      {/* Signature UX: Evidence Panel Data-Flow Chain (Specification §14) */}
-      <div className="space-y-3">
-        <h4 className="text-xs font-mono font-semibold text-[#7C8CFF] uppercase tracking-wider flex items-center gap-1.5">
-          <Layers className="w-3.5 h-3.5" />
-          <span>EVIDENCE CHAIN</span>
-        </h4>
+      {/* Dynamic Evidence Chain */}
+      {evidenceChain.length > 0 && (
+        <div className="space-y-3">
+          <h4 className="text-xs font-mono font-semibold text-[#7C8CFF] uppercase tracking-wider flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5" />
+            <span>EVIDENCE CHAIN</span>
+          </h4>
 
-        <div className="p-3.5 rounded-lg bg-[#090B10] border border-[#232936] space-y-2">
-          {evidenceChain.map((step, idx) => (
-            <React.Fragment key={idx}>
-              <div className="flex items-start gap-2 text-xs">
-                <span className="font-mono text-[10px] font-bold text-[#7C8CFF] bg-[#7C8CFF]/10 px-1.5 py-0.5 rounded shrink-0">
-                  {step.label}
-                </span>
-                <span className="font-mono text-[11px] text-[#F4F7FB] break-all">
-                  {step.detail}
-                </span>
-              </div>
-              {idx < evidenceChain.length - 1 && (
-                <div className="flex justify-center py-0.5 text-[#687386]">
-                  <ArrowDown className="w-3 h-3" />
+          <div className="p-3.5 rounded-lg bg-[#090B10] border border-[#232936] space-y-2">
+            {evidenceChain.map((step, idx) => (
+              <React.Fragment key={idx}>
+                <div className="flex items-start gap-2 text-xs">
+                  <span className="font-mono text-[10px] font-bold text-[#7C8CFF] bg-[#7C8CFF]/10 px-1.5 py-0.5 rounded shrink-0">
+                    {step.label}
+                  </span>
+                  <span className="font-mono text-[11px] text-[#F4F7FB] break-all">
+                    {step.detail}
+                  </span>
                 </div>
-              )}
-            </React.Fragment>
-          ))}
+                {idx < evidenceChain.length - 1 && (
+                  <div className="flex justify-center py-0.5 text-[#687386]">
+                    <ArrowDown className="w-3 h-3" />
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* "Why This Matters" Section (Specification §15) */}
+      {/* "Why This Matters" Section */}
       <div className="space-y-3">
         <h4 className="text-xs font-mono font-semibold text-[#F4C95D] uppercase tracking-wider flex items-center gap-1.5">
           <BookOpen className="w-3.5 h-3.5" />
@@ -119,10 +141,10 @@ export default function EvidencePanel({
         <div className="p-3.5 rounded-lg bg-[#090B10] border border-[#232936] space-y-3 text-xs">
           <div>
             <span className="text-[#687386] font-medium block text-[11px] uppercase tracking-wide">
-              IMPACT
+              IMPACT & RISK
             </span>
             <p className="text-[#F4F7FB] mt-0.5 leading-relaxed">
-              {finding.description || finding.impact || "Unsanitized user-controlled payload reaches sensitive query execution."}
+              {impactText}
             </p>
           </div>
 
@@ -144,7 +166,7 @@ export default function EvidencePanel({
             </div>
             {showStandardDetails && (
               <p className="text-[11px] text-[#9AA4B2] mt-2 p-2 rounded bg-[#151922] border border-[#232936]">
-                CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection'). Always use parameterized queries.
+                Standard identifier: {cweCode}. Verified against deterministic rules and source evidence.
               </p>
             )}
           </div>
@@ -154,13 +176,13 @@ export default function EvidencePanel({
               RECOMMENDED REMEDIATION
             </span>
             <p className="text-[#36D399] mt-0.5 font-mono text-[11px]">
-              {finding.recommendation || "Replace string concatenation with parameterized placeholder query arguments."}
+              {recommendationText}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Action Buttons: Generate Fix / Reason Finding (Specification §16) */}
+      {/* Action Buttons: Generate Fix / Reason Finding */}
       <div className="pt-2 space-y-2">
         <button
           onClick={onGenerateFix}

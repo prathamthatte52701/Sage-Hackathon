@@ -1,5 +1,5 @@
 import React from "react";
-import { Code, Minus, Plus } from "lucide-react";
+import { Minus, Plus } from "lucide-react";
 
 export default function DiffViewer({ beforeCode, afterCode }) {
   const beforeLines = (beforeCode || "").split("\n");

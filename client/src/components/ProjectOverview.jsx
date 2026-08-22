@@ -1,17 +1,14 @@
 import React from "react";
 import {
-  ShieldCheck,
   AlertTriangle,
   FileCode2,
-  Layers,
-  Activity,
   ArrowUpRight,
-  Sparkles,
   CheckCircle2,
-  FileCheck2,
   BarChart3,
   Cpu,
 } from "lucide-react";
+import HealthScore3DCanvas from "./HealthScore3DCanvas";
+import Card3DTilt from "./Card3DTilt";
 
 const CATEGORY_LABELS = {
   security: "Security",
@@ -55,8 +52,8 @@ export default function ProjectOverview({ project, score, onSelectFinding, onSel
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      {/* 1. Project Health Hero Banner (Specification §10) */}
-      <div className="cm-card p-6 border-[#232936] bg-[#10131A] relative overflow-hidden">
+      {/* 1. Project Health Hero Banner */}
+      <Card3DTilt className="cm-card p-6 border-[#232936] bg-[#10131A] relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           {/* Left Metadata */}
           <div className="space-y-3">
@@ -98,35 +95,31 @@ export default function ProjectOverview({ project, score, onSelectFinding, onSel
             </p>
           </div>
 
-          {/* Right Health Score Gauge */}
-          <div className="flex items-center gap-6 p-4 rounded-xl bg-[#090B10] border border-[#232936] shrink-0">
-            <div className="text-center">
-              <div className="text-4xl font-bold font-mono text-[#F4F7FB] tracking-tight">
-                {overall.toFixed(1)}
-              </div>
-              <div className="text-[11px] font-mono text-[#687386] uppercase tracking-wider mt-0.5">
-                / 100 HEALTH
-              </div>
-            </div>
-            <div className="h-10 w-px bg-[#232936]" />
-            <div className="space-y-1 text-xs">
-              <div className="text-[#9AA4B2] font-medium">Critical/High Issues:</div>
-              <div className="text-sm font-mono font-bold text-[#FF5D73]">
+          {/* Right Health Score Visual */}
+          <div className="flex items-center gap-4 sm:gap-6 p-4 rounded-xl bg-[#090B10] border border-[#232936] shrink-0">
+            <HealthScore3DCanvas score={overall} size={130} />
+            <div className="h-12 w-px bg-[#232936]" />
+            <div className="space-y-1 text-xs font-mono">
+              <div className="text-[#9AA4B2] font-medium">Critical/High:</div>
+              <div className="text-sm font-bold text-[#FF5D73]">
                 {findings.filter((f) => f.severity === "critical" || f.severity === "high").length}
+              </div>
+              <div className="text-[#36D399] text-[10px] pt-1">
+                Evidence-backed scan
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </Card3DTilt>
 
-      {/* 2. Health Score Category Breakdown (Specification §11) */}
-      <div className="cm-card p-6 border-[#232936] bg-[#10131A] space-y-4">
+      {/* 2. Health Score Category Breakdown */}
+      <Card3DTilt className="cm-card p-6 border-[#232936] bg-[#10131A] space-y-4">
         <div className="flex items-center justify-between border-b border-[#232936] pb-3">
           <h3 className="text-sm font-semibold text-[#F4F7FB] flex items-center gap-2">
             <BarChart3 className="w-4 h-4 text-[#7C8CFF]" />
             <span>PROJECT HEALTH BREAKDOWN</span>
           </h3>
-          <span className="text-xs font-mono text-[#687386]">Click category to filter evidence</span>
+          <span className="text-xs font-mono text-[#687386]">Open related evidence</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -164,12 +157,12 @@ export default function ProjectOverview({ project, score, onSelectFinding, onSel
             );
           })}
         </div>
-      </div>
+      </Card3DTilt>
 
-      {/* 3. Top Priorities & Analysis Coverage Grid (Specification §10 & §23) */}
+      {/* 3. Top Priorities & Analysis Coverage Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Top Priority Findings */}
-        <div className="lg:col-span-2 cm-card p-6 border-[#232936] bg-[#10131A] space-y-4">
+        <Card3DTilt className="lg:col-span-2 cm-card p-6 border-[#232936] bg-[#10131A] space-y-4">
           <div className="flex items-center justify-between border-b border-[#232936] pb-3">
             <h3 className="text-sm font-semibold text-[#F4F7FB] flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-[#FF5D73]" />
@@ -219,10 +212,10 @@ export default function ProjectOverview({ project, score, onSelectFinding, onSel
               ))}
             </div>
           )}
-        </div>
+        </Card3DTilt>
 
-        {/* Right 1 Col: Analysis Coverage Panel (Specification §23) */}
-        <div className="cm-card p-6 border-[#232936] bg-[#10131A] space-y-4">
+        {/* Right 1 Col: Analysis Coverage Panel */}
+        <Card3DTilt className="cm-card p-6 border-[#232936] bg-[#10131A] space-y-4">
           <div className="border-b border-[#232936] pb-3">
             <h3 className="text-sm font-semibold text-[#F4F7FB] flex items-center gap-2">
               <Cpu className="w-4 h-4 text-[#7C8CFF]" />
@@ -243,7 +236,7 @@ export default function ProjectOverview({ project, score, onSelectFinding, onSel
 
             <div className="flex justify-between py-1.5 border-b border-[#232936]/50">
               <span className="text-[#9AA4B2]">Deterministic AST scan</span>
-              <span className="text-[#36D399] font-bold">100%</span>
+              <span className="text-[#36D399] font-bold">Completed</span>
             </div>
 
             <div className="flex justify-between py-1.5 border-b border-[#232936]/50">
@@ -261,7 +254,7 @@ export default function ProjectOverview({ project, score, onSelectFinding, onSel
               All findings are cross-checked against AST rules and grounded source lines.
             </p>
           </div>
-        </div>
+        </Card3DTilt>
       </div>
     </div>
   );

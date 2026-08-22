@@ -1,13 +1,9 @@
 import React from "react";
 import {
-  Wrench,
   CheckCircle2,
   ShieldCheck,
-  XCircle,
-  AlertTriangle,
   Zap,
   ArrowRight,
-  Sparkles,
 } from "lucide-react";
 import DiffViewer from "./DiffViewer";
 
@@ -82,23 +78,23 @@ export default function FixValidationModal({
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2 font-mono text-xs">
-            <div className="flex items-center gap-2 text-[#36D399]">
+            <div className={`flex items-center gap-2 ${patchValidation.target_found ? "text-[#36D399]" : "text-[#9AA4B2]"}`}>
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>Target line found</span>
             </div>
-            <div className="flex items-center gap-2 text-[#36D399]">
+            <div className={`flex items-center gap-2 ${patchValidation.target_unique ? "text-[#36D399]" : "text-[#9AA4B2]"}`}>
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>Target is unique</span>
             </div>
-            <div className="flex items-center gap-2 text-[#36D399]">
+            <div className={`flex items-center gap-2 ${patchValidation.source_unchanged ? "text-[#36D399]" : "text-[#9AA4B2]"}`}>
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>Source unchanged</span>
             </div>
-            <div className="flex items-center gap-2 text-[#36D399]">
+            <div className={`flex items-center gap-2 ${patchValidation.patch_no_overlap ? "text-[#36D399]" : "text-[#9AA4B2]"}`}>
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>No patch overlap</span>
             </div>
-            <div className="flex items-center gap-2 text-[#36D399]">
+            <div className={`flex items-center gap-2 ${patchValidation.diff_validated ? "text-[#36D399]" : "text-[#9AA4B2]"}`}>
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>Diff validated</span>
             </div>

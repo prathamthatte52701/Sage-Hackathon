@@ -6,7 +6,6 @@ export default function CodeViewer({
   fileContent,
   filePath,
   highlightLine,
-  language = "javascript",
   height = "600px",
 }) {
   const editorRef = useRef(null);
