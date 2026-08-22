@@ -38,6 +38,64 @@ async def enqueue_analysis(
         return job or {"_id": job_id, "status": "queued"}, True
 
 
+# If Uvicorn crashes/restarts mid-analysis, Mongo is left holding a job
+# doc stuck at status="queued"/"running" forever -- _running_jobs (this
+# process's only record of which task actually owns it) is gone, and
+# nothing will ever transition that doc again. A brand-new process has an
+# empty _running_jobs, so "not in the registry" is an unambiguous signal
+# in this single-process deployment, not a heuristic -- the only thing
+# that ever clears status is _run_job's own completion handler above. The
+# grace period exists only to avoid a false-positive on the couple of
+# awaits between create_analysis_job() and the registry write in
+# enqueue_analysis() above.
+STALE_JOB_GRACE_SECONDS = 30
+
+
+def _job_age_seconds(job: dict) -> float | None:
+    started = job.get("started_at") or job.get("created_at")
+    if started is None:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - started).total_seconds()
+
+
+async def get_analysis_job_with_recovery(job_id: str, owner_user_id: str) -> dict | None:
+    """Same contract as db.mongo.get_owned_analysis_job, but detects a job
+    this process has abandoned (crash/restart while it was in flight) and
+    corrects it to "failed" instead of leaving the frontend polling a job
+    that can now never complete."""
+    job = await get_owned_analysis_job(job_id, owner_user_id)
+    if job is None or job.get("status") not in {"queued", "running"}:
+        return job
+
+    key = (owner_user_id, job.get("project_id", ""))
+    if _running_jobs.get(key) == job_id:
+        return job  # a live task in this process genuinely owns it
+
+    age = _job_age_seconds(job)
+    if age is not None and age < STALE_JOB_GRACE_SECONDS:
+        return job
+
+    interrupted_at = datetime.now(timezone.utc)
+    await update_analysis_job(
+        job_id,
+        owner_user_id,
+        {
+            "status": "failed",
+            "completed_at": interrupted_at,
+            "error": "interrupted",
+            "result": {
+                "error": "Analysis interrupted because the server restarted. Retry analysis.",
+            },
+        },
+    )
+    job["status"] = "failed"
+    job["error"] = "interrupted"
+    job["completed_at"] = interrupted_at
+    return job
+
+
 async def _run_job(job_id: str, key: tuple[str, str], work: Callable[[str], Awaitable[dict]]) -> None:
     try:
         await update_analysis_job(job_id, key[0], {"status": "running", "started_at": datetime.now(timezone.utc)})

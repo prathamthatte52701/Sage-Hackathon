@@ -145,15 +145,11 @@ async def test_missing_choices_in_response_is_retried_not_crashed(monkeypatch):
 async def test_timeout_is_retried_then_raises_after_exhausting_attempts(monkeypatch):
     fake = _patch_client(
         monkeypatch,
-        [
-            httpx.TimeoutException("timed out"),
-            httpx.TimeoutException("timed out"),
-            httpx.TimeoutException("timed out"),
-        ],
+        [httpx.TimeoutException("timed out")] * groq_client.MAX_ATTEMPTS,
     )
     with pytest.raises(GroqUnavailableError):
         await call_groq([{"role": "user", "content": "hi"}])
-    assert fake.calls == 3  # MAX_ATTEMPTS, bounded -- not infinite
+    assert fake.calls == groq_client.MAX_ATTEMPTS  # bounded -- not infinite
 
 
 @pytest.mark.asyncio

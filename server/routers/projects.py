@@ -13,7 +13,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_project, get_owned_project_file, get_owned_project_metadata, save_project, update_owned_finding, update_owned_project
+from db.mongo import fetch_binary_content, get_owned_project, get_owned_project_file, get_owned_project_metadata, save_project, update_owned_finding, update_owned_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
@@ -29,7 +29,7 @@ from services.retrieval import retrieve_relevant_files, retrieve_semantic_projec
 from services.security_rules import to_closed_world_findings
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
-from services.analysis_jobs import enqueue_analysis
+from services.analysis_jobs import enqueue_analysis, get_analysis_job_with_recovery
 
 router = APIRouter()
 
@@ -646,7 +646,7 @@ async def analyze_project_by_id(project_id: str, current_user: dict = Depends(ge
 
 @router.get("/analysis-jobs/{job_id}")
 async def get_analysis_job(job_id: str, current_user: dict = Depends(get_request_user)):
-    job = await get_owned_analysis_job(job_id, current_user["_id"])
+    job = await get_analysis_job_with_recovery(job_id, current_user["_id"])
     if job is None:
         return JSONResponse(status_code=404, content={"error": "Analysis job not found"})
     return job

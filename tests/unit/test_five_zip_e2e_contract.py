@@ -141,7 +141,7 @@ def e2e_store(monkeypatch):
     monkeypatch.setattr(projects_router, "update_owned_finding", store.update_owned_finding)
     monkeypatch.setattr(projects_router, "fetch_binary_content", store.fetch_binary_content)
     monkeypatch.setattr(projects_router, "enqueue_analysis", store.enqueue_analysis)
-    monkeypatch.setattr(projects_router, "get_owned_analysis_job", store.get_owned_analysis_job)
+    monkeypatch.setattr(projects_router, "get_analysis_job_with_recovery", store.get_owned_analysis_job)
 
     async def no_ai_finding_creation(project: dict) -> dict:
         coverage = {

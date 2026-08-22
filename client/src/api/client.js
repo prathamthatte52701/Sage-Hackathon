@@ -6,7 +6,13 @@ const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 // /api/auth/login is actually sent on every subsequent request -- without
 // it the browser drops the cookie on cross-origin requests (client :5173,
 // server :8000 in dev) and every protected endpoint would 401.
-const api = axios.create({ baseURL, timeout: 30000, withCredentials: true });
+// Backend's call_groq() budget is 2 attempts x 10s + backoff (~20.5s worst
+// case), and every AI endpoint here retries once on a malformed-JSON
+// response (a second full call_groq), so the real backend worst case for
+// one AI-backed request is ~41s. This default must stay comfortably above
+// that -- see server/services/groq_client.py for the backend side of this
+// contract.
+const api = axios.create({ baseURL, timeout: 45000, withCredentials: true });
 
 // Extracts a human-readable message from any axios error shape we might get back:
 // backend's {error: string}, FastAPI/Pydantic's {detail: ...}, network failure, or unknown.
@@ -256,7 +262,7 @@ export async function stopFixAll(projectId) {
 
 export async function runHackerLens(projectId) {
   try {
-    const res = await api.post(`/api/projects/${projectId}/hacker-lens`, {}, { timeout: 45000 });
+    const res = await api.post(`/api/projects/${projectId}/hacker-lens`, {}, { timeout: 60000 });
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Hacker Mode analysis failed. Please retry."));

@@ -7,8 +7,17 @@ import httpx
 from config import GROQ_API_KEYS, GROQ_API_URL, GROQ_MODEL
 
 COOLDOWN_SECONDS = 120
-TIMEOUT_SECONDS = 20
-MAX_ATTEMPTS = 3
+# Every caller in this codebase that gets a malformed-JSON response retries
+# with a second full call_groq() invocation on top of this (reasoning_engine,
+# hacker_lens, brutal_audit) -- so the REAL worst case for one logical AI
+# operation is roughly 2x a single call_groq() budget. At the old
+# TIMEOUT_SECONDS=20/MAX_ATTEMPTS=3 (~61.5s per call_groq call), that made
+# the true worst case ~123s against frontend timeouts of 45-60s: the backend
+# could still be retrying long after the browser had already given up and
+# shown an error. Tightened so 2x a single call_groq() budget stays
+# comfortably under every frontend timeout in this app.
+TIMEOUT_SECONDS = 10
+MAX_ATTEMPTS = 2  # one primary attempt, one retry on a transient failure
 # GROQ_MODEL (openai/gpt-oss-120b) is a reasoning model: hidden chain-of-thought
 # tokens are billed against max_tokens before any "content" is emitted, and at
 # default reasoning effort that CoT is unbounded -- observed eating all 2000

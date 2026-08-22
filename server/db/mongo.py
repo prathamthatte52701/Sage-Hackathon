@@ -12,6 +12,12 @@ _client = None
 db = None
 fs_bucket = None
 
+# A 5000-file project calling get_owned_project() must not open 5000
+# simultaneous GridFS download streams -- that's the exact "thousands of
+# concurrent connections" crash/OOM vector. Bounded to a small, tested-safe
+# concurrency instead.
+GRIDFS_MAX_CONCURRENCY = 12
+
 
 def _ensure_client() -> None:
     """Lazily construct the Motor client on first real use, inside whatever
@@ -31,7 +37,17 @@ def _ensure_client() -> None:
     global _client, db, fs_bucket
     if _client is not None or not MONGO_URL:
         return
-    _client = AsyncIOMotorClient(MONGO_URL, tlsCAFile=certifi.where())
+    # Without explicit timeouts, a transient Atlas/network hiccup at startup
+    # (or mid-request) hangs the driver indefinitely instead of failing
+    # fast with a clear error -- these are the standard PyMongo/Motor knobs
+    # for that, not new infrastructure.
+    _client = AsyncIOMotorClient(
+        MONGO_URL,
+        tlsCAFile=certifi.where(),
+        serverSelectionTimeoutMS=10_000,
+        connectTimeoutMS=10_000,
+        socketTimeoutMS=30_000,
+    )
     db = _client[MONGO_DB_NAME]
     fs_bucket = AsyncIOMotorGridFSBucket(db)
 
@@ -123,20 +139,37 @@ async def delete_file_content(content_ref: str) -> None:
     await _require_fs_bucket().delete(ObjectId(content_ref))
 
 
-async def hydrate_file_content(files: list[dict]) -> None:
-    """Fetches every listed file's content from GridFS concurrently and sets
-    it back onto each entry's "content" key, in place - one batched round
-    trip instead of one-at-a-time, since a sequential per-file fetch is the
-    real cost at project sizes in the thousands of files. Callers that don't
-    need file text (e.g. scoring, which only reads findings/tests/configs)
-    should skip calling this entirely - it's not free.
+async def hydrate_selected_files(
+    files: list[dict], paths: set[str] | None = None, max_concurrency: int = GRIDFS_MAX_CONCURRENCY
+) -> None:
+    """Fetches GridFS content for the given paths only (every file with a
+    content_ref when paths is None), bounded to max_concurrency simultaneous
+    reads, and sets it back onto each entry's "content" key in place.
+
+    The bound is what makes this safe at any project size: `asyncio.gather`
+    over every file in a 5000-file project opens 5000 simultaneous GridFS
+    download streams, which is a real crash/OOM vector, not a theoretical
+    one. Callers that don't need file text (e.g. scoring, which only reads
+    findings/tests/configs) should skip calling this entirely - it's not free.
     """
-    targets = [f for f in files if f.get("content_ref")]
+    targets = [f for f in files if f.get("content_ref") and (paths is None or f.get("path") in paths)]
     if not targets:
         return
-    contents = await asyncio.gather(*(fetch_file_content(f["content_ref"]) for f in targets))
-    for file_entry, content in zip(targets, contents):
-        file_entry["content"] = content
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _fetch(entry: dict) -> None:
+        async with semaphore:
+            entry["content"] = await fetch_file_content(entry["content_ref"])
+
+    await asyncio.gather(*(_fetch(entry) for entry in targets))
+
+
+async def hydrate_file_content(files: list[dict], max_concurrency: int = GRIDFS_MAX_CONCURRENCY) -> None:
+    """Full hydration (every file), but bounded -- for the call sites that
+    genuinely need every file's content, e.g. rebuilding the download ZIP
+    or running the deterministic scanner. Prefer hydrate_selected_files
+    wherever only a handful of files are actually needed."""
+    await hydrate_selected_files(files, paths=None, max_concurrency=max_concurrency)
 
 
 async def _replace_content_with_refs(files: list[dict], project_id_hint: str = "") -> list[str]:
