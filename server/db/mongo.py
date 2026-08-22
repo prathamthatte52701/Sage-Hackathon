@@ -57,22 +57,22 @@ def _require_fs_bucket():
     return fs_bucket
 
 
-async def save_review(code: str, language: str, issues: list, summary: str, session_id: str):
+async def save_review(code: str, language: str, issues: list, summary: str, owner_user_id: str):
     database = _require_db()
     doc = {
         "code_snippet": code,
         "language": language,
         "issues": issues,
         "summary": summary,
-        "session_id": session_id,
+        "owner_user_id": owner_user_id,
         "created_at": datetime.now(timezone.utc),
     }
     await database.reviews.insert_one(doc)
 
 
-async def get_history(session_id: str):
+async def get_history(owner_user_id: str):
     database = _require_db()
-    cursor = database.reviews.find({"session_id": session_id}).sort("created_at", -1).limit(20)
+    cursor = database.reviews.find({"owner_user_id": owner_user_id}).sort("created_at", -1).limit(20)
     results = []
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])
@@ -129,16 +129,26 @@ async def _replace_content_with_refs(files: list[dict], project_id_hint: str = "
             del file_entry["content"]
 
 
-async def save_project(project: dict, session_id: str) -> str:
+async def save_project(project: dict, session_id: str, owner_user_id: str) -> str:
     database = _require_db()
     project_copy = copy.deepcopy(project)  # don't mutate caller's dict
     await _replace_content_with_refs(project_copy.get("files", []))
-    doc = {**project_copy, "session_id": session_id, "created_at": datetime.now(timezone.utc)}
+    doc = {
+        **project_copy,
+        "session_id": session_id,
+        "owner_user_id": owner_user_id,
+        "created_at": datetime.now(timezone.utc),
+    }
     result = await database.projects.insert_one(doc)
     return str(result.inserted_id)
 
 
-async def get_project(project_id: str):
+async def get_owned_project(project_id: str, owner_user_id: str):
+    """The only project fetch routers should use: id and ownership are checked
+    in the same query, so there's no separate "fetch, then compare owner"
+    step a route can forget. Returns None for a bad id, a missing project, OR
+    someone else's project -- identical to "not found" from the caller's
+    perspective, which is what keeps a 404 from leaking existence."""
     from bson.errors import InvalidId
     from bson import ObjectId
 
@@ -148,14 +158,14 @@ async def get_project(project_id: str):
     except InvalidId:
         return None
 
-    doc = await database.projects.find_one({"_id": object_id})
+    doc = await database.projects.find_one({"_id": object_id, "owner_user_id": owner_user_id})
     if doc:
         doc["_id"] = str(doc["_id"])
         await hydrate_file_content(doc.get("files", []))
     return doc
 
 
-async def update_project(project_id: str, updates: dict):
+async def update_owned_project(project_id: str, owner_user_id: str, updates: dict):
     from bson.errors import InvalidId
     from bson import ObjectId
 
@@ -170,4 +180,47 @@ async def update_project(project_id: str, updates: dict):
     except InvalidId:
         return
 
-    await database.projects.update_one({"_id": object_id}, {"$set": updates})
+    await database.projects.update_one({"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates})
+
+
+async def create_user(email: str, password_hash: str) -> str:
+    """Raises pymongo.errors.DuplicateKeyError if the unique email index rejects it."""
+    database = _require_db()
+    doc = {
+        "email": email,
+        "password_hash": password_hash,
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = await database.users.insert_one(doc)
+    return str(result.inserted_id)
+
+
+async def get_user_by_email(email: str):
+    database = _require_db()
+    doc = await database.users.find_one({"email": email})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def get_user_by_id(user_id: str):
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(user_id)
+    except InvalidId:
+        return None
+    doc = await database.users.find_one({"_id": object_id})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def ensure_indexes() -> None:
+    """Called once at app startup. Safe to call repeatedly (create_index is
+    idempotent on an unchanged spec)."""
+    database = _require_db()
+    await database.users.create_index("email", unique=True)
+    await database.projects.create_index("owner_user_id")

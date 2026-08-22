@@ -70,7 +70,10 @@ def _detected_themes(findings: list[Issue]) -> set[str]:
 
 
 async def _run(code: str, language: str = "javascript") -> list[Issue]:
-    response = await review(ReviewRequestIn(code=code, language=language, session_id="benchmark-test"))
+    response = await review(
+        ReviewRequestIn(code=code, language=language, session_id="benchmark-test"),
+        current_user={"_id": "test-user"},
+    )
     return response.deterministic_findings + response.ai_quality_review
 
 

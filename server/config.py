@@ -11,6 +11,15 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MONGO_URL = os.getenv("MONGO_URL", "")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "code_reviewer")
 
+# No fallback: a guessable default here would let auth run "successfully"
+# with a forgeable session secret. auth.py raises at first real use if unset.
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60") or "60")
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() != "false"
+
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+
 KNOWLEDGE_COLLECTION = os.getenv("KNOWLEDGE_COLLECTION", "sage_knowledge")
 KNOWLEDGE_VECTOR_INDEX = os.getenv("KNOWLEDGE_VECTOR_INDEX", "sage_knowledge_vector_index")
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "")

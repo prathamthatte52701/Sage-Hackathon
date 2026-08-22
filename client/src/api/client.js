@@ -2,7 +2,11 @@ import axios from "axios";
 
 const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-const api = axios.create({ baseURL, timeout: 30000 });
+// withCredentials: true is required so the HttpOnly session cookie set by
+// /api/auth/login is actually sent on every subsequent request -- without
+// it the browser drops the cookie on cross-origin requests (client :5173,
+// server :8000 in dev) and every protected endpoint would 401.
+const api = axios.create({ baseURL, timeout: 30000, withCredentials: true });
 
 // Extracts a human-readable message from any axios error shape we might get back:
 // backend's {error: string}, FastAPI/Pydantic's {detail: ...}, network failure, or unknown.
@@ -16,6 +20,37 @@ function toFriendlyMessage(err, fallback) {
   if (err?.code === "ECONNABORTED") return "The request timed out. Please try again.";
   if (!err?.response) return "Could not reach the server. Is the backend running?";
   return fallback;
+}
+
+export async function signup(email, password) {
+  try {
+    const res = await api.post("/api/auth/signup", { email, password });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not create account. Please try again."));
+  }
+}
+
+export async function login(email, password) {
+  try {
+    const res = await api.post("/api/auth/login", { email, password });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Login failed. Please try again."));
+  }
+}
+
+export async function logout() {
+  try {
+    await api.post("/api/auth/logout");
+  } catch {
+    // best-effort -- the client clears its own auth state regardless
+  }
+}
+
+export async function getMe() {
+  const res = await api.get("/api/auth/me");
+  return res.data;
 }
 
 export async function reviewCode(code, language, sessionId) {

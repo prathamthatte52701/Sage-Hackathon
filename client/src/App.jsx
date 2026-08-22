@@ -20,6 +20,8 @@ import {
 import useSessionId from "./hooks/useSessionId";
 import { LANGUAGES, MAX_CHARS } from "./components/CodeEditor";
 import ReanalysisResult from "./components/ReanalysisResult";
+import AuthScreen from "./components/AuthScreen";
+import { useAuth } from "./context/AuthContext";
 
 const NAV = ["Overview", "Analyze", "Findings", "Ask AI", "History"];
 const SEVERITIES = ["critical", "high", "medium", "low"];
@@ -197,6 +199,7 @@ function detectSnippetLanguage(code, selectedLanguage) {
 }
 
 function AppShell({ activeView, setActiveView, project, score, sourceType, children }) {
+  const { user, logout } = useAuth();
   const meta = getMeta(project);
   const findings = project?.findings || [];
   const hasProject = Boolean(project);
@@ -250,7 +253,14 @@ function AppShell({ activeView, setActiveView, project, score, sourceType, child
 
         <div className="absolute bottom-4 left-4 right-4 rounded-xl bg-black/20 p-3">
           <p className="sage-mono text-[10px] uppercase tracking-[0.16em] text-[var(--sage-accent)]">Systems operational</p>
-          <p className="mt-1 truncate text-xs text-[var(--sage-text-muted)]">{meta.name || "No active project"}</p>
+          <p className="mt-1 truncate text-xs text-[var(--sage-text-muted)]">{user?.email || meta.name || "No active project"}</p>
+          <button
+            type="button"
+            onClick={() => logout()}
+            className="mt-2 w-full rounded-md border border-white/10 py-1 text-[11px] text-[var(--sage-text-muted)] hover:text-[var(--sage-text-secondary)]"
+          >
+            Log out
+          </button>
         </div>
       </aside>
 
@@ -1274,7 +1284,7 @@ function PasteReviewResults({ result, code, setCode, language, sessionId, setRev
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
-  const countLine = ["critical", "medium", "low"]
+  const countLine = SEVERITIES
     .filter((key) => counts[key])
     .map((key) => `${counts[key]} ${key[0].toUpperCase()}${key.slice(1)}`)
     .join(" · ");
@@ -1397,6 +1407,12 @@ function PasteReviewResults({ result, code, setCode, language, sessionId, setRev
   );
 }
 
+const FINDINGS_PAGE_SIZE = 5;
+
+function defaultSeverityFor(counts) {
+  return SEVERITIES.find((sev) => counts[sev] > 0) || null;
+}
+
 function ReviewSection({
   title,
   empty,
@@ -1410,40 +1426,112 @@ function ReviewSection({
   onExplain,
   onApplyFix,
 }) {
+  const counts = useMemo(() => findingCounts(issues), [issues]);
+  const [activeSeverity, setActiveSeverity] = useState(() => defaultSeverityFor(counts));
+  const [page, setPage] = useState(1);
+
+  // Findings can shrink in place (Apply Fix + Reanalyze) without this
+  // section remounting -- if the selected severity ran out, fall back to
+  // the highest remaining one instead of showing an empty tab.
+  useEffect(() => {
+    if (activeSeverity && counts[activeSeverity] > 0) return;
+    setActiveSeverity(defaultSeverityFor(counts));
+    setPage(1);
+  }, [counts, activeSeverity]);
+
+  function selectSeverity(severity) {
+    setActiveSeverity(severity);
+    setPage(1);
+  }
+
+  // Carry each issue's original index (used to key fixes/states/explanations,
+  // set by the caller before filtering) through the severity/page split so
+  // Generate Fix / Apply Fix keep operating on the correct finding.
+  const indexed = useMemo(() => issues.map((issue, index) => ({ issue, index })), [issues]);
+  const visible = useMemo(
+    () => indexed.filter(({ issue }) => (issue.severity || "low") === activeSeverity),
+    [indexed, activeSeverity]
+  );
+  const totalPages = Math.max(1, Math.ceil(visible.length / FINDINGS_PAGE_SIZE));
+  const page_ = Math.min(page, totalPages);
+  const pageItems = visible.slice((page_ - 1) * FINDINGS_PAGE_SIZE, page_ * FINDINGS_PAGE_SIZE);
+
   return (
     <Panel className="p-5">
       <p className="sage-mono text-[11px] uppercase tracking-[0.18em] text-[var(--sage-text-muted)]">{title}</p>
-      <div className="mt-4 space-y-3">
-        {issues.length > 0 ? (
-          issues.map((issue, index) => (
-            <FindingReviewCard
-              key={`${issue.issue}-${index}`}
-              issue={issue}
-              source={issue.source}
-              index={index}
-              fix={fixes[`${issue.source}-${index}`]}
-              state={states[`${issue.source}-${index}`]}
-              applyDisabledByOverlap={hasOverlappingGeneratedPatch(`${issue.source}-${index}`, fixes[`${issue.source}-${index}`], fixes)}
-              explanation={explanations[`${issue.source}-${index}`]}
-              loading={loadingFix === `${issue.source}-${index}`}
-              explaining={loadingExplain === `${issue.source}-${index}`}
-              onGenerateFix={() => onGenerateFix?.(issue, `${issue.source}-${index}`)}
-              onExplain={() => onExplain?.(issue, `${issue.source}-${index}`)}
-              onApplyFix={() => onApplyFix?.(`${issue.source}-${index}`)}
-            />
-          ))
-        ) : (
-          <p className="rounded-lg border border-[var(--sage-border-subtle)] bg-black/20 p-3 text-sm text-[var(--sage-text-muted)]">{empty}</p>
-        )}
-      </div>
+      {issues.length > 0 ? (
+        <>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {SEVERITIES.map((sev) => (
+              <SeverityTab key={sev} severity={sev} count={counts[sev]} active={sev === activeSeverity} onSelect={() => selectSeverity(sev)} />
+            ))}
+          </div>
+          <div className="mt-4 space-y-3">
+            {pageItems.map(({ issue, index }, positionOnPage) => (
+              <FindingReviewCard
+                key={`${issue.issue}-${index}`}
+                issue={issue}
+                source={issue.source}
+                defaultOpen={positionOnPage === 0}
+                fix={fixes[`${issue.source}-${index}`]}
+                state={states[`${issue.source}-${index}`]}
+                applyDisabledByOverlap={hasOverlappingGeneratedPatch(`${issue.source}-${index}`, fixes[`${issue.source}-${index}`], fixes)}
+                explanation={explanations[`${issue.source}-${index}`]}
+                loading={loadingFix === `${issue.source}-${index}`}
+                explaining={loadingExplain === `${issue.source}-${index}`}
+                onGenerateFix={() => onGenerateFix?.(issue, `${issue.source}-${index}`)}
+                onExplain={() => onExplain?.(issue, `${issue.source}-${index}`)}
+                onApplyFix={() => onApplyFix?.(`${issue.source}-${index}`)}
+              />
+            ))}
+          </div>
+          {visible.length > FINDINGS_PAGE_SIZE && (
+            <FindingsPager page={page_} totalPages={totalPages} onPrev={() => setPage(page_ - 1)} onNext={() => setPage(page_ + 1)} />
+          )}
+        </>
+      ) : (
+        <p className="mt-4 rounded-lg border border-[var(--sage-border-subtle)] bg-black/20 p-3 text-sm text-[var(--sage-text-muted)]">{empty}</p>
+      )}
     </Panel>
+  );
+}
+
+function SeverityTab({ severity, count, active, onSelect }) {
+  const disabled = !count;
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onSelect}
+      disabled={disabled}
+      aria-pressed={active}
+      className={cx(
+        "sage-mono rounded-md border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition",
+        disabled
+          ? "cursor-not-allowed border-white/5 bg-white/[0.02] text-[var(--sage-text-muted)] opacity-40"
+          : active
+          ? severityTone(severity)
+          : "border-[var(--sage-border-subtle)] bg-black/20 text-[var(--sage-text-secondary)] hover:bg-white/[0.04]"
+      )}
+    >
+      {severity[0].toUpperCase()}{severity.slice(1)} {count}
+    </button>
+  );
+}
+
+function FindingsPager({ page, totalPages, onPrev, onNext }) {
+  return (
+    <div className="mt-4 flex items-center justify-center gap-4">
+      <button type="button" onClick={onPrev} disabled={page <= 1} className="sage-button-secondary disabled:opacity-40">&lt; Previous</button>
+      <span className="sage-mono text-xs text-[var(--sage-text-muted)]">Page {page} of {totalPages}</span>
+      <button type="button" onClick={onNext} disabled={page >= totalPages} className="sage-button-secondary disabled:opacity-40">Next &gt;</button>
+    </div>
   );
 }
 
 function FindingReviewCard({
   issue,
   source,
-  index,
+  defaultOpen,
   fix,
   state,
   applyDisabledByOverlap,
@@ -1454,7 +1542,7 @@ function FindingReviewCard({
   onExplain,
   onApplyFix,
 }) {
-  const [open, setOpen] = useState(index === 0);
+  const [open, setOpen] = useState(!!defaultOpen);
   const title = issue.issue || "Review finding";
   const sourceLabel = source === "deterministic" ? "High confidence" : "AI-assisted review";
   const problem = [issue.issue, issue.evidence ? `The highlighted code supports this finding.` : `Line ${issue.line || "?"} needs review.`].filter(Boolean);
@@ -1555,6 +1643,7 @@ function FixPanel({ fix }) {
 }
 
 export default function App() {
+  const { user, loading } = useAuth();
   const sessionId = useSessionId();
   const [activeView, setActiveView] = useState("Overview");
   const [code, setCode] = useState("");
@@ -1564,6 +1653,9 @@ export default function App() {
   const [projectBundle, setProjectBundle] = useState({ id: null, project: null, score: null, sourceType: "ZIP" });
   const [selectedFinding, setSelectedFinding] = useState(0);
   const [questionSeed, setQuestionSeed] = useState("");
+
+  if (loading) return null;
+  if (!user) return <AuthScreen />;
 
   const project = projectBundle.project ? { ...projectBundle.project, _id: projectBundle.id } : null;
 

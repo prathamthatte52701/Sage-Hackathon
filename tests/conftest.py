@@ -1,6 +1,10 @@
+import os
 import sys
 from pathlib import Path
 
+# Must be set before config.py is ever imported (it reads JWT_SECRET at
+# import time, no fallback -- a real deployment must configure its own).
+os.environ.setdefault("JWT_SECRET", "test-only-secret-do-not-use-in-production")
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "server"

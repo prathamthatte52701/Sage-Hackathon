@@ -1,13 +1,14 @@
 import json
 import re
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from db.mongo import get_history, save_review
 from knowledge.retrieval import _GENERIC_QUERY_WORDS, redact_sensitive_query_text, retrieve_knowledge
 from knowledge.seed_data import KNOWLEDGE_RECORDS
 from models.schemas import FindingTransform, Issue, PasteFixRequest, ReviewRequest, ReviewResponse
+from services.auth import get_current_user
 from services.patching import build_patch_metadata
 from services.groq_client import GroqUnavailableError, call_groq
 from services.analyzers.rules import run_rules
@@ -647,7 +648,7 @@ def dedupe_ai_findings(issues: list[Issue]) -> list[Issue]:
         identifiers = _issue_identifiers(issue)
         match_index = None
         for index, existing in enumerate(merged):
-            if abs((existing.line or 0) - (issue.line or 0)) > 2:
+            if abs((existing.line or 0) - (issue.line or 0)) > 5:
                 continue
             shared_identifier = bool(identifiers & _issue_identifiers(existing))
             existing_theme = _issue_theme_tokens(existing)
@@ -757,7 +758,7 @@ def rerank_paste_knowledge(knowledge: dict, query: str, code: str, top_k: int = 
 
 
 @router.post("/review", response_model=ReviewResponse)
-async def review(payload: ReviewRequestIn):
+async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_current_user)):
     tracer = StageTracer("paste_review")
     try:
         language_detection = detect_language(payload.code, payload.language)
@@ -821,7 +822,7 @@ async def review(payload: ReviewRequestIn):
                     effective_language,
                     [issue.model_dump() for issue in response.issues],
                     response.summary,
-                    payload.session_id,
+                    current_user["_id"],
                 )
             except Exception as exc:
                 print(f"[review] failed to save deterministic review to mongo: {exc}")
@@ -892,7 +893,7 @@ async def review(payload: ReviewRequestIn):
                 effective_language,
                 [issue.model_dump() for issue in response.issues],
                 response.summary,
-                payload.session_id,
+                current_user["_id"],
             )
         except Exception as exc:
             print(f"[review] failed to save review to mongo: {exc}")
@@ -906,7 +907,7 @@ async def review(payload: ReviewRequestIn):
 
 
 @router.post("/review/fix", response_model=FindingTransform)
-async def fix_paste_issue(payload: PasteFixRequest):
+async def fix_paste_issue(payload: PasteFixRequest, current_user: dict = Depends(get_current_user)):
     try:
         issue = dict(payload.issue or {})
         finding = {
@@ -938,9 +939,9 @@ async def fix_paste_issue(payload: PasteFixRequest):
 
 
 @router.get("/reviews/history")
-async def history(session_id: str):
+async def history(current_user: dict = Depends(get_current_user)):
     try:
-        return await get_history(session_id)
+        return await get_history(current_user["_id"])
     except Exception as exc:
         print(f"[history] unhandled error: {exc}")
         return JSONResponse(
