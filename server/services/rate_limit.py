@@ -6,9 +6,9 @@ protection against someone hammering the API. IP is the honest choice for
 a no-auth hackathon backend without pulling in a new dependency.
 
 Process-local only: buckets live in this process's memory, not shared
-across workers/replicas. Fine for a single-process hackathon deploy; a
-multi-worker/multi-instance deploy would need a shared store (e.g. Redis)
-for the limit to hold globally instead of per-process.
+across workers/replicas. Fine for the single-process Render deployment in
+render.yaml; a multi-worker/multi-instance production deployment must replace
+this implementation with a shared store such as Redis before relying on it.
 """
 
 import time
