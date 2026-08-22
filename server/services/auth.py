@@ -86,18 +86,20 @@ def decode_session_token(token: str) -> str | None:
 
 
 async def get_current_user(session_token: str | None = Cookie(default=None, alias=COOKIE_NAME)):
-    """Reusable FastAPI dependency: 401 on any missing/invalid/expired/tampered
-    token, or on a token for a user that no longer exists. Every protected
-    route pulls identity from here -- never from a request body/query param."""
-    from db.mongo import get_user_by_id  # local import: avoid a module-load cycle with db.mongo
-
-    unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    if not session_token:
-        raise unauthorized
-    user_id = decode_session_token(session_token)
-    if not user_id:
-        raise unauthorized
-    user = await get_user_by_id(user_id)
-    if user is None:
-        raise unauthorized
-    return user
+    """AUTH DISABLED: login no longer required. Uncomment the body below
+    (and the routers/auth.py + main.py registration) to re-enable it.
+    Every ownership-scoped call site still pulls current_user["_id"] from
+    here, so this stub keeps them working under one shared anonymous user."""
+    # from db.mongo import get_user_by_id  # local import: avoid a module-load cycle with db.mongo
+    #
+    # unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    # if not session_token:
+    #     raise unauthorized
+    # user_id = decode_session_token(session_token)
+    # if not user_id:
+    #     raise unauthorized
+    # user = await get_user_by_id(user_id)
+    # if user is None:
+    #     raise unauthorized
+    # return user
+    return {"_id": "anonymous", "email": "anonymous@local"}

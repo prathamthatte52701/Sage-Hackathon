@@ -22,36 +22,38 @@ function toFriendlyMessage(err, fallback) {
   return fallback;
 }
 
-export async function signup(email, password) {
-  try {
-    const res = await api.post("/api/auth/signup", { email, password });
-    return res.data;
-  } catch (err) {
-    throw new Error(toFriendlyMessage(err, "Could not create account. Please try again."));
-  }
-}
-
-export async function login(email, password) {
-  try {
-    const res = await api.post("/api/auth/login", { email, password });
-    return res.data;
-  } catch (err) {
-    throw new Error(toFriendlyMessage(err, "Login failed. Please try again."));
-  }
-}
-
-export async function logout() {
-  try {
-    await api.post("/api/auth/logout");
-  } catch {
-    // best-effort -- the client clears its own auth state regardless
-  }
-}
-
-export async function getMe() {
-  const res = await api.get("/api/auth/me");
-  return res.data;
-}
+// AUTH DISABLED: server no longer routes /api/auth/*. Uncomment together
+// with routers/auth.py and its main.py registration to bring these back.
+// export async function signup(email, password) {
+//   try {
+//     const res = await api.post("/api/auth/signup", { email, password });
+//     return res.data;
+//   } catch (err) {
+//     throw new Error(toFriendlyMessage(err, "Could not create account. Please try again."));
+//   }
+// }
+//
+// export async function login(email, password) {
+//   try {
+//     const res = await api.post("/api/auth/login", { email, password });
+//     return res.data;
+//   } catch (err) {
+//     throw new Error(toFriendlyMessage(err, "Login failed. Please try again."));
+//   }
+// }
+//
+// export async function logout() {
+//   try {
+//     await api.post("/api/auth/logout");
+//   } catch {
+//     // best-effort -- the client clears its own auth state regardless
+//   }
+// }
+//
+// export async function getMe() {
+//   const res = await api.get("/api/auth/me");
+//   return res.data;
+// }
 
 export async function reviewCode(code, language, sessionId) {
   try {
