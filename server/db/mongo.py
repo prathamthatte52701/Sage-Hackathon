@@ -283,6 +283,20 @@ async def get_owned_project_metadata(project_id: str, owner_user_id: str):
     return doc
 
 
+async def get_owned_project_file(project_id: str, owner_user_id: str, path: str):
+    """Return one owner-scoped file with text hydrated on demand only."""
+    project = await get_owned_project_metadata(project_id, owner_user_id)
+    if project is None:
+        return None
+    file_entry = next((entry for entry in project.get("files", []) if entry.get("path") == path), None)
+    if file_entry is None:
+        return None
+    file_entry = copy.deepcopy(file_entry)
+    if file_entry.get("content_ref"):
+        file_entry["content"] = await fetch_file_content(file_entry["content_ref"])
+    return file_entry
+
+
 async def update_analysis_job(job_id: str, owner_user_id: str, updates: dict) -> None:
     from bson import ObjectId
     from bson.errors import InvalidId
