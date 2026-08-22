@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import useSessionId from "./hooks/useSessionId";
-import { useAuth } from "./context/AuthContext";
-import AuthScreen from "./components/AuthScreen";
+// AUTH DISABLED: uncomment to bring the login/signup gate back.
+// import { useAuth } from "./context/AuthContext";
+// import AuthScreen from "./components/AuthScreen";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import LandingHero from "./components/LandingHero";
@@ -31,7 +32,7 @@ import {
 
 export default function App() {
   const sessionId = useSessionId();
-  const { user, loading: authLoading } = useAuth();
+  // AUTH DISABLED: const { user, loading: authLoading } = useAuth();
 
   // Navigation State: "overview" | "findings" | "paste_review" | "projects" | "chat" | "architecture" | "history"
   const [activeTab, setActiveTab] = useState("projects");
