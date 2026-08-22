@@ -33,11 +33,47 @@ PROJECT = {
 }
 
 
-def test_build_context_only_includes_eligible_source_files():
-    context, included = _build_context(PROJECT)
+def _fake_hydrate(monkeypatch, content_by_path=None):
+    """Patches hacker_lens.hydrate_selected_files (the db.mongo function this
+    module now calls) with a fake that records the paths it was asked to
+    hydrate and never touches real GridFS. Existing PROJECT fixtures already
+    carry "content" inline, so the fake only backfills from content_by_path
+    for entries that don't already have it -- letting tests that start from
+    metadata-only files (no inline "content") prove selective hydration
+    actually populates the right ones.
+    """
+    content_by_path = content_by_path or {}
+    calls = []
+
+    async def fake(files, paths=None, max_concurrency=12):
+        calls.append(None if paths is None else set(paths))
+        for entry in files:
+            if entry.get("content") is not None:
+                continue
+            if paths is not None and entry.get("path") not in paths:
+                continue
+            source = content_by_path.get(entry.get("path"))
+            if source is not None:
+                entry["content"] = source
+
+    monkeypatch.setattr(hacker_lens, "hydrate_selected_files", fake)
+    return calls
+
+
+@pytest.fixture(autouse=True)
+def hydrate_calls(monkeypatch):
+    return _fake_hydrate(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_build_context_only_includes_eligible_source_files(hydrate_calls):
+    context, included = await _build_context(PROJECT)
     assert included == ["app.py", "utils.py"]
     assert "README.md" not in context
     assert "app.py" in context
+    # Selection picked the paths before hydrate_selected_files ran -- the one
+    # call it made only asked for the two eligible files, never README.md.
+    assert hydrate_calls == [{"app.py", "utils.py"}]
 
 
 def test_score_label_thresholds_are_fixed_not_model_controlled():
@@ -76,7 +112,7 @@ def test_build_report_drops_evidence_for_files_not_in_project():
         "hardening_priorities": ["Add authentication check to /login"],
     }
 
-    report = _build_report(raw, {"app.py", "utils.py"}, ["app.py", "utils.py"], _evidence_catalog(PROJECT))
+    report = _build_report(raw, {"app.py", "utils.py"}, ["app.py", "utils.py"], _evidence_catalog(PROJECT, {"app.py", "utils.py"}))
 
     assert isinstance(report, HackerLensReport)
     assert report.attack_surface_score == 7
@@ -103,7 +139,7 @@ def test_build_report_strips_fake_function_and_route_evidence():
         ],
     }
 
-    report = _build_report(raw, {"app.py"}, ["app.py"], _evidence_catalog(PROJECT))
+    report = _build_report(raw, {"app.py"}, ["app.py"], _evidence_catalog(PROJECT, {"app.py"}))
     evidence = report.adversarial_observations[0].evidence
 
     assert evidence[0].file == "app.py"
@@ -112,6 +148,16 @@ def test_build_report_strips_fake_function_and_route_evidence():
     assert evidence[0].route == ""
     assert evidence[1].function == "login"
     assert evidence[1].route == "/login"
+
+
+def test_evidence_catalog_excludes_files_outside_the_selected_set():
+    # app.py is the "selected/hydrated" file for this call; utils.py is a
+    # real project file but was never shown to the model here -- the catalog
+    # must not let a citation borrow utils.py's real add() function just
+    # because utils.py happens to exist somewhere in the project.
+    catalog = _evidence_catalog(PROJECT, {"app.py"})
+    assert "app.py" in catalog
+    assert "utils.py" not in catalog
 
 
 def test_build_report_marks_observation_unverified_when_all_evidence_is_fake():
@@ -150,3 +196,42 @@ async def test_run_hacker_lens_with_no_eligible_files_short_circuits():
     report = await run_hacker_lens({"files": [{"path": "README.md", "language": "other", "content": "hi"}]})
     assert report.error == "no_eligible_files"
     assert report.files_analyzed == []
+
+
+@pytest.mark.asyncio
+async def test_select_files_hydrates_only_the_narrow_selected_path_set(monkeypatch):
+    """Proves the P0 fix directly: given a project much larger than
+    MAX_FILES where only a handful of paths carry an interesting-name
+    keyword, hydrate_selected_files must be called once, with a narrow path
+    set (not None, not every path in the project) -- selection runs on path
+    alone, before any content is fetched, and content is never populated for
+    files outside that set.
+    """
+    interesting = ["auth/login.py", "routers/admin.py", "db/query.py", "config/secrets.py"]
+    content_by_path = {}
+    files = []
+    for name in interesting:
+        files.append({"path": name, "language": "python", "content_ref": f"ref-{name}", "size": 500})
+        content_by_path[name] = f"def handler():\n    return '{name}'\n"
+    for i in range(36):
+        path = f"pkg/module_{i}.py"
+        files.append({"path": path, "language": "python", "content_ref": f"ref-{path}", "size": 50 + i})
+        content_by_path[path] = f"def util_{i}():\n    return {i}\n"
+    project = {"files": files}
+
+    calls = _fake_hydrate(monkeypatch, content_by_path)
+
+    _context, included = await _build_context(project)
+
+    assert len(calls) == 1
+    called_paths = calls[0]
+    all_paths = {f["path"] for f in files}
+    assert called_paths is not None
+    assert called_paths < all_paths  # strictly narrower than the whole project
+    assert len(called_paths) <= hacker_lens.MAX_FILES
+    assert set(interesting) <= called_paths
+    assert set(included) == called_paths
+    # Nothing outside the selected set was ever populated with content.
+    for entry in files:
+        if entry["path"] not in called_paths:
+            assert entry.get("content") is None

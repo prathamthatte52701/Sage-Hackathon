@@ -969,7 +969,7 @@ async def hacker_lens_report(project_id: str, current_user: dict = Depends(get_r
     # or the deterministic analyzer -- failure here must never affect Normal
     # SAGE, which is why this is its own try/except around its own call.
     try:
-        project = await get_owned_project(project_id, current_user["_id"])
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
@@ -988,7 +988,7 @@ async def brutal_audit_report(project_id: str, current_user: dict = Depends(get_
     # Independent production-readiness review. Reuses the existing stored
     # project and does not touch normal findings, Hacker Mode, or RAG.
     try:
-        project = await get_owned_project(project_id, current_user["_id"])
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 

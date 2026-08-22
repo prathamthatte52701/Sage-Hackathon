@@ -58,8 +58,41 @@ PROJECT = {
 }
 
 
-def test_build_audit_context_derives_real_repository_snapshot():
-    context, included, snapshot, _metadata = build_audit_context(PROJECT)
+def _fake_hydrate(monkeypatch, content_by_path=None):
+    """Patches brutal_audit.hydrate_selected_files (the db.mongo function this
+    module now calls) with a fake that records the paths it was asked to
+    hydrate and never touches real GridFS. Existing PROJECT fixtures already
+    carry "content" inline, so the fake only backfills from content_by_path
+    for entries that don't already have it -- letting tests that start from
+    metadata-only files (no inline "content") prove selective hydration
+    actually populates the right ones.
+    """
+    content_by_path = content_by_path or {}
+    calls = []
+
+    async def fake(files, paths=None, max_concurrency=12):
+        calls.append(None if paths is None else set(paths))
+        for entry in files:
+            if entry.get("content") is not None:
+                continue
+            if paths is not None and entry.get("path") not in paths:
+                continue
+            source = content_by_path.get(entry.get("path"))
+            if source is not None:
+                entry["content"] = source
+
+    monkeypatch.setattr(brutal_audit, "hydrate_selected_files", fake)
+    return calls
+
+
+@pytest.fixture(autouse=True)
+def hydrate_calls(monkeypatch):
+    return _fake_hydrate(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_build_audit_context_derives_real_repository_snapshot(hydrate_calls):
+    context, included, snapshot, _metadata = await build_audit_context(PROJECT)
 
     assert included == ["server/main.py", "client/App.jsx"]
     assert "README.md" in context  # tree context only; not selected source code
@@ -71,6 +104,9 @@ def test_build_audit_context_derives_real_repository_snapshot():
     assert snapshot.external_integrations == 2
     assert snapshot.privileged_operations >= 1
     assert snapshot.authentication_components >= 1
+    # Selection picked the paths before hydrate_selected_files ran -- the one
+    # call it made only asked for the two eligible source files.
+    assert hydrate_calls == [{"server/main.py", "client/App.jsx"}]
 
 
 def test_weighted_score_is_backend_calculated_and_clamped():
@@ -86,8 +122,9 @@ def test_weighted_score_is_backend_calculated_and_clamped():
     assert calculate_overall_score(scores) == 4.8
 
 
-def test_report_drops_hallucinated_evidence_and_derives_verdict():
-    _context, included, snapshot, _metadata = build_audit_context(PROJECT)
+@pytest.mark.asyncio
+async def test_report_drops_hallucinated_evidence_and_derives_verdict():
+    _context, included, snapshot, _metadata = await build_audit_context(PROJECT)
     raw = {
         "summary": "This repository is not production ready.",
         "category_scores": {
@@ -177,7 +214,7 @@ async def test_brutal_audit_route_reuses_owned_project_without_touching_findings
     project["findings"] = [{"rule": "SEC-SQL-INJECTION"}]
     seen = {}
 
-    async def fake_get_owned_project(project_id, owner_user_id):
+    async def fake_get_owned_project_metadata(project_id, owner_user_id):
         seen["project_id"] = project_id
         seen["owner_user_id"] = owner_user_id
         return project
@@ -186,7 +223,10 @@ async def test_brutal_audit_route_reuses_owned_project_without_touching_findings
         assert received_project is project
         return BrutalAuditReport(summary="ok", overall_score=7.0, verdict="READY WITH HARDENING")
 
-    monkeypatch.setattr(projects, "get_owned_project", fake_get_owned_project)
+    # brutal_audit_report now fetches metadata-only (selective hydration
+    # happens inside run_brutal_audit itself) -- get_owned_project is no
+    # longer called by this route at all.
+    monkeypatch.setattr(projects, "get_owned_project_metadata", fake_get_owned_project_metadata)
     monkeypatch.setattr(projects, "run_brutal_audit", fake_run_brutal_audit)
 
     response = await projects.brutal_audit_report("project-1", current_user={"_id": "demo-user"})
@@ -194,3 +234,45 @@ async def test_brutal_audit_route_reuses_owned_project_without_touching_findings
     assert response.summary == "ok"
     assert seen == {"project_id": "project-1", "owner_user_id": "demo-user"}
     assert project["findings"] == [{"rule": "SEC-SQL-INJECTION"}]
+
+
+@pytest.mark.asyncio
+async def test_select_files_hydrates_only_the_narrow_selected_path_set(monkeypatch):
+    """Proves the P0 fix directly: given a project much larger than
+    MAX_FILES where only a handful of paths carry an interesting-name
+    keyword, hydrate_selected_files must be called once, with a narrow path
+    set (not None, not every path in the project) -- selection runs on path
+    alone, before any content is fetched, and content is never populated for
+    files outside that set.
+    """
+    interesting = ["auth/login.py", "routers/admin.py", "db/query.py", "config/secrets.py"]
+    content_by_path = {}
+    files = []
+    for name in interesting:
+        files.append({"path": name, "language": "python", "content_ref": f"ref-{name}", "size": 500})
+        content_by_path[name] = f"def handler():\n    return '{name}'\n"
+    for i in range(40):
+        path = f"pkg/module_{i}.py"
+        files.append({"path": path, "language": "python", "content_ref": f"ref-{path}", "size": 50 + i})
+        content_by_path[path] = f"def util_{i}():\n    return {i}\n"
+    project = {"files": files}
+
+    calls = _fake_hydrate(monkeypatch, content_by_path)
+
+    _context, included, snapshot, _metadata = await build_audit_context(project)
+
+    assert len(calls) == 1
+    called_paths = calls[0]
+    all_paths = {f["path"] for f in files}
+    assert called_paths is not None
+    assert called_paths < all_paths  # strictly narrower than the whole project
+    assert len(called_paths) <= brutal_audit.MAX_FILES
+    assert set(interesting) <= called_paths
+    assert set(included) == called_paths
+    # snapshot's cheap full count stays accurate even though only the
+    # narrow selection was ever hydrated.
+    assert snapshot.source_files_analyzed == len(files)
+    # Nothing outside the selected set was ever populated with content.
+    for entry in files:
+        if entry["path"] not in called_paths:
+            assert entry.get("content") is None

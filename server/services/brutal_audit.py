@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 
+from db.mongo import hydrate_selected_files
 from models.schemas import (
     BrutalAuditAreaScore,
     BrutalAuditCategoryAnalysis,
@@ -95,13 +96,19 @@ def _route_path(route: str) -> str:
     return parts[-1] if parts else ""
 
 
-def _evidence_catalog(project: dict) -> dict[str, dict]:
+def _evidence_catalog(project: dict, included_files) -> dict[str, dict]:
+    # Restricted to files actually selected and hydrated (the ones sent to
+    # the model) -- the model was never shown any other file's content, so it
+    # must never be credited with correctly citing a function/route from one.
+    # Validating against unseen files was a latent inconsistency even before
+    # selective hydration existed.
+    included = set(included_files)
     catalog: dict[str, dict] = {}
     for file_entry in project.get("files", []):
         path = file_entry.get("path")
-        content = file_entry.get("content") or ""
-        if not path:
+        if not path or path not in included:
             continue
+        content = file_entry.get("content") or ""
         metadata = _extract_file_metadata(file_entry) if file_entry.get("language") in SOURCE_LANGUAGES else {"routes": [], "functions": [], "classes": []}
         catalog[path] = {
             "line_count": max(1, len(content.splitlines())),
@@ -111,25 +118,42 @@ def _evidence_catalog(project: dict) -> dict[str, dict]:
     return catalog
 
 
-def _priority_score(path: str, content: str) -> int:
-    haystack = f"{path}\n{content[:2400]}"
-    return sum(weight for pattern, weight in _PRIORITY_PATTERNS if pattern.search(haystack))
+def _priority_score(path: str) -> int:
+    # Path-only signal (filename/directory keywords), not path+content-peek:
+    # scoring by content would require hydrating every file from GridFS
+    # before selection even runs, which is exactly the "hydrate whole repo,
+    # then pick N" antipattern this module now avoids. Less precise than a
+    # content peek, but zero hydration cost at any project size.
+    return sum(weight for pattern, weight in _PRIORITY_PATTERNS if pattern.search(path))
 
 
 def _source_files(project: dict) -> list[dict]:
-    files = [
+    """All eligible (Python/JS, non-test) source files -- a cheap, path-only
+    filter that needs no hydrated content, so it stays accurate as a full
+    repository count even though only a bounded selection ever gets read."""
+    return [
         f
         for f in project.get("files", [])
-        if f.get("language") in SOURCE_LANGUAGES and f.get("content") and not is_test_file(f.get("path", ""))
+        if f.get("language") in SOURCE_LANGUAGES
+        and (f.get("content_ref") or f.get("content"))
+        and not is_test_file(f.get("path", ""))
     ]
-    files.sort(
-        key=lambda f: (
-            _priority_score(f.get("path", ""), f.get("content") or ""),
-            len(f.get("content") or ""),
-        ),
-        reverse=True,
-    )
-    return files
+
+
+def _select_files(project: dict) -> list[dict]:
+    files = _source_files(project)
+    ranked = sorted(files, key=lambda f: _priority_score(f.get("path", "")), reverse=True)
+    selected = [f for f in ranked[:MAX_FILES] if _priority_score(f.get("path", "")) > 0]
+    if len(selected) < MAX_FILES:
+        # Small/generic project where no path matched an interesting-name
+        # pattern (everything scored 0) -- fall back to the same "bigger
+        # file, more surface area" heuristic project_review._eligible_files
+        # uses, keyed off the upload-time "size" field instead of content
+        # length since content isn't hydrated yet at selection time.
+        chosen = {f.get("path") for f in selected}
+        rest = sorted((f for f in files if f.get("path") not in chosen), key=lambda f: f.get("size") or 0, reverse=True)
+        selected += rest[: MAX_FILES - len(selected)]
+    return selected
 
 
 def _repo_tree(project: dict) -> str:
@@ -216,15 +240,21 @@ def _extract_file_metadata(file_entry: dict) -> dict:
     }
 
 
-def build_repository_snapshot(project: dict) -> tuple[BrutalAuditSnapshot, dict]:
-    source_files = _source_files(project)
-    metadata = [_extract_file_metadata(f) for f in source_files]
+def build_repository_snapshot(project: dict, selected_files: list[dict]) -> tuple[BrutalAuditSnapshot, dict]:
+    # Content-derived stats (routes/functions/db/auth/fs/... flags) can only
+    # come from hydrated files, so they're restricted to the selected/
+    # hydrated sample rather than scanned across every eligible file --
+    # doing that repo-wide would mean hydrating the whole repository again,
+    # exactly the bug this module now avoids. source_files_analyzed still
+    # reports the full, accurate count since eligibility alone needs no
+    # content (see _source_files).
+    metadata = [_extract_file_metadata(f) for f in selected_files]
     all_files = project.get("files", []) or []
     project_meta = project.get("project", {}) or {}
 
     snapshot = BrutalAuditSnapshot(
         files_analyzed=len(all_files),
-        source_files_analyzed=len(source_files),
+        source_files_analyzed=len(_source_files(project)),
         api_entry_points=sum(len(m["routes"]) for m in metadata) + len(project.get("apiEndpoints", []) or []),
         functions_classes=sum(len(m["functions"]) + len(m["classes"]) for m in metadata),
         database_interaction_areas=sum(1 for m in metadata if m["has_database_usage"]),
@@ -271,10 +301,12 @@ def _compact_file_block(file_entry: dict, metadata: dict) -> str:
     )
 
 
-def build_audit_context(project: dict) -> tuple[str, list[str], BrutalAuditSnapshot, dict]:
-    snapshot, metadata_bundle = build_repository_snapshot(project)
+async def build_audit_context(project: dict) -> tuple[str, list[str], BrutalAuditSnapshot, dict]:
+    selected = _select_files(project)
+    await hydrate_selected_files(project.get("files", []), paths={f["path"] for f in selected})
+
+    snapshot, metadata_bundle = build_repository_snapshot(project, selected)
     metadata_by_path = {m["path"]: m for m in metadata_bundle["files"]}
-    selected = _source_files(project)[:MAX_FILES]
 
     parts = [
         "=== FACTUAL PROJECT METADATA ===",
@@ -505,7 +537,7 @@ def build_brutal_audit_report(raw: dict, project: dict, included_files: list[str
     data = raw if isinstance(raw, dict) else {}
     valid_files = _valid_file_paths(project)
     line_counts = _line_counts(project)
-    catalog = _evidence_catalog(project)
+    catalog = _evidence_catalog(project, included_files)
 
     raw_scores = data.get("category_scores") if isinstance(data.get("category_scores"), dict) else {}
     scores = {category: _clamp_score(raw_scores.get(category)) for category in AUDIT_CATEGORIES}
@@ -546,7 +578,7 @@ def build_brutal_audit_report(raw: dict, project: dict, included_files: list[str
 
 
 async def run_brutal_audit(project: dict) -> BrutalAuditReport:
-    repo_context, included_files, snapshot, _metadata = build_audit_context(project)
+    repo_context, included_files, snapshot, _metadata = await build_audit_context(project)
     if not included_files:
         return BrutalAuditReport(
             summary="No eligible source files were found to audit in this project.",

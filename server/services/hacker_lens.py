@@ -10,6 +10,7 @@ read-only, additive report, not a second source of findings.
 
 import re
 
+from db.mongo import hydrate_selected_files
 from models.schemas import HackerLensEvidence, HackerLensObservation, HackerLensReport, HackerLensRiskPath, HackerLensTopTarget
 from services.analyzer import SOURCE_LANGUAGES, is_test_file
 from services.groq_client import GroqUnavailableError, call_groq
@@ -39,26 +40,45 @@ _ROUTE_RE = re.compile(r"\b(?:app|router|api|bp|blueprint)\s*\.\s*(get|post|put|
 _FUNCTION_RE = re.compile(r"\b(?:def\s+([A-Za-z_]\w*)\s*\(|function\s+([A-Za-z_$][\w$]*)|const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>)")
 
 
-def _priority_score(path: str, content: str) -> int:
-    haystack = f"{path}\n{content[:2000]}"
-    return sum(weight for pattern, weight in _PRIORITY_PATTERNS if pattern.search(haystack))
+def _priority_score(path: str) -> int:
+    # Path-only signal (filename/directory keywords), not path+content-peek:
+    # scoring by content would require hydrating every file from GridFS
+    # before selection even runs, which is exactly the "hydrate whole repo,
+    # then pick N" antipattern this module now avoids. Less precise than a
+    # content peek, but zero hydration cost at any project size.
+    return sum(weight for pattern, weight in _PRIORITY_PATTERNS if pattern.search(path))
 
 
 def _select_files(project: dict) -> list[dict]:
     files = [
         f
         for f in project.get("files", [])
-        if f.get("language") in SOURCE_LANGUAGES and f.get("content") and not is_test_file(f.get("path", ""))
+        if f.get("language") in SOURCE_LANGUAGES
+        and (f.get("content_ref") or f.get("content"))
+        and not is_test_file(f.get("path", ""))
     ]
-    files.sort(key=lambda f: _priority_score(f.get("path", ""), f.get("content", "")), reverse=True)
-    return files[:MAX_FILES]
+    ranked = sorted(files, key=lambda f: _priority_score(f.get("path", "")), reverse=True)
+    selected = [f for f in ranked[:MAX_FILES] if _priority_score(f.get("path", "")) > 0]
+    if len(selected) < MAX_FILES:
+        # Small/generic project where no path matched an interesting-name
+        # pattern (everything scored 0) -- fall back to the same "bigger
+        # file, more surface area" heuristic project_review._eligible_files
+        # uses, keyed off the upload-time "size" field instead of content
+        # length since content isn't hydrated yet at selection time.
+        chosen = {f.get("path") for f in selected}
+        rest = sorted((f for f in files if f.get("path") not in chosen), key=lambda f: f.get("size") or 0, reverse=True)
+        selected += rest[: MAX_FILES - len(selected)]
+    return selected
 
 
-def _build_context(project: dict) -> tuple[str, list[str]]:
+async def _build_context(project: dict) -> tuple[str, list[str]]:
+    selected = _select_files(project)
+    await hydrate_selected_files(project.get("files", []), paths={f["path"] for f in selected})
+
     parts: list[str] = []
     included: list[str] = []
     total = 0
-    for file_entry in _select_files(project):
+    for file_entry in selected:
         path = file_entry["path"]
         content = (file_entry.get("content") or "")[:MAX_FILE_CHARS]
         block = f"--- FILE: {path} ---\n{content}\n"
@@ -79,13 +99,19 @@ def _route_path(route: str) -> str:
     return parts[-1] if parts else ""
 
 
-def _evidence_catalog(project: dict) -> dict[str, dict]:
+def _evidence_catalog(project: dict, included_files) -> dict[str, dict]:
+    # Restricted to files actually selected and hydrated (the ones sent to
+    # the model) -- the model was never shown any other file, so it must
+    # never be credited with correctly citing a function/route it could not
+    # possibly have seen. Validating against unseen files was a latent
+    # inconsistency even before selective hydration existed.
+    included = set(included_files)
     catalog: dict[str, dict] = {}
     for file_entry in project.get("files", []):
         path = file_entry.get("path")
-        content = file_entry.get("content") or ""
-        if not path:
+        if not path or path not in included:
             continue
+        content = file_entry.get("content") or ""
         functions: set[str] = set()
         routes: set[str] = set()
         if file_entry.get("language") == "python":
@@ -258,7 +284,7 @@ def _build_report(raw: dict, valid_files: set[str], included_files: list[str], c
 
 
 async def run_hacker_lens(project: dict) -> HackerLensReport:
-    repo_context, included_files = _build_context(project)
+    repo_context, included_files = await _build_context(project)
     if not included_files:
         return HackerLensReport(
             summary="No eligible source files were found to analyze in this project.",
@@ -266,7 +292,7 @@ async def run_hacker_lens(project: dict) -> HackerLensReport:
         )
 
     valid_files = _valid_file_paths(project)
-    catalog = _evidence_catalog(project)
+    catalog = _evidence_catalog(project, included_files)
     prompt = build_hacker_lens_prompt(repo_context, included_files)
     messages = [{"role": "user", "content": prompt}]
 
