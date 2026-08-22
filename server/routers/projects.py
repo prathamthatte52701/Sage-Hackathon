@@ -13,7 +13,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_project, get_owned_project_file, get_owned_project_metadata, save_project, update_owned_project
+from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_project, get_owned_project_file, get_owned_project_metadata, save_project, update_owned_finding, update_owned_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
@@ -652,15 +652,19 @@ async def reason_about_finding(
         )
 
         try:
-            findings[finding_index]["reasoning"] = result.model_dump()
-            findings[finding_index]["knowledge_retrieval"] = {
+            finding_updates = {
+                "reasoning": result.model_dump(),
+                "knowledge_retrieval": {
                 "mode": knowledge.get("mode"),
                 "available": knowledge.get("available"),
                 "record_count": len(knowledge.get("records", [])),
                 "rule_ids": [r.get("rule_id") for r in knowledge.get("records", [])],
+                },
+                "related_files": [f["path"] for f in context["related_files"]],
             }
-            findings[finding_index]["related_files"] = [f["path"] for f in context["related_files"]]
-            await update_owned_project(project_id, current_user["_id"], {"findings": findings})
+            if not await update_owned_finding(project_id, current_user["_id"], finding["finding_id"], finding_updates):
+                findings[finding_index].update(finding_updates)
+                await update_owned_project(project_id, current_user["_id"], {"findings": findings})
         except Exception as exc:
             print(f"[projects] failed to persist finding reasoning: {exc}")
 
@@ -756,8 +760,11 @@ async def transform_finding(
         result.document_type = "project"
 
         try:
-            findings[finding_index]["transform"] = result.model_dump()
-            await update_owned_project(project_id, current_user["_id"], {"findings": findings})
+            if not await update_owned_finding(
+                project_id, current_user["_id"], finding["finding_id"], {"transform": result.model_dump()}
+            ):
+                findings[finding_index]["transform"] = result.model_dump()
+                await update_owned_project(project_id, current_user["_id"], {"findings": findings})
         except Exception as exc:
             print(f"[projects] failed to persist finding transform: {exc}")
 
