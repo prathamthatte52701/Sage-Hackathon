@@ -71,7 +71,10 @@ def _report(name: str, findings: list[Issue], major_themes: dict, detected_major
 
 
 async def _run(code: str, language: str) -> list[Issue]:
-    response = await review(ReviewRequestIn(code=code, language=language, session_id="real-benchmark-test"))
+    response = await review(
+        ReviewRequestIn(code=code, language=language, session_id="real-benchmark-test"),
+        current_user={"_id": "test-user"},
+    )
     return response.deterministic_findings + response.ai_quality_review
 
 

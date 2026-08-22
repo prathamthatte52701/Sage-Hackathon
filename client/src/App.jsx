@@ -20,6 +20,8 @@ import {
 import useSessionId from "./hooks/useSessionId";
 import { LANGUAGES, MAX_CHARS } from "./components/CodeEditor";
 import ReanalysisResult from "./components/ReanalysisResult";
+import AuthScreen from "./components/AuthScreen";
+import { useAuth } from "./context/AuthContext";
 
 const NAV = ["Overview", "Analyze", "Findings", "Ask AI", "History"];
 const SEVERITIES = ["critical", "high", "medium", "low"];
@@ -197,6 +199,7 @@ function detectSnippetLanguage(code, selectedLanguage) {
 }
 
 function AppShell({ activeView, setActiveView, project, score, sourceType, children }) {
+  const { user, logout } = useAuth();
   const meta = getMeta(project);
   const findings = project?.findings || [];
   const hasProject = Boolean(project);
@@ -250,7 +253,14 @@ function AppShell({ activeView, setActiveView, project, score, sourceType, child
 
         <div className="absolute bottom-4 left-4 right-4 rounded-xl bg-black/20 p-3">
           <p className="sage-mono text-[10px] uppercase tracking-[0.16em] text-[var(--sage-accent)]">Systems operational</p>
-          <p className="mt-1 truncate text-xs text-[var(--sage-text-muted)]">{meta.name || "No active project"}</p>
+          <p className="mt-1 truncate text-xs text-[var(--sage-text-muted)]">{user?.email || meta.name || "No active project"}</p>
+          <button
+            type="button"
+            onClick={() => logout()}
+            className="mt-2 w-full rounded-md border border-white/10 py-1 text-[11px] text-[var(--sage-text-muted)] hover:text-[var(--sage-text-secondary)]"
+          >
+            Log out
+          </button>
         </div>
       </aside>
 
@@ -1633,6 +1643,7 @@ function FixPanel({ fix }) {
 }
 
 export default function App() {
+  const { user, loading } = useAuth();
   const sessionId = useSessionId();
   const [activeView, setActiveView] = useState("Overview");
   const [code, setCode] = useState("");
