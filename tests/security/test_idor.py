@@ -37,7 +37,7 @@ class FakeProjectStore:
             return None
         return copy.deepcopy(doc)
 
-    async def update_owned_project(self, project_id: str, owner_user_id: str, updates: dict):
+    async def update_owned_project(self, project_id: str, owner_user_id: str, updates: dict, **_kwargs):
         doc = self.projects.get(project_id)
         if doc is None or doc.get("owner_user_id") != owner_user_id:
             return

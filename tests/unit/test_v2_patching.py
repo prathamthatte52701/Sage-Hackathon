@@ -133,7 +133,7 @@ async def test_project_apply_fix_patches_only_target_file(monkeypatch):
     async def fake_get_owned_project(_id, _owner_user_id):
         return project
 
-    async def fake_update_owned_project(_id, _owner_user_id, updates):
+    async def fake_update_owned_project(_id, _owner_user_id, updates, **_kwargs):
         saved.update(updates)
 
     monkeypatch.setattr(projects, "get_owned_project", fake_get_owned_project)
