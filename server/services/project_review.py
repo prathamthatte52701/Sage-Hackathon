@@ -19,6 +19,7 @@ from services.grounding import ground_issue
 from services.prompt_builder import build_quality_review_prompt
 from services.structural import analyze_python_source, line_range
 from services.tracing import StageTracer
+from config import GROQ_GLOBAL_CONCURRENCY, PROJECT_AI_CALL_BUDGET
 
 # Bounds -- deliberately conservative. A 20000-file "scale test" project must
 # not translate into 20000 Groq calls; reviewing the largest/most-central
@@ -26,7 +27,13 @@ from services.tracing import StageTracer
 MAX_FILES_REVIEWED = 40
 MAX_CHUNK_CHARS = 6000
 MAX_CHUNKS_PER_FILE = 8
-CONCURRENCY_LIMIT = 4
+# This semaphore is intentionally process-wide. A semaphore created inside
+# each project review only limits one request while allowing concurrent jobs
+# to multiply provider traffic.
+GLOBAL_AI_SEMAPHORE = asyncio.Semaphore(GROQ_GLOBAL_CONCURRENCY)
+# Backwards-compatible public constant for callers that supply their own
+# semaphore in focused tests; production scheduling uses the global semaphore.
+CONCURRENCY_LIMIT = GROQ_GLOBAL_CONCURRENCY
 _SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 _RULE_GROUPS = {
     "subprocess_shell_true": "command_execution",
@@ -207,9 +214,9 @@ def _dedupe_against_deterministic(quality_findings: list[dict], deterministic_by
     return kept
 
 
-async def _review_chunk(path: str, language: str, chunk: str, semaphore: asyncio.Semaphore) -> tuple[list[dict], bool]:
+async def _review_chunk(path: str, language: str, chunk: str, semaphore: asyncio.Semaphore | None = None) -> tuple[list[dict], bool]:
     """Returns (grounded_finding_dicts, groq_was_called)."""
-    async with semaphore:
+    async with (semaphore or GLOBAL_AI_SEMAPHORE):
         try:
             raw = await call_groq([{"role": "user", "content": build_quality_review_prompt(chunk, language, None)}])
         except GroqUnavailableError:
@@ -262,7 +269,6 @@ async def run_ai_quality_review(project: dict) -> dict:
     for finding in project.get("findings", []):
         deterministic_by_file.setdefault(finding.get("file"), []).append(finding)
 
-    semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
     tasks = []
     task_meta = []
     for file_entry in reviewed:
@@ -270,8 +276,12 @@ async def run_ai_quality_review(project: dict) -> dict:
         language = file_entry.get("language")
         chunks = _chunk_content(file_entry["content"], path, language)
         for chunk in chunks:
-            tasks.append(_review_chunk(path, language, chunk, semaphore))
+            if len(tasks) >= PROJECT_AI_CALL_BUDGET:
+                break
+            tasks.append(_review_chunk(path, language, chunk, GLOBAL_AI_SEMAPHORE))
             task_meta.append(path)
+        if len(tasks) >= PROJECT_AI_CALL_BUDGET:
+            break
 
     with tracer.stage("groq_ms"):
         results = await asyncio.gather(*tasks) if tasks else []
@@ -299,9 +309,10 @@ async def run_ai_quality_review(project: dict) -> dict:
         "chunks_reviewed": len(tasks),
         "groq_calls": groq_calls,
         "failed_ai_chunks": len(tasks) - groq_calls,
-        "semantic_coverage": "partial" if skipped or (len(tasks) != groq_calls) else "complete",
+        "semantic_coverage": "partial" if skipped or (len(tasks) != groq_calls) or len(tasks) >= PROJECT_AI_CALL_BUDGET else "complete",
         "partial_reasons": ([f"{len(skipped)} eligible file(s) exceeded AI review budget"] if skipped else [])
-        + ([f"{len(tasks) - groq_calls} AI chunk(s) failed or were skipped"] if len(tasks) != groq_calls else []),
+        + ([f"{len(tasks) - groq_calls} AI chunk(s) failed or were skipped"] if len(tasks) != groq_calls else [])
+        + ([f"AI call budget of {PROJECT_AI_CALL_BUDGET} reached"] if len(tasks) >= PROJECT_AI_CALL_BUDGET else []),
         "ai_candidate_count": sum(len(f) for f, _ in results),
         "ai_finding_count": len(deduped),
         "project_total_ms": tracer.total_ms(),

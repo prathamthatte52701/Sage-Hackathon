@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +10,21 @@ from config import CORS_ORIGINS, JWT_SECRET, MONGO_URL
 from routers import auth, explain, projects, review
 from services.rate_limit import check_rate_limit
 
-app = FastAPI(title="AI Code Reviewer")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if not JWT_SECRET:
+        raise RuntimeError("JWT_SECRET is not set. Configure it in the environment before starting the server.")
+    if MONGO_URL:
+        from db.mongo import ensure_indexes
+
+        await ensure_indexes()
+    yield
+    from services.groq_client import close_groq_client
+
+    await close_groq_client()
+
+
+app = FastAPI(title="AI Code Reviewer", lifespan=lifespan)
 
 # allow_credentials=True is required for the HttpOnly session cookie to be
 # sent cross-origin (client on :5173, server on :8000 in dev) -- which is
@@ -62,18 +78,6 @@ app.include_router(explain.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 
 
-@app.on_event("startup")
-async def _verify_startup_config():
-    if not JWT_SECRET:
-        raise RuntimeError(
-            "JWT_SECRET is not set. Configure it in the environment before starting the server."
-        )
-    if MONGO_URL:
-        from db.mongo import ensure_indexes
-
-        await ensure_indexes()
-
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"error": "Invalid request", "detail": exc.errors()})
@@ -93,4 +97,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.get("/health")
 async def health():
+    return {"status": "ok", "service": "sage"}
+
+
+@app.get("/health/live")
+async def health_live():
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    if not MONGO_URL:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "dependency": "mongo"})
+    try:
+        from db.mongo import get_db
+
+        database = get_db()
+        await database.command("ping")
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "dependency": "mongo"})
+    return {"status": "ready"}

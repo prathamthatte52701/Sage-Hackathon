@@ -52,6 +52,9 @@ def _patch_client(monkeypatch, responses):
 def _fast_backoff(monkeypatch):
     # Don't actually sleep in tests.
     monkeypatch.setattr(groq_client, "BACKOFF_BASE_SECONDS", 0)
+    # Production intentionally shares one client for connection reuse; every
+    # test needs its own mocked transport instead.
+    monkeypatch.setattr(groq_client, "_client", None)
 
 
 @pytest.mark.asyncio

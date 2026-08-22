@@ -7,6 +7,8 @@ load_dotenv()
 GROQ_API_KEYS = [k.strip() for k in os.getenv("GROQ_KEYS", "").split(",") if k.strip()]
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_GLOBAL_CONCURRENCY = int(os.getenv("GROQ_GLOBAL_CONCURRENCY", "4") or "4")
+PROJECT_AI_CALL_BUDGET = int(os.getenv("PROJECT_AI_CALL_BUDGET", "48") or "48")
 
 MONGO_URL = os.getenv("MONGO_URL", "")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "code_reviewer")

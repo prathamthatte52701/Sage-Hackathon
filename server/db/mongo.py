@@ -1,5 +1,6 @@
 import asyncio
 import copy
+from hashlib import sha256
 from datetime import datetime, timezone
 
 import certifi
@@ -80,6 +81,10 @@ async def get_history(owner_user_id: str):
     return results
 
 
+def _content_hash(content: str) -> str:
+    return sha256(content.encode("utf-8")).hexdigest()
+
+
 async def store_file_content(content: str, project_id_hint: str = "") -> str:
     """Stores file content in GridFS, returns the GridFS file id as a string."""
     bucket = _require_fs_bucket()
@@ -100,6 +105,12 @@ async def fetch_file_content(content_ref: str) -> str:
     return data.decode("utf-8")
 
 
+async def delete_file_content(content_ref: str) -> None:
+    from bson import ObjectId
+
+    await _require_fs_bucket().delete(ObjectId(content_ref))
+
+
 async def hydrate_file_content(files: list[dict]) -> None:
     """Fetches every listed file's content from GridFS concurrently and sets
     it back onto each entry's "content" key, in place - one batched round
@@ -116,17 +127,30 @@ async def hydrate_file_content(files: list[dict]) -> None:
         file_entry["content"] = content
 
 
-async def _replace_content_with_refs(files: list[dict], project_id_hint: str = "") -> None:
+async def _replace_content_with_refs(files: list[dict], project_id_hint: str = "") -> list[str]:
     """In place: for every file entry carrying inline "content", store it in
     GridFS and swap "content" for "content_ref" - never leaves both keys
     holding the same data, so the persisted document never embeds full file
     text (the thing that blew past Mongo's 16MB document limit)."""
+    replaced_refs = []
     for file_entry in files:
         content = file_entry.get("content")
         if content is not None:
+            digest = _content_hash(content)
+            # A hydrated but unchanged file should keep its existing GridFS
+            # object. This prevents a one-file patch from rewriting a whole
+            # project and keeps the document compact after every update.
+            if file_entry.get("content_ref") and file_entry.get("content_hash") == digest:
+                del file_entry["content"]
+                continue
             hint = project_id_hint or file_entry.get("path", "file")
+            old_ref = file_entry.get("content_ref")
             file_entry["content_ref"] = await store_file_content(content, hint)
+            file_entry["content_hash"] = digest
             del file_entry["content"]
+            if old_ref:
+                replaced_refs.append(old_ref)
+    return replaced_refs
 
 
 async def save_project(project: dict, session_id: str, owner_user_id: str) -> str:
@@ -138,6 +162,9 @@ async def save_project(project: dict, session_id: str, owner_user_id: str) -> st
         "session_id": session_id,
         "owner_user_id": owner_user_id,
         "created_at": datetime.now(timezone.utc),
+        "source_revision": 1,
+        "analysis_revision": 0,
+        "analysis_status": "not_started",
     }
     result = await database.projects.insert_one(doc)
     return str(result.inserted_id)
@@ -170,17 +197,85 @@ async def update_owned_project(project_id: str, owner_user_id: str, updates: dic
     from bson import ObjectId
 
     database = _require_db()
+    replaced_refs = []
     if "files" in updates:
         updates = dict(updates)
         updates["files"] = copy.deepcopy(updates["files"])
-        await _replace_content_with_refs(updates["files"], project_id)
+        replaced_refs = await _replace_content_with_refs(updates["files"], project_id)
 
     try:
         object_id = ObjectId(project_id)
     except InvalidId:
         return
 
-    await database.projects.update_one({"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates})
+    result = await database.projects.update_one({"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates})
+    if result.matched_count:
+        for content_ref in replaced_refs:
+            try:
+                await delete_file_content(content_ref)
+            except Exception as exc:
+                # The database already points at the replacement. Keeping an
+                # orphan temporarily is safer than turning a completed write
+                # into a failed request; maintenance can retry cleanup later.
+                print(f"[mongo] deferred old GridFS cleanup: {type(exc).__name__}")
+
+
+async def create_analysis_job(project_id: str, owner_user_id: str) -> str:
+    from bson import ObjectId
+
+    database = _require_db()
+    result = await database.analysis_jobs.insert_one(
+        {
+            "project_id": ObjectId(project_id),
+            "owner_user_id": owner_user_id,
+            "status": "queued",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+    return str(result.inserted_id)
+
+
+async def get_owned_analysis_job(job_id: str, owner_user_id: str):
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(job_id)
+    except InvalidId:
+        return None
+    doc = await _require_db().analysis_jobs.find_one({"_id": object_id, "owner_user_id": owner_user_id})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+        doc["project_id"] = str(doc["project_id"])
+    return doc
+
+
+async def get_owned_project_metadata(project_id: str, owner_user_id: str):
+    """Fetch project state without hydrating GridFS source bodies."""
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    try:
+        object_id = ObjectId(project_id)
+    except InvalidId:
+        return None
+    doc = await _require_db().projects.find_one({"_id": object_id, "owner_user_id": owner_user_id})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def update_analysis_job(job_id: str, owner_user_id: str, updates: dict) -> None:
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(job_id)
+    except InvalidId:
+        return
+    await _require_db().analysis_jobs.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates}
+    )
 
 
 async def create_user(email: str, password_hash: str) -> str:
@@ -224,3 +319,4 @@ async def ensure_indexes() -> None:
     database = _require_db()
     await database.users.create_index("email", unique=True)
     await database.projects.create_index("owner_user_id")
+    await database.analysis_jobs.create_index([("owner_user_id", 1), ("project_id", 1), ("status", 1)])
