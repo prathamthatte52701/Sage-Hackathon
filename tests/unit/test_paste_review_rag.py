@@ -100,7 +100,8 @@ async def test_paste_review_calls_knowledge_and_adds_quality_review(monkeypatch)
     monkeypatch.setattr(review_router, "save_review", fake_save_review)
 
     response = await review(
-        ReviewRequestIn(code=JS_UTILITY, language="python", session_id="test-session")
+        ReviewRequestIn(code=JS_UTILITY, language="python", session_id="test-session"),
+        current_user={"_id": "test-user"},
     )
 
     assert calls
@@ -195,7 +196,8 @@ async def test_paste_review_falls_back_when_rag_and_model_fail(monkeypatch):
     monkeypatch.setattr(review_router, "save_review", fake_save_review)
 
     response = await review(
-        ReviewRequestIn(code="export function ok(value) { return value ?? 0; }", language="python", session_id="test-session")
+        ReviewRequestIn(code="export function ok(value) { return value ?? 0; }", language="python", session_id="test-session"),
+        current_user={"_id": "test-user"},
     )
 
     assert response.language_detection["effective"] == "javascript"
@@ -255,7 +257,10 @@ export function fullName(user) {
     monkeypatch.setattr(review_router, "call_groq", fake_call_groq)
     monkeypatch.setattr(review_router, "save_review", fake_save_review)
 
-    response = await review(ReviewRequestIn(code=code, language="javascript", session_id="test-session"))
+    response = await review(
+        ReviewRequestIn(code=code, language="javascript", session_id="test-session"),
+        current_user={"_id": "test-user"},
+    )
 
     assert response.deterministic_findings == []
     assert len(response.ai_quality_review) == 1
