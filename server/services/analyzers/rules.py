@@ -66,6 +66,9 @@ _RE_PLAINTEXT_PASSWORD_JS = re.compile(r"(password)\s*=\s*(req\.body|request\.bo
 _RE_MONGOOSE_MONEY_NUMBER = re.compile(
     r"(?i)\b(balance|amount|price|total|subtotal|credit|debit|fee|cost)\w*\s*:\s*\{[^{}]*type\s*:\s*Number(?![^{}]*(min\s*:|validate\s*:))[^{}]*\}"
 )
+_RE_PROCESS_GLOBAL_AUTH_CACHE = re.compile(
+    r"(?s)\b(?:let|var)\s+(?:cachedUser|currentUser)\b.*?\b(?:req|request)\.user\s*="
+)
 _NON_SECRET_CONTEXT = re.compile(r"(?i)(example|sample|dummy|fake|placeholder|documentation|test fixture)")
 _HASH_SECURITY_CONTEXT = re.compile(r"(?i)(password|token|secret|signature|auth|credential|session)")
 
@@ -100,6 +103,7 @@ RULE_METADATA = {
     "js_date_slice_without_validation": {"title": "Date slicing without visible validation", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_zero_baseline_fallback": {"title": "Zero baseline treated as missing", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_unknown_type_default": {"title": "Unknown enum/type falls into default branch", "languages": ["javascript", "typescript"], "category": "logic"},
+    "process_global_auth_cache": {"title": "Process-global authentication cache", "languages": ["javascript", "typescript"], "category": "security"},
 }
 
 # language-gated pattern tables for the 3 checks that only covered Python
@@ -404,6 +408,10 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         findings += _findings_for_pattern(
             content, path, _RE_JS_UNKNOWN_TYPE_DEFAULT, "js_unknown_type_default", "low", "logic",
             "Unknown type/enum values fall into a default else branch",
+        )
+        findings += _findings_for_pattern(
+            content, path, _RE_PROCESS_GLOBAL_AUTH_CACHE, "process_global_auth_cache", "high", "security",
+            "Process-global cached identity can assign one user's authentication state to another request; use request-scoped verification or a keyed cache",
         )
 
     if language == "python":

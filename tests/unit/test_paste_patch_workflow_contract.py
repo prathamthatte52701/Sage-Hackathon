@@ -1,111 +1,53 @@
+"""Regression contracts for the current paste-fix workflow."""
+
 from pathlib import Path
 
 
-APP = Path(__file__).resolve().parents[2] / "client" / "src" / "App.jsx"
+ROOT = Path(__file__).resolve().parents[2] / "client" / "src"
+APP = (ROOT / "App.jsx").read_text()
+API = (ROOT / "api" / "client.js").read_text()
 
 
-def _function_body(source: str, name: str) -> str:
-    start = source.index(f"async function {name}")
-    brace = source.index("{", start)
+def _body(name: str) -> str:
+    start = APP.index(f"const {name} = async")
+    brace = APP.index("{", start)
     depth = 0
-    for index in range(brace, len(source)):
-        char = source[index]
-        if char == "{":
+    for index in range(brace, len(APP)):
+        if APP[index] == "{":
             depth += 1
-        elif char == "}":
+        elif APP[index] == "}":
             depth -= 1
             if depth == 0:
-                return source[brace + 1:index]
+                return APP[brace + 1:index]
     raise AssertionError(f"Could not extract {name}")
 
 
-def _component_source(source: str, component: str, next_function: str) -> str:
-    start = source.index(f"function {component}")
-    end = source.index(f"function {next_function}", start)
-    return source[start:end]
+def test_paste_fix_generation_uses_preview_api_without_mutating_snippet_source():
+    body = _body("handleGenerateFix")
+    assert "transformFinding(" in body
+    assert "setSnippetCode(" not in body
 
 
-def _function_body_in(source: str, name: str) -> str:
-    start = source.index(f"async function {name}")
-    brace = source.index("{", start)
-    depth = 0
-    for index in range(brace, len(source)):
-        char = source[index]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return source[brace + 1:index]
-    raise AssertionError(f"Could not extract {name}")
+def test_project_apply_is_followed_by_canonical_reanalysis_of_stored_source():
+    body = _body("handleApplyFix")
+    assert "await applyProjectFix(" in body
+    assert "await reanalyzeProject(projectBundle.project_id)" in body
+    assert body.index("await applyProjectFix(") < body.index("await reanalyzeProject(projectBundle.project_id)")
 
 
-def test_generate_fix_does_not_mutate_source():
-    source = APP.read_text()
-    body = _function_body(source, "generateFix")
-
-    assert "setCode(" not in body
-    assert "generatePasteFix(code, language, issue)" in body
-    assert "setFixes(" in body
+def test_project_fix_request_uses_stable_finding_identity_when_available():
+    assert "finding_id: finding.finding_id || \"\"" in API
+    assert "applyProjectFix(projectId, finding)" in API
+    assert "transformFinding(projectId, finding)" in API
 
 
-def test_regenerate_fix_reuses_preview_path_without_source_mutation():
-    source = APP.read_text()
-    body = _function_body(source, "generateFix")
-
-    assert "setCode(" not in body
-    assert "setStates(" in body
-    assert "Fix applied" not in body
+def test_analysis_client_waits_for_job_before_loading_results():
+    assert "waitForAnalysisJob" in API
+    assert "await waitForAnalysisJob(data.job_id)" in API
+    assert "return await getProject(projectId)" in API
 
 
-def test_diff_preview_does_not_mutate_source():
-    source = APP.read_text()
-    start = source.index("function FixPanel")
-    end = source.index("export default function App", start)
-    body = source[start:end]
-
-    assert "setCode(" not in body
-    assert "Fix preview" in body
-    assert "Proposed preview" in body
-
-
-def test_valid_apply_fix_is_only_paste_path_that_mutates_source():
-    source = APP.read_text()
-    paste_body = _component_source(source, "PasteReviewResults", "ReviewSection")
-    apply_body = _function_body_in(paste_body, "applyFix")
-
-    assert paste_body.count("setCode(") == 1
-    assert "setCode(updated)" in apply_body
-    assert "setStates((items) => ({ ...items, [key]: \"Fix applied\" }))" in apply_body
-
-
-def test_double_apply_is_disabled_after_fix_applied():
-    source = APP.read_text()
-
-    assert 'state === "Fix applied"' in source
-    assert "applyValidatedReplacement(code, fix, appliedSpans)" in source
-
-
-def test_generated_but_unapplied_patch_ignored_by_reanalysis():
-    source = APP.read_text()
-    body = _function_body(source, "reanalyzePaste")
-
-    assert "reviewCode(code, language, sessionId)" in body
-    assert "fixes" not in body
-    assert "proposed_fix" not in body
-
-
-def test_download_before_apply_does_not_export_preview_fix():
-    source = APP.read_text()
-
-    assert "const hasAppliedPatches = appliedSpans.length > 0" in source
-    assert 'disabled={!hasAppliedPatches}' in source
-    assert "downloadTextFile(`fixed-code.${languageExtension(language)}`, code)" in source
-
-
-def test_multiple_findings_keep_independent_patch_state():
-    source = APP.read_text()
-
-    assert "fixes[`${issue.source}-${index}`]" in source
-    assert "setFixes((items) => ({ ...items, [key]: fix }))" in source
-    assert "states[`${issue.source}-${index}`]" in source
+def test_preview_api_does_not_apply_project_fixes():
+    transform = API[API.index("export async function transformFinding"):API.index("export async function reasonFinding")]
+    assert "/findings/transform" in transform
+    assert "/fixes/apply" not in transform
