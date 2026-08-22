@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_project, save_project, update_owned_project
+from db.mongo import fetch_binary_content, get_owned_analysis_job, get_owned_project, get_owned_project_file, get_owned_project_metadata, save_project, update_owned_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
@@ -417,6 +417,22 @@ async def get_project_by_id(project_id: str, current_user: dict = Depends(get_cu
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_ERROR_RESPONSE)
+
+
+@router.get("/projects/{project_id}/metadata")
+async def get_project_metadata(project_id: str, current_user: dict = Depends(get_current_user)):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    return project
+
+
+@router.get("/projects/{project_id}/files/{file_path:path}")
+async def get_project_file(project_id: str, file_path: str, current_user: dict = Depends(get_current_user)):
+    file_entry = await get_owned_project_file(project_id, current_user["_id"], file_path)
+    if file_entry is None:
+        return JSONResponse(status_code=404, content={"error": "Project file not found"})
+    return file_entry
 
 
 _ANALYZE_ERROR_RESPONSE = {"error": "Could not analyze this project, please try again"}
