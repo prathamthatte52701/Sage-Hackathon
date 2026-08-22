@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import useSessionId from "./hooks/useSessionId";
-import { useAuth } from "./context/AuthContext";
-import AuthScreen from "./components/AuthScreen";
+// AUTH DISABLED: restore these imports and the gate below to require login.
+// import { useAuth } from "./context/AuthContext";
+// import AuthScreen from "./components/AuthScreen";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import LandingHero from "./components/LandingHero";
@@ -31,7 +32,7 @@ import {
 
 export default function App() {
   const sessionId = useSessionId();
-  const { user, loading: authLoading } = useAuth();
+  // const { user, loading: authLoading } = useAuth();
 
   // Navigation State: "overview" | "findings" | "paste_review" | "projects" | "chat" | "architecture" | "history"
   const [activeTab, setActiveTab] = useState("projects");
@@ -274,8 +275,8 @@ export default function App() {
     }
   };
 
-  if (authLoading) return null;
-  if (!user) return <AuthScreen />;
+  // if (authLoading) return null;
+  // if (!user) return <AuthScreen />;
 
   return (
     <div className="flex min-h-screen bg-[#090B10] text-[#F4F7FB] font-sans antialiased relative">
