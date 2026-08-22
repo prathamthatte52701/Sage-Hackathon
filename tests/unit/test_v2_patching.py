@@ -4,7 +4,7 @@ import zipfile
 import pytest
 from fastapi.responses import JSONResponse, Response
 
-from models.schemas import ApplyProjectFixRequest
+from models.schemas import ApplyProjectFixRequest, FindingReasonRequest, FindingTransform
 from routers import projects
 from services.patching import (
     PatchError,
@@ -88,6 +88,32 @@ def test_malformed_fix_rejected():
 
     assert metadata["can_apply"] is False
     assert metadata["apply_failure_reason"] == "malformed_fix"
+
+
+def test_finding_id_request_does_not_require_an_index():
+    request = FindingReasonRequest(finding_id="stable-finding-id")
+
+    assert request.finding_id == "stable-finding-id"
+    assert request.finding_index == -1
+
+
+def test_transform_validation_is_derived_from_backend_patch_checks():
+    finding = {"file": "src/app.js", "line": 1, "rule": "example"}
+    transform = FindingTransform(
+        original_snippet="const value = 1;",
+        proposed_fix="const value = 2;",
+    )
+
+    enriched = projects._enrich_transform(transform, finding, "const value = 1;\n")
+
+    assert enriched.can_apply is True
+    assert enriched.validation == {
+        "target_found": True,
+        "target_unique": True,
+        "source_unchanged": True,
+        "patch_no_overlap": True,
+        "diff_validated": True,
+    }
 
 
 def test_zip_path_security():

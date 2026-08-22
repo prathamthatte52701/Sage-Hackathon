@@ -36,9 +36,17 @@ def test_project_apply_is_followed_by_canonical_reanalysis_of_stored_source():
 
 
 def test_project_fix_request_uses_stable_finding_identity_when_available():
-    assert "finding_id: finding.finding_id || \"\"" in API
+    assert "return { finding_id: finding.finding_id };" in API
+    assert "finding_index: -1" not in API
     assert "applyProjectFix(projectId, finding)" in API
     assert "transformFinding(projectId, finding)" in API
+
+
+def test_generated_fix_modal_does_not_invent_a_passing_validation_state():
+    modal = (ROOT / "components" / "FixValidationModal.jsx").read_text()
+    assert "target_found: true" not in modal
+    assert "Boolean(fixData.can_apply)" in modal
+    assert "disabled={applying || !allPass}" in modal
 
 
 def test_analysis_client_waits_for_job_before_loading_results():

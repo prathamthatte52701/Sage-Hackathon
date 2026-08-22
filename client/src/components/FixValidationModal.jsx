@@ -77,15 +77,9 @@ export default function FixValidationModal({
 }) {
   if (!fixData) return null;
 
-  const patchValidation = fixData.validation || {
-    target_found: true,
-    target_unique: true,
-    source_unchanged: true,
-    patch_no_overlap: true,
-    diff_validated: true,
-  };
+  const patchValidation = fixData.validation || {};
 
-  const confidence = fixData.confidence || 94;
+  const confidence = Math.round((fixData.confidence || 0) * 100);
 
   const checks = [
     { key: "target_found", label: "Target line found" },
@@ -95,7 +89,7 @@ export default function FixValidationModal({
     { key: "diff_validated", label: "Diff validated" },
   ];
 
-  const allPass = checks.every((c) => patchValidation[c.key]);
+  const allPass = Boolean(fixData.can_apply) && checks.every((c) => patchValidation[c.key] === true);
 
   return (
     <div className="fixed inset-0 z-50 bg-[#090B10]/85 backdrop-blur-md flex items-center justify-center p-4">
@@ -164,7 +158,7 @@ export default function FixValidationModal({
                     : "text-[#FF5D73] bg-[#FF5D73]/10 border-[#FF5D73]/20"
                 }`}
               >
-                {allPass ? "ALL CHECKS PASSED" : "CHECKS FAILED"}
+                {allPass ? "ALL CHECKS PASSED" : "NOT APPLYABLE"}
               </span>
             </div>
 
@@ -192,7 +186,7 @@ export default function FixValidationModal({
           <div className="flex items-center justify-end gap-3 border-t border-[#232936] pt-4">
             <button
               onClick={onReject}
-              disabled={applying}
+              disabled={applying || !allPass}
               className="cm-btn-secondary text-xs px-5 py-2.5 disabled:opacity-50"
             >
               Reject Fix

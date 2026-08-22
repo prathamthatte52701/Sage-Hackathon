@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import CodeViewer from "./CodeViewer";
 import EvidencePanel from "./EvidencePanel";
+import { getProjectFile } from "../api/client";
 
 export default function FindingExplorer({
   project,
@@ -22,6 +23,8 @@ export default function FindingExplorer({
 
   const [severityFilter, setSeverityFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [loadedSource, setLoadedSource] = useState("");
+  const [sourceStatus, setSourceStatus] = useState("idle");
 
   // Select first finding by default if none selected
   const activeFinding = selectedFinding || (findings.length > 0 ? findings[0] : null);
@@ -34,15 +37,33 @@ export default function FindingExplorer({
       (f) => f.path === filePath || f.filename === filePath || f.name === filePath
     );
 
-    if (matchingFile?.content) return matchingFile.content;
-    if (activeFinding.code_context) return activeFinding.code_context;
-    if (activeFinding.evidence_snippet || activeFinding.snippet) {
-      return `// File: ${filePath || "source"}\n// Line ${activeFinding.line || 1}\n\n${
-        activeFinding.evidence_snippet || activeFinding.snippet
-      }`;
-    }
-    return `// File: ${filePath || "source"}\n// Evidence line ${activeFinding.line || 1}`;
+    return matchingFile?.content || loadedSource;
   })();
+
+  useEffect(() => {
+    const filePath = activeFinding?.file || activeFinding?.path;
+    const embedded = files.find((file) => file.path === filePath)?.content;
+    if (!filePath || embedded) {
+      setLoadedSource(embedded || "");
+      setSourceStatus(filePath ? "ready" : "idle");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoadedSource("");
+    setSourceStatus("loading");
+    getProjectFile(project?.project_id || project?._id, filePath)
+      .then((file) => {
+        if (!cancelled) {
+          setLoadedSource(file.content || "");
+          setSourceStatus(file.content ? "ready" : "unavailable");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSourceStatus("unavailable");
+      });
+    return () => { cancelled = true; };
+  }, [activeFinding, files, project?.project_id, project?._id]);
 
   // Filter findings dynamically
   const filteredFindings = findings.filter((f) => {
@@ -195,12 +216,18 @@ export default function FindingExplorer({
 
       {/* COLUMN 2: Code Viewer / Editor Workspace (5 cols) */}
       <div className="lg:col-span-5 h-[520px] lg:h-full overflow-hidden">
-        <CodeViewer
-          fileContent={activeFileContent}
-          filePath={activeFinding?.file}
-          highlightLine={activeFinding?.line}
-          height="100%"
-        />
+        {sourceStatus === "unavailable" ? (
+          <div className="cm-card border-[#232936] bg-[#10131A] h-full flex items-center justify-center p-6 text-center text-xs text-[#687386]">
+            Source is unavailable for this finding.
+          </div>
+        ) : (
+          <CodeViewer
+            fileContent={activeFileContent}
+            filePath={activeFinding?.file}
+            highlightLine={activeFinding?.line}
+            height="100%"
+          />
+        )}
       </div>
 
       {/* COLUMN 3: Evidence & Explanation Panel (4 cols) */}
