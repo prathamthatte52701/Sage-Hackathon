@@ -19,6 +19,7 @@ import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
 import CodeEditor from "./components/CodeEditor";
+import { buildPostFixResult, getAuthoritativeScore } from "./utils/postFixResult";
 import {
   reviewCode,
   generatePasteFix,
@@ -232,6 +233,8 @@ export default function App() {
       return;
     }
     setApplyingFix(true);
+    const beforeScore = getAuthoritativeScore(projectBundle.score);
+    const beforeFindings = [...(projectBundle.findings || [])];
     try {
       // Step 1: Apply the validated patch to stored source.
       await applyProjectFix(
@@ -240,9 +243,56 @@ export default function App() {
       );
 
       // Step 2: Reanalyze the current stored source and refresh its score.
-      const newAnalyzed = await reanalyzeProject(projectBundle.project_id);
-      const newScored = await scoreProject(projectBundle.project_id);
-      setReanalysisResult({ after_score: newScored.overall_score, behavior_verified: false });
+      let newAnalyzed;
+      let newScored;
+      try {
+        newAnalyzed = await reanalyzeProject(projectBundle.project_id);
+        newScored = await scoreProject(projectBundle.project_id);
+      } catch (verificationErr) {
+        let fresh = null;
+        let scored = null;
+        try {
+          fresh = await getProject(projectBundle.project_id);
+          scored = await scoreProject(projectBundle.project_id);
+        } catch {
+          // The source mutation already succeeded. Keep the popup honest even
+          // if the verification refresh also fails.
+        }
+        setReanalysisResult(buildPostFixResult({
+          beforeScore,
+          afterScore: getAuthoritativeScore(scored),
+          beforeFindings,
+          afterFindings: fresh?.findings || [],
+          verificationStatus: "incomplete",
+          error: verificationErr.message || "Fix applied, but reanalysis could not verify the result.",
+        }));
+        if (fresh || scored) {
+          setProjectBundle((prev) => ({
+            ...prev,
+            project: fresh?.project || fresh || prev.project,
+            files: fresh?.files || prev.files,
+            findings: fresh?.findings || prev.findings || [],
+            score: scored || prev.score,
+          }));
+        }
+        setActiveFixData(null);
+        refreshHistory();
+        setToast({
+          type: "info",
+          title: "Fix Applied",
+          message: "Fix applied, but verification reanalysis did not complete.",
+        });
+        return;
+      }
+
+      const afterFindings = newAnalyzed.findings || [];
+      setReanalysisResult(buildPostFixResult({
+        beforeScore,
+        afterScore: getAuthoritativeScore(newScored),
+        beforeFindings,
+        afterFindings,
+        verificationStatus: "verified",
+      }));
 
       setProjectBundle((prev) => ({
         ...prev,
@@ -491,9 +541,6 @@ export default function App() {
           {activeTab === "architecture" && (
             <ArchitectureView
               project={projectBundle}
-              onSelectFile={(path) => {
-                setActiveTab("findings");
-              }}
             />
           )}
 

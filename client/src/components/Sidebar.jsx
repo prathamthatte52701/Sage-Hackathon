@@ -15,6 +15,7 @@ import {
   Skull,
   Flame,
 } from "lucide-react";
+import { getAuthoritativeScore } from "../utils/postFixResult";
 
 export default function Sidebar({
   activeTab,
@@ -26,14 +27,15 @@ export default function Sidebar({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const hasProject = Boolean(project);
+  const healthScore = getAuthoritativeScore(project?.score);
 
   const navItems = [
     {
       id: "overview",
       label: "Overview",
       icon: LayoutDashboard,
-      badge: project?.score ? `${Math.round(project.score.overall_score || project.score.health_score || 0)}/100` : null,
-      badgeColor: project?.score?.overall_score > 75 ? "text-[#36D399]" : "text-[#F4C95D]",
+      badge: healthScore !== null ? `${Math.round(healthScore)}/100` : null,
+      badgeColor: healthScore > 75 ? "text-[#36D399]" : "text-[#F4C95D]",
     },
     {
       id: "findings",

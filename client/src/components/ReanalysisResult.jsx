@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, TrendingUp, Download, ArrowRight, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, ArrowRight, TrendingDown, TrendingUp, X } from "lucide-react";
 import { fixedProjectZipUrl } from "../api/client";
 
 // Animated counter that counts up to target
@@ -30,9 +30,11 @@ function AnimatedNumber({ target, decimals = 1, delay = 0 }) {
 export default function ReanalysisResult({ result, projectId, onClose }) {
   if (!result) return null;
 
-  const before = typeof result.before_score === "number" ? result.before_score : 0;
-  const after = typeof result.after_score === "number" ? result.after_score : 0;
-  const delta = after - before;
+  const before = typeof result.before_score === "number" ? result.before_score : null;
+  const after = typeof result.after_score === "number" ? result.after_score : null;
+  const hasDelta = before !== null && after !== null;
+  const delta = hasDelta ? after - before : null;
+  const verified = result.verification_status === "verified";
 
   const resolved = result.resolved_findings ?? [];
   const remaining = result.remaining_findings ?? [];
@@ -45,14 +47,22 @@ export default function ReanalysisResult({ result, projectId, onClose }) {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-[#232936] pb-3">
         <div className="flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-[#36D399]" />
+          {verified ? (
+            <CheckCircle2 className="w-5 h-5 text-[#36D399]" />
+          ) : (
+            <AlertTriangle className="w-5 h-5 text-[#F4C95D]" />
+          )}
           <h3 className="text-sm font-bold text-[#F4F7FB] tracking-tight">
-            FIX APPLIED & REANALYZED
+            {verified ? "FIX APPLIED & REANALYZED" : "FIX APPLIED, VERIFICATION INCOMPLETE"}
           </h3>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-[#36D399]/10 border border-[#36D399]/30 text-[#36D399]">
-            VERIFIED
+          <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded border ${
+            verified
+              ? "bg-[#36D399]/10 border-[#36D399]/30 text-[#36D399]"
+              : "bg-[#F4C95D]/10 border-[#F4C95D]/30 text-[#F4C95D]"
+          }`}>
+            {verified ? "VERIFIED" : "INCOMPLETE"}
           </span>
           {onClose && (
             <button onClick={onClose} className="text-[#687386] hover:text-[#F4F7FB] p-1 transition-colors">
@@ -68,36 +78,58 @@ export default function ReanalysisResult({ result, projectId, onClose }) {
           <div className="text-[10px] font-mono text-[#687386] uppercase tracking-wider">
             PROJECT HEALTH SCORE
           </div>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-xl font-bold font-mono text-[#9AA4B2] line-through">
-              {before.toFixed(1)}
-            </span>
-            <ArrowRight className="w-4 h-4 text-[#7C8CFF]" />
-            <span className="text-3xl font-bold font-mono text-[#36D399]">
-              <AnimatedNumber target={after} delay={200} />
-            </span>
-            <span className="text-xs text-[#687386]">/100</span>
-          </div>
+          {hasDelta ? (
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-xl font-bold font-mono text-[#9AA4B2]">
+                {before.toFixed(1)}
+              </span>
+              <ArrowRight className="w-4 h-4 text-[#7C8CFF]" />
+              <span className="text-3xl font-bold font-mono text-[#36D399]">
+                <AnimatedNumber target={after} delay={200} />
+              </span>
+              <span className="text-xs text-[#687386]">/100</span>
+            </div>
+          ) : (
+            <div className="mt-1 space-y-1">
+              <div className="text-2xl font-bold font-mono text-[#36D399]">
+                {after !== null ? <><AnimatedNumber target={after} delay={200} /> <span className="text-xs text-[#687386]">/100</span></> : "Score unavailable"}
+              </div>
+              <div className="text-[11px] text-[#F4C95D] font-mono">
+                {before === null ? "Previous score unavailable" : "Current score unavailable"}
+              </div>
+            </div>
+          )}
         </div>
 
-        {delta >= 0 ? (
+        {hasDelta && delta >= 0 ? (
           <div className="flex items-center gap-1.5 text-xs font-mono text-[#36D399] bg-[#36D399]/10 px-3 py-1.5 rounded-lg border border-[#36D399]/20 font-bold">
             <TrendingUp className="w-4 h-4" />
             <span>+{delta.toFixed(1)} pts</span>
           </div>
-        ) : (
+        ) : hasDelta ? (
           <div className="flex items-center gap-1.5 text-xs font-mono text-[#FF5D73] bg-[#FF5D73]/10 px-3 py-1.5 rounded-lg border border-[#FF5D73]/20 font-bold">
+            <TrendingDown className="w-4 h-4" />
             <span>{delta.toFixed(1)} pts</span>
+          </div>
+        ) : (
+          <div className="text-[11px] font-mono text-[#9AA4B2] bg-[#151922] px-3 py-1.5 rounded-lg border border-[#232936]">
+            Delta unavailable
           </div>
         )}
       </div>
+
+      {!verified && (
+        <div className="rounded-lg border border-[#F4C95D]/30 bg-[#F4C95D]/5 p-3 text-xs text-[#F4C95D]">
+          {result.error || "The fix was applied, but the verification reanalysis did not complete."}
+        </div>
+      )}
 
       {/* Metric Stats */}
       <div className="grid grid-cols-3 gap-3 text-center font-mono text-xs">
         <div className="p-2.5 rounded-lg bg-[#090B10] border border-[#232936]">
           <div className="text-[10px] text-[#687386] uppercase tracking-wider">RESOLVED</div>
           <div className="text-xl font-bold text-[#36D399] mt-0.5">
-            <AnimatedNumber target={resolved.length || 1} decimals={0} delay={400} />
+            <AnimatedNumber target={resolved.length} decimals={0} delay={400} />
           </div>
         </div>
         <div className="p-2.5 rounded-lg bg-[#090B10] border border-[#232936]">

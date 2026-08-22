@@ -1,6 +1,7 @@
 import React from "react";
 import { Menu, RefreshCw, Download, ShieldCheck } from "lucide-react";
 import { fixedProjectZipUrl } from "../api/client";
+import { getAuthoritativeScore } from "../utils/postFixResult";
 
 export default function Header({
   activeTab,
@@ -29,6 +30,7 @@ export default function Header({
         return "Code Master AI Workspace";
     }
   };
+  const healthScore = getAuthoritativeScore(project?.score);
 
   return (
     <header className="min-h-16 border-b border-[#232936] bg-[#090B10]/90 backdrop-blur-md px-4 sm:px-6 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sticky top-0 z-20">
@@ -58,13 +60,13 @@ export default function Header({
         {project && (
           <>
             {/* Quick Score Pill */}
-            {project.score && (
+            {project.score && healthScore !== null && (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#10131A] border border-[#232936]">
                 <ShieldCheck className="w-4 h-4 text-[#7C8CFF]" />
               <div className="flex items-baseline gap-1 text-xs">
                   <span className="text-[#687386] font-medium hidden sm:inline">Health:</span>
                   <span className="font-mono font-bold text-[#F4F7FB]">
-                    {(project.score.overall_score || project.score.health_score || 0).toFixed(1)}
+                    {healthScore.toFixed(1)}
                   </span>
                   <span className="text-[#687386]">/100</span>
                 </div>
