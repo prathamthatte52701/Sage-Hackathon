@@ -704,6 +704,14 @@ def _enrich_transform(transform: FindingTransform, finding: dict, content: str |
     transform.target_end = metadata.get("target_end", 0)
     transform.start_line = metadata.get("start_line", 0)
     transform.end_line = metadata.get("end_line", 0)
+    reason = transform.apply_failure_reason
+    transform.validation = {
+        "target_found": bool(original) and reason != "target_not_found",
+        "target_unique": bool(original) and reason != "ambiguous_target",
+        "source_unchanged": content is not None and reason != "stale_source",
+        "patch_no_overlap": content is not None and reason != "overlapping_patch",
+        "diff_validated": bool(transform.diff) and reason != "malformed_fix",
+    }
     return transform
 
 

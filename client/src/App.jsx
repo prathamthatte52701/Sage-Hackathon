@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import useSessionId from "./hooks/useSessionId";
-// AUTH DISABLED: uncomment to bring the login/signup gate back.
-// import { useAuth } from "./context/AuthContext";
-// import AuthScreen from "./components/AuthScreen";
+import { useAuth } from "./context/AuthContext";
+import AuthScreen from "./components/AuthScreen";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import LandingHero from "./components/LandingHero";
@@ -32,7 +31,7 @@ import {
 
 export default function App() {
   const sessionId = useSessionId();
-  // AUTH DISABLED: const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   // Navigation State: "overview" | "findings" | "paste_review" | "projects" | "chat" | "architecture" | "history"
   const [activeTab, setActiveTab] = useState("projects");
@@ -168,26 +167,20 @@ export default function App() {
     if (!projectBundle?.project_id || !finding || generatingFix) return;
     setGeneratingFix(true);
     try {
-      const findingIdx = (projectBundle.findings || []).indexOf(finding);
       const data = await transformFinding(
         projectBundle.project_id,
         finding
       );
 
       setActiveFixData({
-        findingIndex: findingIdx >= 0 ? findingIdx : 0,
         finding,
-        original_code: data.original_code || data.before || (finding.code_context || "user payload execution"),
-        fixed_code: data.fixed_code || data.after || (data.suggested_fix || "parameterized query execution"),
-        explanation: data.explanation || "Replaces vulnerable payload execution with validated parameterized code.",
-        confidence: data.confidence || 94,
-        validation: data.validation || {
-          target_found: true,
-          target_unique: true,
-          source_unchanged: true,
-          patch_no_overlap: true,
-          diff_validated: true,
-        },
+        original_code: data.original_code,
+        fixed_code: data.fixed_code,
+        explanation: data.explanation,
+        confidence: data.confidence,
+        can_apply: data.can_apply,
+        apply_failure_reason: data.apply_failure_reason,
+        validation: data.validation,
       });
     } catch (err) {
       setToast({
@@ -281,9 +274,8 @@ export default function App() {
     }
   };
 
-  // AUTH FROZEN: unfreeze karne pe ye 2 lines uncomment kar do
-  // if (authLoading) return null;
-  // if (!user) return <AuthScreen />;
+  if (authLoading) return null;
+  if (!user) return <AuthScreen />;
 
   return (
     <div className="flex min-h-screen bg-[#090B10] text-[#F4F7FB] font-sans antialiased relative">
@@ -343,9 +335,8 @@ export default function App() {
               generatingFix={generatingFix}
               onReasonFinding={async (finding) => {
                 if (!projectBundle?.project_id) return;
-                const idx = (projectBundle.findings || []).indexOf(finding);
                 try {
-                  const res = await reasonFinding(projectBundle.project_id, idx >= 0 ? idx : 0);
+                  const res = await reasonFinding(projectBundle.project_id, finding);
                   setToast({
                     type: "info",
                     title: "Reasoning Analysis",

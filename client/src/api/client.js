@@ -22,38 +22,33 @@ function toFriendlyMessage(err, fallback) {
   return fallback;
 }
 
-// AUTH DISABLED: server no longer routes /api/auth/*. Uncomment together
-// with routers/auth.py and its main.py registration to bring these back.
-// export async function signup(email, password) {
-//   try {
-//     const res = await api.post("/api/auth/signup", { email, password });
-//     return res.data;
-//   } catch (err) {
-//     throw new Error(toFriendlyMessage(err, "Could not create account. Please try again."));
-//   }
-// }
-//
-// export async function login(email, password) {
-//   try {
-//     const res = await api.post("/api/auth/login", { email, password });
-//     return res.data;
-//   } catch (err) {
-//     throw new Error(toFriendlyMessage(err, "Login failed. Please try again."));
-//   }
-// }
-//
-// export async function logout() {
-//   try {
-//     await api.post("/api/auth/logout");
-//   } catch {
-//     // best-effort -- the client clears its own auth state regardless
-//   }
-// }
-//
-// export async function getMe() {
-//   const res = await api.get("/api/auth/me");
-//   return res.data;
-// }
+export async function signup(email, password) {
+  try {
+    return (await api.post("/api/auth/signup", { email, password })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not create account. Please try again."));
+  }
+}
+
+export async function login(email, password) {
+  try {
+    return (await api.post("/api/auth/login", { email, password })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Login failed. Please try again."));
+  }
+}
+
+export async function logout() {
+  try {
+    await api.post("/api/auth/logout");
+  } catch {
+    // The local session UI can still reset after a failed best-effort logout.
+  }
+}
+
+export async function getMe() {
+  return (await api.get("/api/auth/me")).data;
+}
 
 export async function reviewCode(code, language, sessionId) {
   try {
@@ -165,9 +160,21 @@ export async function scoreProject(projectId) {
 }
 
 function findingReference(finding) {
-  return typeof finding === "object"
-    ? { finding_id: finding.finding_id || "", finding_index: -1 }
-    : { finding_index: finding };
+  if (typeof finding === "object" && finding !== null) {
+    if (!finding.finding_id) {
+      throw new Error("This finding is missing its stable ID. Reanalyze the project and try again.");
+    }
+    return { finding_id: finding.finding_id };
+  }
+  return { finding_index: finding };
+}
+
+export async function getProjectFile(projectId, filePath) {
+  try {
+    return (await api.get(`/api/projects/${projectId}/files/${filePath}`)).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load this project file."));
+  }
 }
 
 export async function transformFinding(projectId, finding) {

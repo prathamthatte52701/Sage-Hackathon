@@ -58,7 +58,7 @@ class FindingReasoning(BaseModel):
 
 
 class FindingReasonRequest(BaseModel):
-    finding_index: int
+    finding_index: int = -1
     finding_id: str = ""
 
 
@@ -94,6 +94,7 @@ class FindingTransform(BaseModel):
     target_start: int = 0
     target_end: int = 0
     source_hash: str = ""
+    validation: dict[str, bool] = Field(default_factory=dict)
 
 
 class PasteFixRequest(BaseModel):
