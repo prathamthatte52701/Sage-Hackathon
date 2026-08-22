@@ -38,6 +38,13 @@ class ReviewResponse(BaseModel):
     ai_quality_review: list[Issue] = []
     knowledge_retrieval: dict = {}
     language_detection: dict = {}
+    # Phase 1 closed-world gate output (services/security_rules.py): only
+    # deterministic findings whose rule maps to one of the 12 locked
+    # SEC-* families and carry a real file/line survive here. Additive --
+    # existing `issues`/`ai_quality_review` fields are untouched so the
+    # current UI doesn't break; later phases will switch primary UI to
+    # consume this field exclusively.
+    security_findings: list[dict] = []
 
 
 class ExplainRequest(BaseModel):
