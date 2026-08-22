@@ -248,6 +248,25 @@ async def update_owned_project(
     return bool(result.matched_count)
 
 
+async def update_owned_finding(project_id: str, owner_user_id: str, finding_id: str, updates: dict) -> bool:
+    """Atomically update one persisted finding without replacing its siblings."""
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(project_id)
+    except InvalidId:
+        return False
+    if not finding_id:
+        return False
+    fields = {f"findings.$.{key}": value for key, value in updates.items()}
+    result = await _require_db().projects.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id, "findings.finding_id": finding_id},
+        {"$set": fields},
+    )
+    return bool(result.matched_count)
+
+
 async def create_analysis_job(project_id: str, owner_user_id: str) -> str:
     from bson import ObjectId
 
