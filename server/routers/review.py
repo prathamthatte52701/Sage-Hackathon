@@ -8,7 +8,7 @@ from db.mongo import get_history, save_review
 from knowledge.retrieval import _GENERIC_QUERY_WORDS, redact_sensitive_query_text, retrieve_knowledge
 from knowledge.seed_data import KNOWLEDGE_RECORDS
 from models.schemas import FindingTransform, Issue, PasteFixRequest, ReviewRequest, ReviewResponse
-from services.auth import get_current_user
+from services.auth import get_request_user
 from services.patching import build_patch_metadata
 from services.groq_client import GroqUnavailableError, call_groq
 from services.analyzers.rules import run_rules
@@ -758,7 +758,7 @@ def rerank_paste_knowledge(knowledge: dict, query: str, code: str, top_k: int = 
 
 
 @router.post("/review", response_model=ReviewResponse)
-async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_current_user)):
+async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_request_user)):
     tracer = StageTracer("paste_review")
     try:
         language_detection = detect_language(payload.code, payload.language)
@@ -907,7 +907,7 @@ async def review(payload: ReviewRequestIn, current_user: dict = Depends(get_curr
 
 
 @router.post("/review/fix", response_model=FindingTransform)
-async def fix_paste_issue(payload: PasteFixRequest, current_user: dict = Depends(get_current_user)):
+async def fix_paste_issue(payload: PasteFixRequest, current_user: dict = Depends(get_request_user)):
     try:
         issue = dict(payload.issue or {})
         finding = {
@@ -939,7 +939,7 @@ async def fix_paste_issue(payload: PasteFixRequest, current_user: dict = Depends
 
 
 @router.get("/reviews/history")
-async def history(current_user: dict = Depends(get_current_user)):
+async def history(current_user: dict = Depends(get_request_user)):
     try:
         return await get_history(current_user["_id"])
     except Exception as exc:

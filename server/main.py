@@ -6,14 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import CORS_ORIGINS, JWT_SECRET, MONGO_URL
-# AUTH DISABLED: restore the auth import and router registration to re-enable login/session endpoints.
-from routers import explain, projects, review
+from config import AUTH_ENABLED, CORS_ORIGINS, JWT_SECRET, MONGO_URL
+from routers import auth, explain, projects, review
 from services.rate_limit import check_rate_limit
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if not JWT_SECRET:
+    if AUTH_ENABLED and not JWT_SECRET:
         raise RuntimeError("JWT_SECRET is not set. Configure it in the environment before starting the server.")
     if MONGO_URL:
         from db.mongo import ensure_indexes
@@ -73,7 +72,8 @@ async def rate_limit_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-# app.include_router(auth.router, prefix="/api")  # AUTH DISABLED
+if AUTH_ENABLED:
+    app.include_router(auth.router, prefix="/api")
 app.include_router(review.router, prefix="/api")
 app.include_router(explain.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")

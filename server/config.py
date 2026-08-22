@@ -13,8 +13,13 @@ PROJECT_AI_CALL_BUDGET = int(os.getenv("PROJECT_AI_CALL_BUDGET", "48") or "48")
 MONGO_URL = os.getenv("MONGO_URL", "")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "code_reviewer")
 
-# No fallback: a guessable default here would let auth run "successfully"
-# with a forgeable session secret. auth.py raises at first real use if unset.
+# Demo builds deliberately use one server-owned identity. This preserves the
+# ownership schema without accepting a user identity from the browser.
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").strip().lower() == "true"
+DEMO_USER_ID = os.getenv("DEMO_USER_ID", "demo-user").strip() or "demo-user"
+
+# No fallback: a guessable default here would let enabled auth run
+# "successfully" with a forgeable session secret.
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60") or "60")
