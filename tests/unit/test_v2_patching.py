@@ -168,7 +168,8 @@ async def test_download_fixed_zip_preserves_paths_and_content(monkeypatch):
     response = await projects.download_fixed_project("p1", current_user={"_id": "test-user"})
 
     assert isinstance(response, Response)
-    zf = zipfile.ZipFile(io.BytesIO(response.body))
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    zf = zipfile.ZipFile(io.BytesIO(body))
     assert set(zf.namelist()) == {"src/app.js", "README.md"}
     assert zf.read("src/app.js").decode() == "patched"
 
