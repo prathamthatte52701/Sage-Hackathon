@@ -11,6 +11,8 @@ from pathlib import PurePosixPath
 
 from services.analyzers import get_analyzer
 from services.analyzers.rules import run_rules
+from services.analyzers.python_taint import analyze_python_taint
+from services.structural import analyze_python_source
 
 SOURCE_LANGUAGES = {"python", "javascript", "typescript", "java", "cpp"}
 
@@ -77,7 +79,7 @@ def analyze_project(project: dict) -> dict:
     # whatever imports/functions/findings/etc a prior analyze call wrote)
     # would append onto the existing lists and double every entry on each
     # reanalysis instead of replacing them.
-    for key in ("imports", "functions", "classes", "apiEndpoints", "tests", "configs", "deploymentFiles", "findings", "warnings"):
+    for key in ("imports", "functions", "classes", "apiEndpoints", "tests", "configs", "deploymentFiles", "findings", "warnings", "structuralMetadata"):
         project[key] = []
 
     warnings = project["warnings"]
@@ -99,6 +101,57 @@ def analyze_project(project: dict) -> dict:
 
         if content is None:
             continue
+
+        if language == "python":
+            module = analyze_python_source(content)
+            if module.parse_error is None:
+                project["structuralMetadata"].append(
+                    {
+                        "file": path,
+                        "language": "python",
+                        "imports": module.imports,
+                        "from_imports": module.from_imports,
+                        "assignments": module.assignments,
+                        "functions": [
+                            {
+                                "name": fn.name,
+                                "start_line": fn.start_line,
+                                "end_line": fn.end_line,
+                                "args": fn.args,
+                                "is_async": fn.is_async,
+                                "decorators": fn.decorators,
+                                "returns": fn.returns,
+                                "calls": [call.__dict__ for call in fn.calls],
+                                "exception_handlers": fn.exception_handlers,
+                                "assignments": fn.assignments,
+                                "awaits": fn.awaits,
+                            }
+                            for fn in module.functions
+                        ],
+                        "classes": [
+                            {
+                                "name": cls.name,
+                                "start_line": cls.start_line,
+                                "end_line": cls.end_line,
+                                "decorators": cls.decorators,
+                                "methods": [
+                                    {
+                                        "name": fn.name,
+                                        "start_line": fn.start_line,
+                                        "end_line": fn.end_line,
+                                        "args": fn.args,
+                                        "is_async": fn.is_async,
+                                        "decorators": fn.decorators,
+                                        "returns": fn.returns,
+                                    }
+                                    for fn in cls.methods
+                                ],
+                            }
+                            for cls in module.classes
+                        ],
+                    }
+                )
+                project["findings"].extend(analyze_python_taint(path, content, module.tree))
 
         analyzer = get_analyzer(language)
         if analyzer is not None:
@@ -122,14 +175,36 @@ def analyze_project(project: dict) -> dict:
 
         project["findings"].extend(run_rules(path, language, content))
 
-    # Deduplicate equivalent static findings across rules/analyzers.
+    # Deduplicate exact repeats and merge known regex/AST equivalents while
+    # preserving the stronger source-to-sink evidence.
     seen = set()
     deduped = []
+    semantic_groups = {
+        "sql_injection": {"sql_injection", "sql_concat"},
+        "command_injection": {"command_injection", "subprocess_shell_true", "os_system_call"},
+        "ssrf": {"ssrf", "ssrf_untrusted_url"},
+        "xss_unsafe_html_sink": {"xss_unsafe_html_sink"},
+    }
     for finding in project.get("findings", []):
         key = (finding.get("file"), finding.get("line"), finding.get("rule"), finding.get("evidence"))
         if key in seen:
             continue
+        group = next((name for name, rules in semantic_groups.items() if finding.get("rule") in rules), None)
+        if group:
+            for existing in deduped:
+                existing_group = next((name for name, rules in semantic_groups.items() if existing.get("rule") in rules), None)
+                if (
+                    existing_group == group
+                    and existing.get("file") == finding.get("file")
+                    and abs(int(existing.get("line") or 0) - int(finding.get("line") or 0)) <= 2
+                ):
+                    if finding.get("evidence_type") == "ast_source_sink" or existing.get("evidence_type") != "ast_source_sink":
+                        existing.update(finding)
+                    break
+            else:
+                deduped.append(finding)
+        else:
+            deduped.append(finding)
         seen.add(key)
-        deduped.append(finding)
     project["findings"] = deduped
     return project

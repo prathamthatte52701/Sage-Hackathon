@@ -3,7 +3,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 Language = Literal["javascript", "python", "java", "cpp", "typescript"]
-Severity = Literal["critical", "medium", "low"]
+Severity = Literal["critical", "high", "medium", "low"]
 Category = Literal[
     "security", "logic", "performance", "style", "best_practice",
     "correctness", "reliability", "database", "api_design", "architecture",
@@ -107,3 +107,19 @@ class ApplyProjectFixRequest(BaseModel):
 
 class DownloadProjectRequest(BaseModel):
     filename: str | None = None
+
+
+class SignupRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=1, max_length=254)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    created_at: str = ""

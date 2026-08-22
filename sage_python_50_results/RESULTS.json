@@ -1,0 +1,4791 @@
+[
+  {
+    "test_id": 1,
+    "zip_file": "py_001_hardcoded_secret.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "hardcoded_secret"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "Do not report missing timeout; timeout=5 is present.",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "hardcoded_secret"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Hard-coded API secret exposed in source code",
+        "evidence": "API_KEY = \"demo-secret-key-123\"",
+        "verdict": "matched_theme:hardcoded_secret",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": true,
+            "reason": "directly on-topic: no hardcoded credentials"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "parameterized-queries standard has nothing to do with a hardcoded secret"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "User-provided identifier is interpolated into a URL without validation, risking path-traversal or SSRF",
+        "evidence": "requests.get(f\"https://example.invalid/users/{user_id}\", ...)",
+        "verdict": "false_positive",
+        "fp_reason": "Host is a fixed literal (example.invalid); user_id only affects a URL path segment. Neither SSRF (no attacker-controlled destination host) nor path-traversal (no filesystem path involved) actually applies to this code shape; a milder 'unvalidated input in URL path' framing would have been accurate but SSRF/path-traversal is unsupported.",
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated to hardcoded credentials"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated to SQL"
+          }
+        ]
+      },
+      {
+        "idx": 2,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "No handling of network or JSON parsing errors from the HTTP request",
+        "evidence": "return requests.get(...).json()",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "about module separation, not error handling"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "about circular imports, not error handling"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 1,
+    "duplicate_count": 0,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 5,
+    "telemetry": {
+      "analysis_ms": 2547.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 3,
+      "ai_candidates": 3,
+      "grounding_rejected": "not exposed by pipeline (0 apparent: candidates==accepted)",
+      "ai_findings_accepted": 3,
+      "final_unique_findings": 3,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 85.5,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 77,
+        "code_quality": 100,
+        "architecture": 97,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "None: security correctly shows 77 (not a misleading 100) despite the deterministic-layer miss, because the AI layer independently recovered the theme."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Deterministic hardcoded_secret regex (_RE_SECRET) DOES match 'API_KEY = \"demo-secret-key-123\"', but the _is_comment_or_non_secret_context guard in services/analyzers/rules.py (radius=180 chars, spans this whole 4-line file) sees the unrelated word 'example' in the same file's 'https://example.invalid' placeholder URL and incorrectly treats the entire file as a non-secret/example context, suppressing the deterministic finding. Confirmed by direct regex test against the exact fixture source. AI quality review independently caught the theme, so the miss did not propagate to the health score. RAG guidance for this test is mostly generic-category fallback noise (5/6 irrelevant citations)."
+  },
+  {
+    "test_id": 2,
+    "zip_file": "py_002_eval_untrusted_input.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "dangerous_eval"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "dangerous_eval"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "dangerous_eval",
+        "category": "security",
+        "severity": "critical",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Use of eval/exec on potentially untrusted input",
+        "evidence": "eval(",
+        "verdict": "matched_theme:dangerous_eval",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-03",
+            "relevant": true,
+            "reason": "exact RULE_TO_STANDARD match for dangerous_eval"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 0,
+    "telemetry": {
+      "analysis_ms": 2532.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "n/a (0 accepted, candidate deduped against deterministic finding, not grounding-rejected)",
+      "ai_findings_accepted": 0,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 84.4,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 75,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PASS",
+    "notes": "Clean exact-rule match: deterministic dangerous_eval fired correctly, AI candidate correctly deduped rather than surfacing a duplicate, and its citedStandards used the exact RULE_TO_STANDARD mapping (SEC-03) instead of the generic category fallback -- fully relevant guidance. No false positives, no duplicates, no misleading score."
+  },
+  {
+    "test_id": 3,
+    "zip_file": "py_003_sql_injection.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "sql_injection"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "sql_injection"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "SQL injection vulnerability due to interpolating user input directly into SQL query",
+        "evidence": "query = f\"SELECT id, name FROM users WHERE name = '{name}'\"",
+        "verdict": "matched_theme:sql_injection",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated to hardcoded credentials"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": true,
+            "reason": "parameterized queries is exactly the correct fix here"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 1,
+    "telemetry": {
+      "analysis_ms": 2672.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Deterministic sql_concat regex (_RE_SQL_CONCAT) structurally cannot match this exact idiom: its f-string/brace alternative requires '{' to appear before any quote character, but the classic quoted-placeholder SQL pattern f\"...WHERE name = '{name}'\" puts a single-quote (the SQL string-literal delimiter) before the '{'. Verified by direct regex test against this fixture's source -- no match. AI quality review correctly caught the theme instead. citedStandards fell to the generic security-category fallback (SEC-01, SEC-02) since finding.rule='ai_quality_security' is not in RULE_TO_STANDARD; SEC-02 happens to be topically correct by coincidence, SEC-01 is not."
+  },
+  {
+    "test_id": 4,
+    "zip_file": "py_004_shell_injection.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "command_injection"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "command_injection"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "subprocess_shell_true",
+        "category": "security",
+        "severity": "high",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Shell/subprocess call with an unsanitized command string risks command injection",
+        "evidence": "subprocess.run(command, shell=True",
+        "verdict": "matched_theme:command_injection",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-04",
+            "relevant": true,
+            "reason": "exact RULE_TO_STANDARD match"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Potential command injection: user-controlled 'host' is interpolated into a shell command with shell=True.",
+        "evidence": "command = f\"ping -c 1 {host}\"",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 1984.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 83.3,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 70,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "security=70 double-counts one real vulnerability as two (-15 -15) because the AI candidate duplicates the deterministic finding one line away and survived dedup -- the true single-issue severity impact is overstated."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme correctly matched by both detectors, but they describe the identical root cause (unsanitized host -> shell=True) one line apart and are NOT deduplicated: services/project_review.py's _dedupe_against_deterministic only drops an AI finding that shares the EXACT SAME line as a deterministic one (line 4 vs line 3 here), unlike the paste-review path's dedupe_ai_findings which uses a +/-2 line window and identifier/theme overlap. Both findings report severity=high; oracle expected critical (minor calibration gap, not scored as a miss since the theme itself is correctly identified). RAG for the AI-sourced duplicate is generic-fallback noise."
+  },
+  {
+    "test_id": 5,
+    "zip_file": "py_005_path_traversal.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "path_traversal"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "path_traversal"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Potential path traversal vulnerability: user-controlled filename is concatenated with UPLOAD_ROOT without validation",
+        "evidence": "def read_upload(filename: str):\n    return (UPLOAD_ROOT / filename).read_text(encoding='utf-8')",
+        "verdict": "matched_theme:path_traversal",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2266.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "SAGE's deterministic rule set (services/analyzers/rules.py RULE_METADATA) has NO generic path-traversal rule at all (only unsafe_archive_extract for zip-slip); this theme relies entirely on the AI layer, which caught it correctly and well-grounded here. citedStandards is 100% generic-category fallback (SEC-01/SEC-02, neither relevant) because there is also no path-traversal entry in the STANDARDS table (services/standards.py) -- so even a hypothetical exact-rule match would have nowhere correct to point."
+  },
+  {
+    "test_id": 6,
+    "zip_file": "py_006_ssrf.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "ssrf"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "Do not report missing timeout; timeout=4 is present.",
+    "negative_assertion_violated": false,
+    "matched_themes": [],
+    "missed_themes": [
+      "ssrf"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Network request errors are not caught, leading to unhandled exceptions",
+        "evidence": "r = requests.get(url, timeout=4)",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2047.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 90.6,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 97,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "security=100/evaluated is MISLEADING here: the seeded SSRF vulnerability (preview(url) fetches an arbitrary caller-supplied URL with no allow-list) was completely missed, so the security dimension shows a perfect score despite a real, high-severity seeded issue in exactly that dimension."
+      ]
+    },
+    "verdict": "FAIL",
+    "notes": "Source is `def preview(url): requests.get(url, timeout=4)` -- an unvalidated caller-supplied URL fetched directly, textbook SSRF, identical in shape to py_018's requests.get(url, timeout=5) which SAGE DID correctly label SSRF. Here the AI quality review produced only one unrelated low-severity reliability nit (missing try/except) and never mentioned SSRF/untrusted destination/URL validation at all -- a genuine miss of the seeded theme, not a grounding or categorization dispute. Deterministic ssrf_untrusted_url regex also does not fire (it only matches requests.get(request.args/json...) as the literal first argument, not a plain function parameter named url), so nothing else backstops the miss. This is direct evidence of inconsistent AI detection on near-identical vulnerable code shapes across fixtures. Negative assertion (timeout=4 present) correctly not violated."
+  },
+  {
+    "test_id": 7,
+    "zip_file": "py_007_unsafe_yaml.zip",
+    "difficulty": "easy",
+    "source_lines": 3,
+    "expected_themes": [
+      "unsafe_deserialization"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "unsafe_deserialization"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "unsafe_deserialization",
+        "category": "security",
+        "severity": "high",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Unsafe deserialization of potentially untrusted data",
+        "evidence": "yaml.load(",
+        "verdict": "matched_theme:unsafe_deserialization",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-06",
+            "relevant": true,
+            "reason": "exact RULE_TO_STANDARD match"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Using yaml.load with the default Loader can execute arbitrary code on untrusted input.",
+        "evidence": "return yaml.load(raw_text, Loader=yaml.Loader)",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2265.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 84.4,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 70,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "security=70 double-deducts the single real vulnerability (-15 -15) via the same missing-line-exact-match dedup gap seen in py_004."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Same duplicate pattern as py_004: deterministic and AI findings describe the identical yaml.load(Loader=yaml.Loader) call one line apart and are not merged by _dedupe_against_deterministic (exact-line-only match). Theme correctly and strongly matched."
+  },
+  {
+    "test_id": 8,
+    "zip_file": "py_008_unsafe_pickle.zip",
+    "difficulty": "easy",
+    "source_lines": 3,
+    "expected_themes": [
+      "unsafe_deserialization"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "unsafe_deserialization"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "unsafe_deserialization",
+        "category": "security",
+        "severity": "high",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Unsafe deserialization of potentially untrusted data",
+        "evidence": "pickle.loads(",
+        "verdict": "matched_theme:unsafe_deserialization",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-06",
+            "relevant": true,
+            "reason": "exact RULE_TO_STANDARD match"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Deserializing arbitrary bytes with pickle.loads can lead to RCE",
+        "evidence": "return pickle.loads(blob)",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2219.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 83.3,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 70,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "security=70 double-deducts one real vulnerability, same exact-line-only dedup gap as py_004/py_007."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Same deterministic+AI duplicate pattern already seen in py_004/py_007 (one line apart, not deduplicated). Theme correctly matched; oracle expected severity=critical vs SAGE's high (minor calibration gap)."
+  },
+  {
+    "test_id": 9,
+    "zip_file": "py_009_jwt_signature_disabled.zip",
+    "difficulty": "easy",
+    "source_lines": 3,
+    "expected_themes": [
+      "jwt_signature_disabled"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "jwt_signature_disabled"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "JWT is decoded without verifying its signature, allowing forged tokens to be accepted.",
+        "evidence": "return jwt.decode(token, options={\"verify_signature\": False})",
+        "verdict": "matched_theme:jwt_signature_disabled",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2140.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.8,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "No deterministic rule exists for JWT signature bypass, relies entirely on AI (which caught it well, exact evidence). No JWT-specific standard exists in the STANDARDS table either, so citedStandards falls to the generic security pair regardless of detection method -- 0/2 relevant."
+  },
+  {
+    "test_id": 10,
+    "zip_file": "py_010_jwt_fallback_secret.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "insecure_secret_fallback"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "insecure_secret_fallback"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Fallback to a hardcoded JWT secret exposes tokens if environment variable is missing.",
+        "evidence": "JWT_SECRET = os.getenv('JWT_SECRET', 'dev-secret')",
+        "verdict": "matched_theme:insecure_secret_fallback",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": true,
+            "reason": "the finding IS a hardcoded-credential fallback, so this one genuinely fits"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Issued JWT tokens lack expiration, allowing indefinite validity.",
+        "evidence": "return jwt.encode({'sub': user_id}, JWT_SECRET, algorithm='HS256')",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 3,
+    "telemetry": {
+      "analysis_ms": 2468.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 89,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Seeded theme matched precisely; a second, distinct, legitimate extra finding (missing JWT exp claim) is not a duplicate (different root cause) and not a false positive. RAG coincidentally correct for finding 0 (SEC-01 genuinely fits a hardcoded-fallback-secret finding) but generic/irrelevant everywhere else."
+  },
+  {
+    "test_id": 11,
+    "zip_file": "py_011_missing_admin_auth.zip",
+    "difficulty": "easy",
+    "source_lines": 5,
+    "expected_themes": [
+      "missing_authorization"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "missing_authorization"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Endpoint allows deletion of any user without authorization checks",
+        "evidence": "@app.delete('/admin/users/{user_id}')\nasync def delete_user(user_id: str):\n    return {'deleted': USERS.pop(user_id, None)}",
+        "verdict": "matched_theme:missing_authorization",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2797.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.0,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "No deterministic authorization-check rule exists; theme caught cleanly by AI with exact route evidence. No missing-authorization standard exists in STANDARDS either (closest conceptually would be an AuthZ-specific entry, absent) -- generic security fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 12,
+    "zip_file": "py_012_idor_object_access.zip",
+    "difficulty": "medium",
+    "source_lines": 7,
+    "expected_themes": [
+      "idor"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "idor"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 7,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Endpoint returns order data without verifying that the requesting user owns the order",
+        "evidence": "return {'requested_user': user_id, 'order': order}",
+        "verdict": "matched_theme:idor",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2422.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.4,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "No deterministic ownership/IDOR rule exists; theme caught cleanly by AI, exact grounding on the ownership-check gap. No IDOR-specific standard in STANDARDS -- generic security fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 13,
+    "zip_file": "py_013_wildcard_cors.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "overbroad_cors"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "overbroad_cors"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "permissive_cors",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "CORS is configured with a wildcard origin",
+        "evidence": "allow_origins=['*']",
+        "verdict": "matched_theme:overbroad_cors",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated -- permissive_cors is NOT one of the 11 rule ids in RULE_TO_STANDARD, so even this deterministic finding falls to the generic fallback"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "CORS configuration allows any origin while also permitting credentials",
+        "evidence": "app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2234.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.8,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 84,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "security=84 double-deducts (-8 -8) one real misconfiguration via the same exact-line-only dedup gap seen elsewhere."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Confirms the RULE_TO_STANDARD map covers only 11 of the ~29 deterministic rule ids: permissive_cors is a deterministic rule but not in that map, so even this non-AI finding gets the generic security fallback rather than a CORS-specific standard (none exists in STANDARDS at all). Same one-line-apart duplicate pattern as py_004/007/008."
+  },
+  {
+    "test_id": 14,
+    "zip_file": "py_014_open_redirect.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "open_redirect"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "open_redirect"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Open redirect vulnerability: user-controlled 'next_url' is used directly in RedirectResponse without validation.",
+        "evidence": "return RedirectResponse(next_url)",
+        "verdict": "matched_theme:open_redirect",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 1859.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.0,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "The deterministic unsafe_redirect rule exists but only matches Flask's redirect(request.args/form/json...) shape; this fixture uses FastAPI's RedirectResponse(next_url) (a plain parameter, not a request-object attribute), a different framework/shape the regex doesn't cover -- a real, narrow coverage gap. AI caught the theme correctly and precisely. unsafe_redirect also has no STANDARDS entry, so even a hypothetical exact-rule hit would still fall to the generic fallback -- 0/2 relevant here regardless."
+  },
+  {
+    "test_id": 15,
+    "zip_file": "py_015_raw_error_leakage.zip",
+    "difficulty": "medium",
+    "source_lines": 9,
+    "expected_themes": [
+      "internal_error_leakage"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "internal_error_leakage"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 8,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Exception details are returned directly to the client, potentially leaking internal information.",
+        "evidence": "return {'ok': False, 'error': repr(exc)}",
+        "verdict": "matched_theme:internal_error_leakage",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_api_design",
+        "category": "api_design",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Endpoint lacks authentication and authorization checks",
+        "evidence": "@app.get('/account/{account_id}')",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "API-01",
+            "relevant": false,
+            "reason": "about boundary input validation, not missing auth"
+          },
+          {
+            "id": "API-02",
+            "relevant": false,
+            "reason": "about leaking stack traces, not missing auth"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2516.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.4,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "STRIKING misrouting example: STANDARDS actually contains API-02 'Never leak raw stack traces or exception text to API clients' -- a PERFECT match for finding 0 (repr(exc) returned to client). But finding 0 is tagged category=security (not api_design), so it never has a chance at API-02 and gets the generic SEC-01/SEC-02 pair instead; API-02 instead lands on finding 1 (a missing-auth finding, where it does NOT apply) purely because finding 1 happened to be tagged api_design. The one standard in the whole table that would have been exactly right for this test never reaches the finding it actually describes."
+  },
+  {
+    "test_id": 16,
+    "zip_file": "py_016_unbounded_list.zip",
+    "difficulty": "easy",
+    "source_lines": 5,
+    "expected_themes": [
+      "unbounded_collection_response"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "unbounded_collection_response"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_performance",
+        "category": "performance",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Endpoint returns all 50,000 rows in a single response",
+        "evidence": "return {'items': ROWS}",
+        "verdict": "matched_theme:unbounded_collection_response",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "PERF-01",
+            "relevant": false,
+            "reason": "N+1-query standard, unrelated to an unbounded/unpaginated response"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 1,
+    "telemetry": {
+      "analysis_ms": 2000.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 89.2,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 92,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean, well-grounded match. Only STANDARDS performance entry (PERF-01, N+1 queries) is always cited for any performance finding regardless of topic -- irrelevant here."
+  },
+  {
+    "test_id": 17,
+    "zip_file": "py_017_missing_http_timeout.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "missing_outbound_timeout"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "missing_outbound_timeout"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Outbound HTTP request lacks a timeout, risking indefinite hangs.",
+        "evidence": "r=requests.get(f'https://example.invalid/rates/{base}/{quote}')",
+        "verdict": "matched_theme:missing_outbound_timeout",
+        "fp_reason": null,
+        "reasoning_self_contradiction": "confirm_and_explain_finding returned findingConfirmed=false, reasoning that 'example.invalid' is a placeholder/documentation domain so 'the code is not making a real outbound request in production' -- but this fixture's seeded issue IS that the timeout is genuinely missing (no negative assertion here, unlike py_001/006/018/039/050 where timeout IS present and correctly not flagged). The finding card itself is accurate; the explain-stage second-guesses a correct finding for an irrelevant reason.",
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "User-provided 'base' and 'quote' values are interpolated directly into the URL without validation",
+        "evidence": "f'https://example.invalid/rates/{base}/{quote}'",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "reasoning_self_contradiction": "same findingConfirmed=false / example.invalid rationalization as finding 0",
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2359.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.6,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 84,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "IMPORTANT PATTERN: this is the first observed case of 'reasoning-stage self-contradiction' -- the finding card correctly matches the seeded theme, but clicking through to 'Explain this finding' (POST /findings/reason) returns findingConfirmed=false for BOTH findings, dismissing them because the URL host is example.invalid, treating a safe RFC-2606 placeholder domain (used deliberately and correctly across many fixtures in this suite) as proof the code isn't real/isn't a genuine risk. This is a distinct failure mode from grounding rejection or RAG mismatch: the finding surfaces correctly, then the tool talks the user out of it for a bad reason. Worth checking for recurrence anywhere else example.invalid appears alongside a genuinely-seeded (not negative-assertion) issue."
+  },
+  {
+    "test_id": 18,
+    "zip_file": "py_018_blocking_requests_async.zip",
+    "difficulty": "medium",
+    "source_lines": 7,
+    "expected_themes": [
+      "blocking_io_in_async",
+      "ssrf"
+    ],
+    "expected_count": 2,
+    "negative_assertions": "Do not report missing timeout; timeout=5 is present.",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "blocking_io_in_async",
+      "ssrf"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_performance",
+        "category": "performance",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Blocking synchronous HTTP request used inside an async FastAPI endpoint",
+        "evidence": "r=requests.get(url, timeout=5)",
+        "verdict": "matched_theme:blocking_io_in_async",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "PERF-01",
+            "relevant": false,
+            "reason": "N+1-query standard, unrelated to blocking I/O in an async handler"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "User-supplied URL is fetched without any validation, exposing the service to SSRF.",
+        "evidence": "r=requests.get(url, timeout=5)",
+        "verdict": "matched_theme:ssrf",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 3,
+    "telemetry": {
+      "analysis_ms": 2937.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.6,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 92,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Both seeded themes correctly and precisely matched, negative assertion respected. Both citations are generic-category fallback: STANDARDS has no dedicated SSRF entry at all (the whole table has zero SSRF-specific standard, despite ssrf being one of this suite's most common themes across 4 fixtures), and performance category has exactly one standard (PERF-01, N+1 queries) that gets cited for every performance finding regardless of topic. Perfect detection undermined entirely by the guidance layer: 0/3 relevant."
+  },
+  {
+    "test_id": 19,
+    "zip_file": "py_019_blocking_sleep_async.zip",
+    "difficulty": "easy",
+    "source_lines": 7,
+    "expected_themes": [
+      "blocking_call_in_async"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "2 reasoning calls hit local 429 on primary run, patched via retry against the same stored project",
+    "matched_themes": [
+      "blocking_call_in_async"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 5,
+        "rule": "blocking_call_in_async",
+        "category": "performance",
+        "severity": "medium",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "time.sleep is used inside an async function",
+        "evidence": "async def create_report():\n    time.sleep(",
+        "verdict": "matched_theme:blocking_call_in_async",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "PERF-01",
+            "relevant": false,
+            "reason": "N+1-query standard; blocking_call_in_async is not in RULE_TO_STANDARD so even this deterministic rule falls to the generic performance fallback"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 6,
+        "rule": "ai_quality_performance",
+        "category": "performance",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Blocking call time.sleep(3) used inside an async FastAPI endpoint",
+        "evidence": "time.sleep(3)",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "PERF-01",
+            "relevant": false,
+            "reason": "same generic fallback"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 1625.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.4,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 84,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "performance=84 double-deducts (-8 -8) one real issue via the same exact-line-only dedup gap."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Same one-line-apart deterministic+AI duplicate pattern seen repeatedly (py_004/007/008/013). Theme matched cleanly."
+  },
+  {
+    "test_id": 20,
+    "zip_file": "py_020_swallowed_exception.zip",
+    "difficulty": "easy",
+    "source_lines": 5,
+    "expected_themes": [
+      "swallowed_exception"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "1 reasoning call hit local 429 on primary run, patched via retry against the same stored project",
+    "matched_themes": [
+      "swallowed_exception"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Broad exception is silently ignored, causing the function to return None on any error",
+        "evidence": "except Exception:\n        pass",
+        "verdict": "matched_theme:swallowed_exception",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 1969.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 92,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "code_quality=100/evaluated despite a swallowed-exception finding existing -- because the finding is tagged category=reliability (routes to architecture) rather than best_practice/correctness, the dimension a user would naturally check for 'do we have empty exception handlers' (code_quality, home of CQ-01 'never use empty or catch-all exception handling') shows a perfect, misleading 100."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Deterministic empty_exception_handler rule only matches a LITERALLY bare 'except:' (no exception type); this fixture uses 'except Exception: pass' (a named but still catch-all handler), which the regex does not match -- a real, narrow coverage gap. AI caught it correctly. CQ-01 in STANDARDS is worded almost exactly for this finding ('Never use empty or catch-all exception handling') but was never reachable because the finding's category is reliability, not best_practice -- another concrete case of a perfect-fit standard existing but being unreachable due to category routing."
+  },
+  {
+    "test_id": 21,
+    "zip_file": "py_021_global_counter_race.zip",
+    "difficulty": "medium",
+    "source_lines": 8,
+    "expected_themes": [
+      "race_condition"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "race_condition"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_logic",
+        "category": "logic",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Race condition on shared global counter when record_event is called concurrently",
+        "evidence": "global counter; current=counter; await asyncio.sleep(0); counter=current+1",
+        "verdict": "matched_theme:race_condition",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2656.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.1,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 92,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 90,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Precise, well-grounded read-modify-write race identification (correctly cites the await yield point as the interruption). No deterministic concurrency/race rule exists at all, and no concurrency-specific standard exists in STANDARDS -- total coverage gap for this theme beyond the AI layer. Generic code_quality fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 22,
+    "zip_file": "py_022_process_local_cache_scaling.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "process_local_cache"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [],
+    "missed_themes": [
+      "process_local_cache"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Shared mutable cache (profile_cache) accessed without concurrency protection may cause race conditions in async environment",
+        "evidence": "if user_id not in profile_cache: profile_cache[user_id]={'id':user_id,'name':'User'}",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated to intra-process concurrency safety"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2578.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.8,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 92,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "architecture=92 looks like it reflects the seeded process_local_cache/scaling issue but the -8 is actually for the unrelated intra-process race-condition finding; the true seeded horizontal-scaling risk leaves no distinct trace."
+      ]
+    },
+    "verdict": "FAIL",
+    "notes": "Judgment call: oracle theme process_local_cache is about the cache existing ONLY in process memory, so it silently diverges/loses data across multiple server instances/workers (a horizontal-scaling / architecture concern -- oracle evidence: 'Mutable cache exists only in process memory'). The actual finding instead describes a same-process async race condition (concurrent requests racing on one dict within a single process) -- a related but genuinely different risk, with no mention anywhere of multiple processes, workers, instances, or horizontal scaling. Per the semantic-matching rule (same underlying risk required, not just shared subject/variable), this does not count as a match. Treated as a clean miss (0/1) since the finding, while accurate on its own terms, does not address the seeded risk at all."
+  },
+  {
+    "test_id": 23,
+    "zip_file": "py_023_unbounded_memory_list.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "unbounded_memory_growth"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [],
+    "missed_themes": [
+      "unbounded_memory_growth"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Global mutable list 'recent_events' is accessed without any concurrency control, leading to potential race conditions in multi-threaded contexts.",
+        "evidence": "recent_events=[]\ndef record_event(name: str): recent_events.append({'name':name,'ts':time.time()})\ndef recent_count(): return len(recent_events)",
+        "verdict": "false_positive",
+        "fp_reason": "Speculative concurrency claim with zero evidence of threading/async/server context in this 4-line pure-function file (no imports beyond time, no framework). The finding's own downstream reasoning stage independently agrees: findingConfirmed=false, 'no evidence ... of multi-threaded execution.' Misses the actual, much more obvious seeded issue entirely: recent_events.append() runs unboundedly with no cap/eviction.",
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 1,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2984.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 89.5,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 97,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "performance=100/evaluated is misleading: the seeded unbounded-memory-growth issue belongs squarely in the performance dimension and was never detected at all."
+      ]
+    },
+    "verdict": "FAIL",
+    "notes": "Clean miss on a 4-line fixture with an obvious, single seeded issue: recent_events grows forever with no cap/eviction. Instead the model speculated about multi-threaded race conditions with no supporting evidence, and its own explain-stage correctly rejected that speculative claim (findingConfirmed=false) -- so the net useful signal on this test is zero."
+  },
+  {
+    "test_id": 24,
+    "zip_file": "py_024_stale_cache_invalidation.zip",
+    "difficulty": "medium",
+    "source_lines": 7,
+    "expected_themes": [
+      "stale_cache"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "stale_cache"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_performance",
+        "category": "performance",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "In-memory cache never invalidates, leading to stale summaries when underlying data changes.",
+        "evidence": "summary_cache={} ... summary_cache[user_id]=value",
+        "verdict": "matched_theme:stale_cache",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "PERF-01",
+            "relevant": false,
+            "reason": "N+1-query standard, unrelated to invalidation"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Cache access is not protected against concurrent writes",
+        "evidence": "if user_id in summary_cache: return summary_cache[user_id] ... summary_cache[user_id]=value",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 3,
+    "telemetry": {
+      "analysis_ms": 2359.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 89.2,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 97,
+        "testing": 60,
+        "api_design": null,
+        "performance": 97,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme matched precisely (invalidation gap correctly identified). Second finding (concurrent-write safety) is a distinct, appropriately-hedged real observation, not a duplicate. All RAG generic-fallback, 0/3 relevant."
+  },
+  {
+    "test_id": 25,
+    "zip_file": "py_025_duplicate_concurrent_generation.zip",
+    "difficulty": "hard",
+    "source_lines": 9,
+    "expected_themes": [
+      "request_coalescing_missing"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "request_coalescing_missing"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Potential race condition when multiple coroutines access and modify the shared 'results' dict without synchronization",
+        "evidence": "if key in results: return results[key]\nvalue=await provider.generate(key)\nresults[key]=value",
+        "verdict": "matched_theme:request_coalescing_missing",
+        "fp_reason": null,
+        "reasoning_self_contradiction": "confirm_and_explain_finding returned findingConfirmed=false, reasoning 'the subsequent writes store the same value, so data integrity isn't affected' -- this misreads the seeded risk: request_coalescing_missing is about wastefully calling the (implicitly expensive) provider.generate(key) TWICE concurrently for the same key, not about the final stored value being correct. The card itself is precisely and correctly grounded on the exact race window named by the oracle; the explain-stage talks the user out of a hard-difficulty, correctly-caught finding.",
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2594.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 92,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Third instance of reasoning-stage self-contradiction (after py_017, py_023), and the most consequential: this is a hard-difficulty fixture, the card is precisely correct, and the explain-stage's own dismissal reasoning is itself wrong (conflates 'final value converges' with 'no cost from duplicate work'). If a user trusts the explain panel over the raw finding, they would wrongly dismiss a real, hard-to-spot issue."
+  },
+  {
+    "test_id": 26,
+    "zip_file": "py_026_money_float_precision.zip",
+    "difficulty": "medium",
+    "source_lines": 3,
+    "expected_themes": [
+      "financial_float_precision"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [],
+    "missed_themes": [
+      "financial_float_precision"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_correctness",
+        "category": "correctness",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Potential division by zero when 'people' is zero or negative",
+        "evidence": "return total/people",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2250.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.2,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 92,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "No dimension maps to 'financial correctness'/data-integrity for this project (data_integrity findings would route to code_quality=92, but none was produced), so the seeded float-precision risk leaves no trace anywhere in the 7-dimension score."
+      ]
+    },
+    "verdict": "FAIL",
+    "notes": "Source: checkout_total sums a list[float] of prices and computes tax as float arithmetic, split_bill divides a float total -- money represented entirely in binary float, the seeded issue (oracle evidence: 'Money calculations use binary floating point'). The single AI finding produced instead flags an unrelated (if legitimate) division-by-zero edge case in split_bill and never mentions floating-point/Decimal/rounding at all. Full 2-line file was sent to the model in one chunk, so this is a genuine reasoning miss, not a truncation/coverage artifact. Zero useful findings on the actual seeded theme."
+  },
+  {
+    "test_id": 27,
+    "zip_file": "py_027_infinity_validation.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "finite_number_validation"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [],
+    "missed_themes": [
+      "finite_number_validation"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_correctness",
+        "category": "correctness",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Non-numeric inputs cause unhandled TypeError when converting to float",
+        "evidence": "amount=float(value)",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2000.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 89.3,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 97,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "No dimension reflects the actual seeded data-integrity gap (infinity acceptance); code_quality=97 reflects the unrelated TypeError nit instead."
+      ]
+    },
+    "verdict": "FAIL",
+    "notes": "Source explicitly checks math.isnan(amount) and amount<0 but never math.isinf(amount) -- float('inf') sails through as a 'valid' normalized amount, exactly the oracle's seeded gap ('NaN is rejected but positive infinity is accepted'), sitting directly adjacent to the two checks that DO exist. The AI instead raised an unrelated, real-but-different concern (TypeError on non-numeric strings) and never mentioned infinity, isinf, or unbounded magnitude at all. Notable miss given how localized and structurally obvious the gap is (three consecutive if/raise lines, missing exactly one)."
+  },
+  {
+    "test_id": 28,
+    "zip_file": "py_028_date_parsing_validation.zip",
+    "difficulty": "medium",
+    "source_lines": 5,
+    "expected_themes": [
+      "date_input_validation"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "date_input_validation"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_correctness",
+        "category": "correctness",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "normalize_date does not handle invalid ISO date strings, which will raise ValueError",
+        "evidence": "parsed=datetime.fromisoformat(value)",
+        "verdict": "matched_theme:date_input_validation",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_correctness",
+        "category": "correctness",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "build_record accesses payload['date'] directly without checking for key existence",
+        "evidence": "payload['date']",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2031.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 94,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme matched exactly; second finding is a distinct, legitimate real issue (missing-key vs malformed-value), not a duplicate. Oracle tags this api_design but SAGE tags correctness->code_quality; doesn't affect matching."
+  },
+  {
+    "test_id": 29,
+    "zip_file": "py_029_month_range_logic.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "month_input_validation"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "month_input_validation"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_correctness",
+        "category": "correctness",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Function does not validate the input format or numeric ranges, leading to possible ValueError or invalid date creation.",
+        "evidence": "year_text,month_text=month_year.split('-'); year=int(year_text); month=int(month_text)\nstart=date(year,month,1)",
+        "verdict": "matched_theme:month_input_validation",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2031.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.2,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 92,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean, well-grounded match covering both the format and range aspects the oracle names. Generic code_quality fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 30,
+    "zip_file": "py_030_user_regex_redos.zip",
+    "difficulty": "hard",
+    "source_lines": 4,
+    "expected_themes": [
+      "untrusted_regex"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "untrusted_regex"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "User-provided regex pattern is compiled without validation, risking ReDoS attacks.",
+        "evidence": "regex=re.compile(pattern,re.IGNORECASE)",
+        "verdict": "matched_theme:untrusted_regex",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2735.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.2,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Correct, precise ReDoS identification on a hard-difficulty fixture. No deterministic rule or STANDARDS entry exists for untrusted-regex/ReDoS -- generic security fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 31,
+    "zip_file": "py_031_predictable_temp_file.zip",
+    "difficulty": "medium",
+    "source_lines": 5,
+    "expected_themes": [
+      "unsafe_tempfile"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "unsafe_tempfile"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "unsafe_tempfile",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "tempfile.mktemp creates race-prone temporary paths",
+        "evidence": "tempfile.mktemp(",
+        "verdict": "matched_theme:unsafe_tempfile",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated -- unsafe_tempfile is not in RULE_TO_STANDARD, so even this exact deterministic match falls to the generic fallback"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2735.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent (candidate deduped against deterministic finding)",
+      "ai_findings_accepted": 0,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.2,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean single-finding match with correctly-deduped AI candidate (no duplicate surfaced). Deterministic rule name IS an exact string match to the theme name, but still gets generic RAG fallback since unsafe_tempfile is one of the ~18 RULE_METADATA ids absent from RULE_TO_STANDARD (and no tempfile standard exists in STANDARDS at all)."
+  },
+  {
+    "test_id": 32,
+    "zip_file": "py_032_unbounded_file_upload.zip",
+    "difficulty": "medium",
+    "source_lines": 7,
+    "expected_themes": [
+      "upload_size_unbounded",
+      "unsafe_upload_filename"
+    ],
+    "expected_count": 2,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "upload_size_unbounded",
+      "unsafe_upload_filename"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 6,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Potential path traversal by using user-supplied filename directly in file path",
+        "evidence": "with open(f'/tmp/{file.filename}','wb') as h: h.write(content)",
+        "verdict": "matched_theme:unsafe_upload_filename",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_performance",
+        "category": "performance",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Reads entire uploaded file into memory without size limits",
+        "evidence": "content=await file.read()",
+        "verdict": "matched_theme:upload_size_unbounded",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "PERF-01",
+            "relevant": false,
+            "reason": "N+1-query standard, unrelated to unbounded upload size"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 3,
+    "telemetry": {
+      "analysis_ms": 2594.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.1,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 97,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Both seeded themes matched precisely and correctly, oracle expected upload_size_unbounded as category=reliability but SAGE classified it performance (minor category-label difference, does not affect theme matching). Both citations are generic-category fallback and both irrelevant -- 0/3."
+  },
+  {
+    "test_id": 33,
+    "zip_file": "py_033_zip_slip.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "zip_slip"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "zip_slip"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 5,
+        "rule": "unsafe_archive_extract",
+        "category": "security",
+        "severity": "high",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Archive extraction uses extractall without visible path containment",
+        "evidence": ".extractall(",
+        "verdict": "matched_theme:zip_slip",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated -- unsafe_archive_extract not in RULE_TO_STANDARD"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Potential Zip Slip path traversal when extracting untrusted archive",
+        "evidence": "archive.extractall(EXTRACT_ROOT)",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2516.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 83.3,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 70,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "security=70 double-deducts one real vulnerability (-15 -15), same exact-line-only dedup gap."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean theme match, correct exact vulnerability (zip-slip via extractall with no path containment). Same duplicate + generic-RAG pattern as most deterministic+AI pairs in this suite."
+  },
+  {
+    "test_id": 34,
+    "zip_file": "py_034_world_writable_permissions.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "overly_permissive_file_permissions"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "overly_permissive_file_permissions"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "File is written with world-writable permissions (0o777)",
+        "evidence": "os.chmod(path,0o777)",
+        "verdict": "matched_theme:overly_permissive_file_permissions",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_best_practice",
+        "category": "best_practice",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Function writes arbitrary text to a fixed path without validating or sanitizing the content",
+        "evidence": "path.write_text(text,encoding='utf-8')",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2578.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.6,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 97,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme matched precisely. Second finding's core claim (unvalidated content write) differs from the first (permission mode) so treated as a distinct real observation rather than a duplicate, though its reasoning text also re-mentions the chmod issue as supporting color."
+  },
+  {
+    "test_id": 35,
+    "zip_file": "py_035_weak_password_hash.zip",
+    "difficulty": "easy",
+    "source_lines": 3,
+    "expected_themes": [
+      "weak_password_hash"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "weak_password_hash"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "weak_crypto_hash",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Weak hash algorithm is used in security-adjacent code",
+        "evidence": "hashlib.md5(",
+        "verdict": "matched_theme:weak_password_hash",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated -- weak_crypto_hash not in RULE_TO_STANDARD"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2313.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent (candidate deduped)",
+      "ai_findings_accepted": 0,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.2,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean single-finding match, AI candidate correctly deduped (no duplicate card). Oracle expects severity=high, SAGE reports medium (minor calibration gap). No weak-crypto standard exists in STANDARDS -- generic fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 36,
+    "zip_file": "py_036_predictable_token.zip",
+    "difficulty": "easy",
+    "source_lines": 4,
+    "expected_themes": [
+      "insecure_random_token"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "insecure_random_token"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "insecure_random_secret",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "random module is used near token/secret generation",
+        "evidence": "random.choice(",
+        "verdict": "matched_theme:insecure_random_token",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Token generation uses non-cryptographic random.choice, making tokens predictable.",
+        "evidence": "return ''.join(random.choice(alphabet) for _ in range(32))",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 1906.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.4,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 84,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "security=84 double-deducts one real issue (-8 -8) via the same dedup gap."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme matched precisely (both findings correctly identify non-cryptographic random for token generation), but not deduplicated (one line apart). Oracle expects severity=high, SAGE reports medium (minor calibration gap)."
+  },
+  {
+    "test_id": 37,
+    "zip_file": "py_037_sensitive_token_logging.zip",
+    "difficulty": "easy",
+    "source_lines": 5,
+    "expected_themes": [
+      "sensitive_logging"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "sensitive_logging"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "sensitive_logging",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Sensitive credential-like data is written to logs",
+        "evidence": "logger.info('auth attempt token=%s',token",
+        "verdict": "matched_theme:sensitive_logging",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated -- sensitive_logging not in RULE_TO_STANDARD"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Sensitive authentication token is logged in plaintext",
+        "evidence": "logger.info('auth attempt token=%s',token)",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 1781.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.4,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 84,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "security=84 double-deducts one real issue via the same dedup gap."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean theme match, exact-line-adjacent duplicate not merged (same pattern repeated throughout this suite)."
+  },
+  {
+    "test_id": 38,
+    "zip_file": "py_038_query_string_logging.zip",
+    "difficulty": "medium",
+    "source_lines": 7,
+    "expected_themes": [
+      "sensitive_url_logging"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [],
+    "missed_themes": [
+      "sensitive_url_logging"
+    ],
+    "findings": [],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 0,
+    "telemetry": {
+      "analysis_ms": 1859.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 0,
+      "ai_candidates": 0,
+      "grounding_rejected": "0 (no candidates at all)",
+      "ai_findings_accepted": 0,
+      "final_unique_findings": 0,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 91.1,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "security=100/evaluated and the overall 91.1 score are misleading: this is a ZERO-FINDING result on a genuinely vulnerable file (a FastAPI middleware that logs the full request URL, including query string, on every request), not a clean project."
+      ]
+    },
+    "verdict": "FAIL",
+    "notes": "ZERO-FINDING VULNERABLE TEST. Source: `logger.info('request_url=%s', str(request.url))` inside a global HTTP middleware -- every request's full URL, including any query-string secrets/tokens/PII, is logged unconditionally. The Groq quality-review call for this file returned zero issues (ai_candidate_count=0, not merely grounding-rejected candidates) -- a complete miss with no compensating deterministic rule (sensitive_logging's regex only matches password/secret/token/api_key keywords near a log call, not a URL-object being logged). This is the clearest complete-miss case in the batch: one 7-line file, one obvious, single seeded issue, zero output."
+  },
+  {
+    "test_id": 39,
+    "zip_file": "py_039_third_party_ai_privacy.zip",
+    "difficulty": "hard",
+    "source_lines": 5,
+    "expected_themes": [
+      "third_party_ai_privacy"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "Do not report missing timeout; timeout=10 is present.",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [],
+    "missed_themes": [
+      "third_party_ai_privacy"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "The external AI endpoint is called without authentication, allowing unauthenticated use and potential abuse.",
+        "evidence": "r=requests.post('https://example-ai.invalid/v1/analyze',json=payload,timeout=10)",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "reasoning_self_contradiction": "findingConfirmed=false, reasoning '.invalid TLD ... indicating this is not a production external AI service' -- same example.invalid dismissal pattern as py_017/023/025 (4th occurrence).",
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Network errors or non-200 responses are not handled",
+        "evidence": "r=requests.post('https://example-ai.invalid/v1/analyze',json=payload,timeout=10)",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2515.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.4,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 92,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "No dimension reflects the actual seeded privacy risk (PII/financial data sent to a third party); security=85 and architecture=92 reflect two unrelated findings instead."
+      ]
+    },
+    "verdict": "FAIL",
+    "notes": "Source builds payload={'name','email','transactions','account_number'} and POSTs it wholesale to an external AI endpoint -- an obvious, named-field PII/financial data-minimization risk (the exact theme, 'third_party_ai_privacy'). Neither finding mentions the payload contents, data sent, privacy, PII, or data minimization at all; both are about unrelated concerns (missing outbound auth, missing error handling). Negative assertion correctly respected (timeout=10 present, not flagged). Also the 4th occurrence of the example.invalid-triggered reasoning self-contradiction."
+  },
+  {
+    "test_id": 40,
+    "zip_file": "py_040_llm_prompt_injection_boundary.zip",
+    "difficulty": "hard",
+    "source_lines": 4,
+    "expected_themes": [
+      "llm_prompt_injection"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "llm_prompt_injection"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "User-supplied OCR text is concatenated directly into the LLM prompt, enabling prompt injection attacks.",
+        "evidence": "user_prompt='Extract from this OCR text:\\n\\n'+header_text",
+        "verdict": "matched_theme:llm_prompt_injection",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "The asynchronous provider.extract call has no timeout",
+        "evidence": "return await provider.extract(system_prompt,user_prompt)",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2296.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 100,
+        "architecture": 97,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Precise, well-grounded prompt-injection identification on a hard-difficulty fixture -- one of the strongest catches in the batch. Second finding is a genuine, distinct extra observation (missing timeout on the LLM provider call). No LLM/prompt-injection standard exists in STANDARDS -- generic fallback, 0/4 relevant."
+  },
+  {
+    "test_id": 41,
+    "zip_file": "py_041_llm_json_parse_failure.zip",
+    "difficulty": "medium",
+    "source_lines": 5,
+    "expected_themes": [
+      "provider_output_validation"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "provider_output_validation"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Provider call has no timeout or cancellation",
+        "evidence": "raw=await provider.complete(prompt)",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_correctness",
+        "category": "correctness",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "JSON parsing assumes valid JSON; malformed response will raise an exception.",
+        "evidence": "data=json.loads(raw)",
+        "verdict": "matched_theme:provider_output_validation",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 2,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_correctness",
+        "category": "correctness",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Accessing expected keys without checking existence may raise KeyError.",
+        "evidence": "return {'title':data['title'],'summary':data['summary']}",
+        "verdict": "matched_theme:provider_output_validation",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 6,
+    "telemetry": {
+      "analysis_ms": 2734.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 3,
+      "ai_candidates": 3,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 3,
+      "final_unique_findings": 3,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.3,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 94,
+        "architecture": 92,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Oracle theme ('parsed/indexed without malformed JSON/schema handling') is matched jointly by finding 1 (JSON-parse failure) and finding 2 (unchecked key access) -- both distinct failure points of the same broader theme, not duplicates of each other. finding 0 is a separate, legitimate extra observation. All RAG generic-fallback, 0/6 relevant."
+  },
+  {
+    "test_id": 42,
+    "zip_file": "py_042_unbounded_retry_loop.zip",
+    "difficulty": "medium",
+    "source_lines": 7,
+    "expected_themes": [
+      "unbounded_retry"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "1 reasoning call hit local 429 on primary run, patched via retry against the same stored project",
+    "matched_themes": [
+      "unbounded_retry"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Infinite retry loop without a termination condition",
+        "evidence": "while True:\n        try:\n            r=requests.get(url,timeout=3); r.raise_for_status(); return r.json()\n        except requests.RequestException:\n            time.sleep(1)",
+        "verdict": "matched_theme:unbounded_retry",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2078.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 92,
+        "testing": 60,
+        "api_design": null,
+        "performance": 90,
+        "production_readiness": 80
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean, precise match (correctly notes both the unconditional while True and the fixed-sleep backoff). No unbounded-retry standard exists in STANDARDS -- generic fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 43,
+    "zip_file": "py_043_n_plus_one_queries.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "n_plus_one"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "n_plus_one"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_performance",
+        "category": "performance",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "N+1 query pattern causing many separate database calls per post",
+        "evidence": "for post in posts:\n        author=db.execute('SELECT id,name FROM users WHERE id = ?', (post['author_id'],)).fetchone()",
+        "verdict": "matched_theme:n_plus_one",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "PERF-01",
+            "relevant": true,
+            "reason": "literally the N+1-query standard -- exact topical match"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_logic",
+        "category": "logic",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Potential None author not handled, may cause downstream errors",
+        "evidence": "author=db.execute('SELECT id,name FROM users WHERE id = ?', (post['author_id'],)).fetchone()",
+        "verdict": "false_positive",
+        "fp_reason": "The finding's own explain-stage (findingConfirmed=false) correctly notes the code shown never dereferences 'author' in a way that would break if it were None -- speculative, unsubstantiated by the visible code. This is a case where the self-check worked as intended (contrast with py_017/023/025/039 where the same mechanism dismissed a genuinely correct finding).",
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 1,
+    "duplicate_count": 0,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2187.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 89.0,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 97,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 97,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "First fully-relevant single-citation RAG result in the batch for an AI-quality finding (PERF-01 genuinely IS about N+1 queries, and this finding genuinely IS an N+1 pattern -- the one case in this suite where the always-cited performance standard happens to be exactly on-topic). The self-check on finding 1 is a positive counter-example: the explain stage correctly caught its own weak/speculative candidate here, unlike the example.invalid-triggered false dismissals seen elsewhere."
+  },
+  {
+    "test_id": 44,
+    "zip_file": "py_044_multi_step_consistency.zip",
+    "difficulty": "medium",
+    "source_lines": 4,
+    "expected_themes": [
+      "missing_transaction"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "missing_transaction"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_logic",
+        "category": "logic",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "No verification that the source account has sufficient balance before debiting",
+        "evidence": "db.execute('UPDATE accounts SET balance = balance - ? WHERE id = ?', (amount,from_id))",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_database",
+        "category": "database",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Updates are executed without an explicit transaction scope; a failure after the first UPDATE could leave accounts inconsistent",
+        "evidence": "db.execute(...balance - ...); db.execute(...balance + ...); db.commit()",
+        "verdict": "matched_theme:missing_transaction",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 2,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_data_integrity",
+        "category": "data_integrity",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Concurrent executions can cause race conditions leading to negative balances or lost updates",
+        "evidence": "db.execute(...balance - ...); db.execute(...balance + ...)",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 6,
+    "telemetry": {
+      "analysis_ms": 3406.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 3,
+      "ai_candidates": 3,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 3,
+      "final_unique_findings": 3,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 83.1,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 69,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "All three findings (categories logic/database/data_integrity) route to the SAME code_quality dimension (69) via FINDING_CATEGORY_MAP, so a user reading the 7-dimension breakdown would not associate 'code_quality' with a financial-transaction-atomicity problem; no dimension is labeled data-integrity/transactions specifically."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme matched precisely and strongly by finding 1 (exact transaction-scope gap). Findings 0 and 2 share the same two evidence lines and root architectural gap (no atomic transaction) but describe genuinely distinct failure scenarios (business-rule check, crash-atomicity, concurrency-isolation) -- not counted as duplicates under a strict same-failure-mode reading, though the evidence overlap is worth noting as finding-density around one root cause. No transaction/data-consistency standard exists in STANDARDS -- generic code_quality fallback throughout, 0/6 relevant."
+  },
+  {
+    "test_id": 45,
+    "zip_file": "py_045_unbounded_offset_pagination.zip",
+    "difficulty": "hard",
+    "source_lines": 3,
+    "expected_themes": [
+      "unbounded_pagination_input"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "matched_themes": [
+      "unbounded_pagination_input"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 2,
+        "rule": "ai_quality_best_practice",
+        "category": "best_practice",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "No validation of the 'page' parameter allows negative or excessively large values",
+        "evidence": "page: int",
+        "verdict": "matched_theme:unbounded_pagination_input",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 3,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Database execution is performed without any error handling",
+        "evidence": "return db.execute('SELECT id,created_at,message FROM events ORDER BY created_at DESC LIMIT ? OFFSET ?', (page_size,offset)).fetchall()",
+        "verdict": "extra_valid",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2422.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.8,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 97,
+        "architecture": 97,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": [
+        "api_design=not_evaluated even though this is precisely an API-input-boundary-validation issue (API-01 'Validate all external input at the boundary' would be the ideal citation) -- but the finding's category is best_practice, which routes to code_quality, not api_design, so both the score bucket and the citation miss the closest-matching standard."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme correctly matched, well grounded. Illustrates the category-routing side effect: because the model tagged the finding 'best_practice' rather than 'api_design', it never had a chance at API-01 (the one standard that would actually fit), landing on the generic code_quality pair instead."
+  },
+  {
+    "test_id": 46,
+    "zip_file": "py_046_background_task_error_loss.zip",
+    "difficulty": "medium",
+    "source_lines": 5,
+    "expected_themes": [
+      "unobserved_background_task"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "1 reasoning call hit local 429 on primary run, patched via retry against the same stored project",
+    "matched_themes": [
+      "unobserved_background_task"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_reliability",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Background task created with asyncio.create_task without awaiting or handling possible exceptions",
+        "evidence": "asyncio.create_task(send_email(address))",
+        "verdict": "matched_theme:unobserved_background_task",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "ARCH-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "ARCH-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2360.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 88.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 100,
+        "code_quality": 100,
+        "architecture": 92,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Clean, precise match -- correctly names the exact pattern (unretained create_task result, lost exceptions). Generic fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 47,
+    "zip_file": "py_047_flask_debug_mode.zip",
+    "difficulty": "easy",
+    "source_lines": 5,
+    "expected_themes": [
+      "debug_mode_production"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "1 reasoning call hit local 429 on primary run, patched via retry against the same stored project",
+    "matched_themes": [
+      "debug_mode_production"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 5,
+        "rule": "debug_config_enabled",
+        "category": "best_practice",
+        "severity": "medium",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "Debug configuration appears enabled in source",
+        "evidence": "app.run(host='0.0.0.0',port=5000,debug=True",
+        "verdict": "matched_theme:debug_mode_production",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "CQ-01",
+            "relevant": false,
+            "reason": "unrelated -- debug_config_enabled not in RULE_TO_STANDARD"
+          },
+          {
+            "id": "CQ-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Debug mode is enabled in the Flask app when running as __main__",
+        "evidence": "app.run(host='0.0.0.0',port=5000,debug=True)",
+        "verdict": "duplicate_of:0",
+        "fp_reason": null,
+        "reasoning_self_contradiction": "findingConfirmed=false, reasoning 'typical for local development and testing ... no evidence ... runs in production' -- but this fixture's entire seeded point IS that debug=True under if __name__=='__main__' ships to production (oracle theme literally named debug_mode_production). 5th self-contradiction instance in this batch, and the first NOT triggered by an example.invalid domain -- shows the dismissal pattern generalizes to any code shape the model associates with 'just local dev'.",
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 1,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 1813.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.8,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 92,
+        "code_quality": 92,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "production_readiness=80/evaluated: the seeded theme's own name is 'debug_mode_production' but neither finding is tagged production_readiness category, so the dimension a user would check first for this exact risk never reflects it (the -20 there is from the unrelated 'no deployment files' heuristic)."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Theme matched via the deterministic finding. The duplicate AI-sourced card is undermined by its own explain-stage talking the user out of the correctly-seeded issue -- a variant of the reasoning self-contradiction pattern that doesn't require an example.invalid trigger."
+  },
+  {
+    "test_id": 48,
+    "zip_file": "py_048_csrf_cookie_form.zip",
+    "difficulty": "medium",
+    "source_lines": 7,
+    "expected_themes": [
+      "csrf_missing",
+      "hardcoded_session_secret"
+    ],
+    "expected_count": 2,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "csrf_missing"
+    ],
+    "missed_themes": [
+      "hardcoded_session_secret"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 6,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "medium",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "User-provided email is accepted without any validation",
+        "evidence": "new_email=request.form['email']",
+        "verdict": "false_positive",
+        "fp_reason": "Own explain-stage (findingConfirmed=false) correctly notes the shown code only echoes new_email back without storing it, querying with it, or otherwise using it dangerously -- unsubstantiated by the visible code, same legitimate self-correction pattern as py_043.",
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      },
+      {
+        "idx": 1,
+        "file": "app.py",
+        "line": 5,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "low",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "POST endpoint processes form data without CSRF protection",
+        "evidence": "if 'user_id' not in session: return {'error':'login required'},401",
+        "verdict": "matched_theme:csrf_missing",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 1,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 4,
+    "telemetry": {
+      "analysis_ms": 2453.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 2,
+      "ai_candidates": 2,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 2,
+      "final_unique_findings": 2,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.8,
+      "dims_evaluated": 7,
+      "dims_total": 7,
+      "categories": {
+        "security": 89,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": 80,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "security=89/evaluated does not reflect the hardcoded session secret at all -- it was never detected."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "Source line 2 is `app.secret_key='test-session-secret'` -- an obvious, adjacent-to-app-init hardcoded Flask session-signing secret, completely missed by both layers. Root cause verified: the deterministic _RE_SECRET regex requires one of the exact words password/secret/api_key/token immediately followed by '=' -- 'secret_key=' has '_key' between 'secret' and '=', so the regex does not match (same anchoring flaw class as py_001, but here it also defeats the common Flask/Django SECRET_KEY convention specifically). The AI layer also never mentioned it despite seeing the whole 7-line file in one chunk. csrf_missing theme correctly matched by finding 1."
+  },
+  {
+    "test_id": 49,
+    "zip_file": "py_049_mass_assignment.zip",
+    "difficulty": "medium",
+    "source_lines": 6,
+    "expected_themes": [
+      "mass_assignment"
+    ],
+    "expected_count": 1,
+    "negative_assertions": "",
+    "negative_assertion_violated": false,
+    "run_note": "infra retry: local 429 on primary run, clean rerun used",
+    "matched_themes": [
+      "mass_assignment"
+    ],
+    "missed_themes": [],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 4,
+        "rule": "ai_quality_security",
+        "category": "security",
+        "severity": "high",
+        "confidence": "high",
+        "source": "ai_quality",
+        "message": "Unrestricted attribute assignment allows privilege escalation by overwriting sensitive fields like 'role' or 'is_admin'.",
+        "evidence": "for key,value in payload.items(): setattr(user,key,value)",
+        "verdict": "matched_theme:mass_assignment",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-01",
+            "relevant": false,
+            "reason": "unrelated"
+          },
+          {
+            "id": "SEC-02",
+            "relevant": false,
+            "reason": "unrelated"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 0,
+    "rag_irrelevant_count": 2,
+    "telemetry": {
+      "analysis_ms": 2718.0,
+      "deterministic_findings": 0,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent",
+      "ai_findings_accepted": 1,
+      "final_unique_findings": 1,
+      "files_discovered": 1,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 86.7,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 70
+      },
+      "misleading_notes": []
+    },
+    "verdict": "PARTIAL",
+    "notes": "Strong, precise catch -- correctly names the specific privilege-escalation vector (role/is_admin overwrite via unrestricted setattr loop). No mass-assignment standard exists in STANDARDS -- generic fallback, 0/2 relevant."
+  },
+  {
+    "test_id": 50,
+    "zip_file": "py_050_tls_verification_disabled.zip",
+    "difficulty": "medium",
+    "source_lines": 4,
+    "expected_themes": [
+      "tls_verification_disabled",
+      "ssrf"
+    ],
+    "expected_count": 2,
+    "negative_assertions": "Do not report missing timeout; timeout=5 is present.",
+    "negative_assertion_violated": false,
+    "run_note": "1 reasoning call hit local 429 on primary run, patched via retry against the same stored project",
+    "matched_themes": [
+      "tls_verification_disabled"
+    ],
+    "missed_themes": [
+      "ssrf"
+    ],
+    "findings": [
+      {
+        "idx": 0,
+        "file": "app.py",
+        "line": 3,
+        "rule": "tls_verification_disabled",
+        "category": "security",
+        "severity": "high",
+        "confidence": "medium",
+        "source": "deterministic",
+        "message": "TLS/SSL certificate verification is disabled",
+        "evidence": "verify=False",
+        "verdict": "matched_theme:tls_verification_disabled",
+        "fp_reason": null,
+        "rag": [
+          {
+            "id": "SEC-05",
+            "relevant": true,
+            "reason": "exact RULE_TO_STANDARD match"
+          }
+        ]
+      }
+    ],
+    "false_positive_count": 0,
+    "duplicate_count": 0,
+    "rag_relevant_count": 1,
+    "rag_irrelevant_count": 0,
+    "telemetry": {
+      "analysis_ms": 1891.0,
+      "deterministic_findings": 1,
+      "pre_rag_records": 0,
+      "groq_calls_analyze": 1,
+      "groq_calls_reasoning": 1,
+      "ai_candidates": 1,
+      "grounding_rejected": "0 apparent (candidate deduped against deterministic finding)",
+      "ai_findings_accepted": 0,
+      "final_unique_findings": 1,
+      "files_discovered": 2,
+      "files_eligible": 1,
+      "files_reviewed": 1,
+      "chunks_reviewed": 1,
+      "degraded": false
+    },
+    "project_health": {
+      "overall_score": 87.8,
+      "dims_evaluated": 6,
+      "dims_total": 7,
+      "categories": {
+        "security": 85,
+        "code_quality": 100,
+        "architecture": 100,
+        "testing": 60,
+        "api_design": null,
+        "performance": 100,
+        "production_readiness": 80
+      },
+      "misleading_notes": [
+        "security=85/evaluated reflects only the TLS finding; the second seeded high-severity theme (SSRF) leaves no trace anywhere in the score."
+      ]
+    },
+    "verdict": "PARTIAL",
+    "notes": "download_manifest(url) fetches an arbitrary caller-supplied URL with verify=False -- two distinct seeded themes. TLS caught exactly (deterministic, exact-rule RAG match -- a clean PASS-quality result on its own). SSRF completely absent: this is the THIRD data point (after py_006 miss, py_018 catch) of inconsistent detection on the identical requests.get(url, ...) shape -- SAGE misses this exact SSRF pattern in 2 of 3 fixtures that seed it. The sole AI candidate here was deduped against the deterministic TLS finding (ai_finding_count=0), consistent with the AI never having generated a distinct SSRF candidate for this file. Negative assertion (timeout=5 present) correctly respected."
+  }
+]

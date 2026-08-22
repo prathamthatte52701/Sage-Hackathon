@@ -5,7 +5,9 @@ framework analyzer; each rule below only fires on concrete source/config signals
 with language gating and small false-positive guards where practical.
 """
 
+import io
 import re
+import tokenize
 
 _RE_SECRET = re.compile(r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"][^'\"]{4,}['\"]")
 _RE_EVAL_PY = re.compile(r"\b(eval|exec)\s*\(")
@@ -61,6 +63,9 @@ _RE_JS_PERCENT_ZERO_BASELINE = re.compile(r"if\s*\(\s*!\s*(previous|prev|oldValu
 _RE_JS_UNKNOWN_TYPE_DEFAULT = re.compile(r"if\s*\([^)]*\.type\s*={2,3}\s*['\"][^'\"]+['\"][^)]*\)\s*\{[^{}]*\}\s*else\s*\{", re.DOTALL)
 _RE_PLAINTEXT_PASSWORD_PY = re.compile(r"password\s*=\s*(request\.(json|form)|req\.(json|form)|input\s*\()", re.IGNORECASE)
 _RE_PLAINTEXT_PASSWORD_JS = re.compile(r"(password)\s*=\s*(req\.body|request\.body)", re.IGNORECASE)
+_RE_MONGOOSE_MONEY_NUMBER = re.compile(
+    r"(?i)\b(balance|amount|price|total|subtotal|credit|debit|fee|cost)\w*\s*:\s*\{[^{}]*type\s*:\s*Number(?![^{}]*(min\s*:|validate\s*:))[^{}]*\}"
+)
 _NON_SECRET_CONTEXT = re.compile(r"(?i)(example|sample|dummy|fake|placeholder|documentation|test fixture)")
 _HASH_SECURITY_CONTEXT = re.compile(r"(?i)(password|token|secret|signature|auth|credential|session)")
 
@@ -90,6 +95,7 @@ RULE_METADATA = {
     "unsafe_redirect": {"title": "Redirect target controlled by request input", "languages": ["python", "javascript", "typescript"], "category": "security"},
     "frontend_token_storage": {"title": "Auth token stored in browser storage", "languages": ["javascript", "typescript"], "category": "security"},
     "plaintext_password_handling": {"title": "Plaintext password read without hashing evidence", "languages": ["python", "javascript", "typescript"], "category": "security"},
+    "mongoose_money_number_no_validation": {"title": "Monetary Number field lacks validation", "languages": ["javascript", "typescript"], "category": "data_integrity"},
     "js_numeric_coercion_default": {"title": "Silent numeric coercion to zero", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_date_slice_without_validation": {"title": "Date slicing without visible validation", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_zero_baseline_fallback": {"title": "Zero baseline treated as missing", "languages": ["javascript", "typescript"], "category": "logic"},
@@ -199,6 +205,34 @@ def _secret_random_guard(content: str, match: re.Match) -> bool:
     return bool(_RE_SECURITY_TOKEN_WORD.search(_nearby(content, match.start(), match.end())))
 
 
+def _python_non_code_spans(content: str) -> list[tuple[int, int]]:
+    line_offsets = []
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        line_offsets.append(offset)
+        offset += len(line)
+
+    def absolute(pos: tuple[int, int]) -> int:
+        line, col = pos
+        if line <= 0 or line > len(line_offsets):
+            return 0
+        return line_offsets[line - 1] + col
+
+    spans = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(content).readline):
+            if token.type in {tokenize.STRING, tokenize.COMMENT}:
+                spans.append((absolute(token.start), absolute(token.end)))
+    except tokenize.TokenError:
+        return spans
+    return spans
+
+
+def _outside_python_comment_or_string(content: str, match: re.Match) -> bool:
+    start = match.start()
+    return not any(span_start <= start < span_end for span_start, span_end in _python_non_code_spans(content))
+
+
 def run_rules(path: str, language: str, content: str) -> list[dict]:
     findings = []
 
@@ -222,9 +256,9 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
 
     # 2. eval/exec — language-specific pattern
     if language == "python":
-        findings += _findings_for_pattern(
+        findings += _guarded_findings(
             content, path, _RE_EVAL_PY, "dangerous_eval", "critical", "security",
-            "Use of eval/exec on potentially untrusted input",
+            "Use of eval/exec on potentially untrusted input", _outside_python_comment_or_string,
         )
     elif language in ("javascript", "typescript"):
         findings += _findings_for_pattern(
@@ -350,6 +384,10 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
         findings += _findings_for_pattern(
             content, path, _RE_PLAINTEXT_PASSWORD_JS, "plaintext_password_handling", "high", "security",
             "Password is read from request body without visible hashing or verification context",
+        )
+        findings += _findings_for_pattern(
+            content, path, _RE_MONGOOSE_MONEY_NUMBER, "mongoose_money_number_no_validation", "medium", "data_integrity",
+            "Mongoose monetary Number field has no visible minimum or validation; use Decimal128/cents and validate opening balance/amount values",
         )
         findings += _findings_for_pattern(
             content, path, _RE_JS_NUMERIC_COERCION_DEFAULT, "js_numeric_coercion_default", "medium", "logic",
