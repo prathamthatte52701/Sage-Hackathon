@@ -13,6 +13,7 @@ import FixValidationModal from "./components/FixValidationModal";
 import ReanalysisResult from "./components/ReanalysisResult";
 import ProjectChat from "./components/ProjectChat";
 import ArchitectureView from "./components/ArchitectureView";
+import HackerLens from "./components/HackerLens";
 import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
@@ -467,6 +468,11 @@ export default function App() {
                 setActiveTab("findings");
               }}
             />
+          )}
+
+          {/* View: Hacker Mode */}
+          {activeTab === "hacker_lens" && (
+            <HackerLens projectId={projectBundle?.project_id} />
           )}
 
           {/* View: Review History */}

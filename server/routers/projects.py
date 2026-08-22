@@ -18,6 +18,7 @@ from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectR
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.auth import get_request_user
+from services.hacker_lens import run_hacker_lens
 from services.project_review import run_ai_quality_review
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
@@ -837,6 +838,28 @@ async def transform_finding(
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_TRANSFORM_ERROR_RESPONSE)
+
+
+_HACKER_LENS_ERROR_RESPONSE = {"error": "Hacker Mode analysis failed, please retry"}
+
+
+@router.post("/projects/{project_id}/hacker-lens")
+async def hacker_lens_report(project_id: str, current_user: dict = Depends(get_request_user)):
+    # Independent adversarial AI review -- reuses the same stored project the
+    # normal SAGE pipeline already analyzed (one ZIP upload, one project_id).
+    # Deliberately does NOT touch security_findings, RAG/knowledge retrieval,
+    # or the deterministic analyzer -- failure here must never affect Normal
+    # SAGE, which is why this is its own try/except around its own call.
+    try:
+        project = await get_owned_project(project_id, current_user["_id"])
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        report = await run_hacker_lens(project)
+        return report
+    except Exception as exc:
+        print(f"[projects] hacker-lens unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_HACKER_LENS_ERROR_RESPONSE)
 
 
 _REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}

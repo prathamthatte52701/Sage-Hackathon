@@ -12,6 +12,7 @@ import {
   Terminal,
   CheckCircle2,
   Lock,
+  Skull,
 } from "lucide-react";
 
 export default function Sidebar({
@@ -61,6 +62,12 @@ export default function Sidebar({
       id: "architecture",
       label: "Architecture",
       icon: Network,
+      disabled: !hasProject,
+    },
+    {
+      id: "hacker_lens",
+      label: "👾 Hacker Mode",
+      icon: Skull,
       disabled: !hasProject,
     },
     {

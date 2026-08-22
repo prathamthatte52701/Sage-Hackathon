@@ -227,4 +227,13 @@ export function fixedProjectZipUrl(projectId) {
   return `${baseURL}/api/projects/${projectId}/download-fixed`;
 }
 
+export async function runHackerLens(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/hacker-lens`, {}, { timeout: 45000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Hacker Mode analysis failed. Please retry."));
+  }
+}
+
 export default api;

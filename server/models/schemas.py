@@ -104,6 +104,136 @@ class FindingTransform(BaseModel):
     validation: dict[str, bool] = Field(default_factory=dict)
 
 
+class HackerLensEvidence(BaseModel):
+    file: str = ""
+    line: int | None = None
+    function: str = ""
+    route: str = ""
+
+
+class HackerLensObservation(BaseModel):
+    title: str = ""
+    risk: Severity = "low"
+    reason: str = ""
+    evidence: list[HackerLensEvidence] = []
+    potential_impact: str = ""
+    hardening_action: str = ""
+    # True only once every evidence entry's file was cross-checked against
+    # the project's real files server-side -- never trust the model's own
+    # claim that a reference is real.
+    verified: bool = False
+
+
+class HackerLensTopTarget(BaseModel):
+    rank: int = 0
+    title: str = ""
+    reason: str = ""
+    evidence: list[HackerLensEvidence] = []
+
+
+class HackerLensRiskPath(BaseModel):
+    label: str = ""
+    steps: list[str] = []
+    evidence: list[HackerLensEvidence] = []
+
+
+class HackerLensReport(BaseModel):
+    summary: str = "Hacker Mode analysis is currently unavailable."
+    attack_surface_score: float = Field(0.0, ge=0.0, le=10.0)
+    # Derived server-side from attack_surface_score by fixed thresholds, never
+    # taken as-is from the model -- "do not let the model output an arbitrary
+    # score/label without reasoning" from the spec.
+    attack_surface_label: Severity = "low"
+    score_reasoning: str = ""
+    top_targets: list[HackerLensTopTarget] = []
+    attack_surfaces: list[str] = []
+    risk_paths: list[HackerLensRiskPath] = []
+    adversarial_observations: list[HackerLensObservation] = []
+    hacker_hypotheses: list[HackerLensObservation] = []
+    hardening_priorities: list[str] = []
+    files_analyzed: list[str] = []
+    error: str = ""
+
+
+BrutalAuditCategory = Literal[
+    "security",
+    "architecture",
+    "reliability",
+    "maintainability",
+    "code_quality",
+    "production_readiness",
+]
+
+
+class BrutalAuditEvidence(BaseModel):
+    file: str = ""
+    line: int | None = None
+    function: str = ""
+    route: str = ""
+
+
+class BrutalAuditCriticism(BaseModel):
+    title: str = ""
+    severity: Severity = "low"
+    category: BrutalAuditCategory = "code_quality"
+    reason: str = ""
+    evidence: list[BrutalAuditEvidence] = []
+    impact: str = ""
+    improvement: str = ""
+    verified: bool = False
+
+
+class BrutalAuditCategoryAnalysis(BaseModel):
+    category: BrutalAuditCategory = "code_quality"
+    score: float = Field(0.0, ge=0.0, le=10.0)
+    reasoning: str = ""
+    evidence: list[BrutalAuditEvidence] = []
+
+
+class BrutalAuditAreaScore(BaseModel):
+    category: BrutalAuditCategory = "code_quality"
+    score: float = Field(0.0, ge=0.0, le=10.0)
+
+
+class BrutalAuditSnapshot(BaseModel):
+    files_analyzed: int = 0
+    source_files_analyzed: int = 0
+    api_entry_points: int = 0
+    functions_classes: int = 0
+    database_interaction_areas: int = 0
+    external_integrations: int = 0
+    privileged_operations: int = 0
+    authentication_components: int = 0
+    filesystem_usage: int = 0
+    large_files: int = 0
+    large_functions: int = 0
+    frameworks: list[str] = []
+    languages: list[str] = []
+    dependencies: list[str] = []
+
+
+class BrutalAuditReport(BaseModel):
+    summary: str = "Brutal Audit is currently unavailable."
+    category_scores: dict[BrutalAuditCategory, float] = {}
+    category_analysis: list[BrutalAuditCategoryAnalysis] = []
+    code_review_rejections: list[BrutalAuditCriticism] = []
+    strongest_areas: list[str] = []
+    weakest_areas: list[BrutalAuditAreaScore] = []
+    production_blockers: list[str] = []
+    top_improvements: list[str] = []
+    repository_snapshot: BrutalAuditSnapshot = Field(default_factory=BrutalAuditSnapshot)
+    overall_score: float = Field(0.0, ge=0.0, le=10.0)
+    verdict: Literal[
+        "NOT READY",
+        "NEEDS MAJOR WORK",
+        "PROMISING BUT NOT PRODUCTION READY",
+        "READY WITH HARDENING",
+        "PRODUCTION READY",
+    ] = "NOT READY"
+    files_analyzed: list[str] = []
+    error: str = ""
+
+
 class PasteFixRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=7000)
     language: Language
