@@ -236,9 +236,46 @@ async def test_first_five_supplied_zips_pass_upload_analyze_source_and_download_
     assert downloaded_manifest == original_manifest
 
 
+FIX_SPECS = {
+    "py_001_hardcoded_secret.zip": {
+        "rule": "SEC-HARDCODED-SECRET",
+        "original_snippet": 'API_KEY = "demo-secret-key-123"',
+        "proposed_fix": 'API_KEY = os.environ["API_KEY"]',
+    },
+    "py_002_eval_untrusted_input.zip": {
+        "rule": "SEC-EVAL-EXEC",
+        "original_snippet": "    return eval(expression)",
+        "proposed_fix": "    return ast.literal_eval(expression)",
+    },
+    "py_003_sql_injection.zip": {
+        "rule": "SEC-SQL-INJECTION",
+        "original_snippet": '    query = f"SELECT id, name FROM users WHERE name = \'{name}\'"\n    return conn.execute(query).fetchall()',
+        "proposed_fix": '    query = "SELECT id, name FROM users WHERE name = ?"\n    return conn.execute(query, (name,)).fetchall()',
+    },
+    "py_004_shell_injection.zip": {
+        "rule": "SEC-COMMAND-INJECTION",
+        "original_snippet": '    command = f"ping -c 1 {host}"\n    return subprocess.run(command, shell=True, capture_output=True, text=True).stdout',
+        "proposed_fix": '    command = ["ping", "-c", "1", host]\n    return subprocess.run(command, shell=False, capture_output=True, text=True).stdout',
+    },
+    "py_005_path_traversal.zip": {
+        "rule": "SEC-PATH-TRAVERSAL-FILE",
+        "original_snippet": "    return (UPLOAD_ROOT / filename).read_text(encoding='utf-8')",
+        "proposed_fix": (
+            "    target = (UPLOAD_ROOT / filename).resolve()\n"
+            "    if not target.is_relative_to(UPLOAD_ROOT.resolve()):\n"
+            "        raise ValueError('invalid path')\n"
+            "    return target.read_text(encoding='utf-8')"
+        ),
+    },
+}
+
+
 @pytest.mark.asyncio
-async def test_full_fix_apply_reanalyze_download_lifecycle(e2e_store, monkeypatch):
-    """The mandatory workflow the spec requires end-to-end: upload -> analyze
+@pytest.mark.parametrize("zip_name", FIRST_FIVE)
+async def test_full_fix_apply_reanalyze_download_lifecycle(e2e_store, monkeypatch, zip_name):
+    """The mandatory workflow the spec requires end-to-end, for every one of
+    the 5 supplied ZIPs (regression law: every previously-passed ZIP is
+    re-verified on every run, not just the newest one): upload -> analyze
     -> generate fix -> apply (exactly once) -> reanalyze (fresh, not
     reapplied) -> verify the original finding is gone -> download ->
     verify ONLY the fixed file changed, everything else byte-identical.
@@ -250,16 +287,16 @@ async def test_full_fix_apply_reanalyze_download_lifecycle(e2e_store, monkeypatc
     """
     from models.schemas import FindingTransform
 
-    zip_name = "py_001_hardcoded_secret.zip"
+    spec = FIX_SPECS[zip_name]
     zip_path = ZIP_DIR / zip_name
     zip_bytes = zip_path.read_bytes()
     original_manifest = _zip_manifest(zip_bytes)
 
     async def fake_generate_fix(finding, code_snippet, language, standards, related_files=None, knowledge=None):
         return FindingTransform(
-            original_snippet='API_KEY = "demo-secret-key-123"',
-            proposed_fix='API_KEY = os.environ["API_KEY"]',
-            explanation="Move the secret to an environment variable instead of a literal.",
+            original_snippet=spec["original_snippet"],
+            proposed_fix=spec["proposed_fix"],
+            explanation="Deterministic test fix.",
             confidence=0.9,
         )
 
@@ -276,8 +313,8 @@ async def test_full_fix_apply_reanalyze_download_lifecycle(e2e_store, monkeypatc
 
     before_project = await projects_router.get_project_by_id(project_id, current_user=USER)
     before_source_revision = before_project["source_revision"]
-    secret_finding = next(f for f in before_project["findings"] if f["rule_id"] == "SEC-HARDCODED-SECRET")
-    finding_id = secret_finding["finding_id"]
+    target_finding = next(f for f in before_project["findings"] if f["rule_id"] == spec["rule"])
+    finding_id = target_finding["finding_id"]
 
     # --- Generate: must NOT mutate source ---
     from models.schemas import FindingReasonRequest
@@ -305,8 +342,8 @@ async def test_full_fix_apply_reanalyze_download_lifecycle(e2e_store, monkeypatc
     assert applied_project["source_revision"] == before_source_revision + 1
     assert applied_project["analysis_status"] == "stale"
     app_py = next(f for f in applied_project["files"] if f["path"] == "app.py")
-    assert "demo-secret-key-123" not in app_py["content"]
-    assert "os.environ" in app_py["content"]
+    assert spec["original_snippet"] not in app_py["content"]
+    assert spec["proposed_fix"] in app_py["content"]
 
     # --- Duplicate Apply must be safely rejected, not double-applied ---
     second_apply = await projects_router.apply_project_fix(
@@ -325,8 +362,8 @@ async def test_full_fix_apply_reanalyze_download_lifecycle(e2e_store, monkeypatc
 
     final_project = await projects_router.get_project_by_id(project_id, current_user=USER)
     assert final_project["analysis_status"] == "completed"
-    final_rules = {f["rule_id"] for f in final_project["findings"]}
-    assert "SEC-HARDCODED-SECRET" not in final_rules, (
+    final_findings_for_rule = [f for f in final_project["findings"] if f["rule_id"] == spec["rule"] and f["file"] == "app.py"]
+    assert not final_findings_for_rule, (
         "the fixed pattern must no longer be detected -- static security re-scan "
         "no longer finds the previous pattern"
     )
