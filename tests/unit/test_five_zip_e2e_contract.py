@@ -234,3 +234,111 @@ async def test_first_five_supplied_zips_pass_upload_analyze_source_and_download_
     downloaded = await _streaming_response_bytes(download_response)
     downloaded_manifest = _zip_manifest(downloaded)
     assert downloaded_manifest == original_manifest
+
+
+@pytest.mark.asyncio
+async def test_full_fix_apply_reanalyze_download_lifecycle(e2e_store, monkeypatch):
+    """The mandatory workflow the spec requires end-to-end: upload -> analyze
+    -> generate fix -> apply (exactly once) -> reanalyze (fresh, not
+    reapplied) -> verify the original finding is gone -> download ->
+    verify ONLY the fixed file changed, everything else byte-identical.
+
+    generate_fix (the actual Groq call) is mocked to a deterministic patch --
+    Groq's prose quality is covered elsewhere (grounding/prompt tests); this
+    test is about the APPLY/REANALYZE/DOWNLOAD *mechanics* being correct,
+    which must hold regardless of what the model returns.
+    """
+    from models.schemas import FindingTransform
+
+    zip_name = "py_001_hardcoded_secret.zip"
+    zip_path = ZIP_DIR / zip_name
+    zip_bytes = zip_path.read_bytes()
+    original_manifest = _zip_manifest(zip_bytes)
+
+    async def fake_generate_fix(finding, code_snippet, language, standards, related_files=None, knowledge=None):
+        return FindingTransform(
+            original_snippet='API_KEY = "demo-secret-key-123"',
+            proposed_fix='API_KEY = os.environ["API_KEY"]',
+            explanation="Move the secret to an environment variable instead of a literal.",
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(projects_router, "generate_fix", fake_generate_fix)
+
+    upload = UploadFile(filename=zip_name, file=io.BytesIO(zip_bytes))
+    upload_result = await projects_router.upload_project(file=upload, session_id="e2e-session", current_user=USER)
+    project_id = upload_result["project_id"]
+
+    analyze_response = await projects_router.analyze_project_by_id(project_id, current_user=USER)
+    job_payload = json.loads(analyze_response.body)
+    job = await projects_router.get_analysis_job(job_payload["job_id"], current_user=USER)
+    assert job["status"] == "completed"
+
+    before_project = await projects_router.get_project_by_id(project_id, current_user=USER)
+    before_source_revision = before_project["source_revision"]
+    secret_finding = next(f for f in before_project["findings"] if f["rule_id"] == "SEC-HARDCODED-SECRET")
+    finding_id = secret_finding["finding_id"]
+
+    # --- Generate: must NOT mutate source ---
+    from models.schemas import FindingReasonRequest
+
+    transform_result = await projects_router.transform_finding(
+        project_id, FindingReasonRequest(finding_id=finding_id), current_user=USER
+    )
+    after_generate_project = await projects_router.get_project_by_id(project_id, current_user=USER)
+    assert after_generate_project["source_revision"] == before_source_revision, "Generate must not mutate source"
+    assert transform_result.can_apply is True, f"expected an applicable patch, got {transform_result.apply_failure_reason!r}"
+
+    # --- Preview (re-fetch, no mutation) also must not change anything ---
+    preview_project = await projects_router.get_project_by_id(project_id, current_user=USER)
+    assert preview_project["source_revision"] == before_source_revision
+
+    # --- Apply: exactly one mutation ---
+    from models.schemas import ApplyProjectFixRequest
+
+    apply_response = await projects_router.apply_project_fix(
+        project_id, ApplyProjectFixRequest(finding_id=finding_id), current_user=USER
+    )
+    assert apply_response["status"] == "applied"
+
+    applied_project = await projects_router.get_project_by_id(project_id, current_user=USER)
+    assert applied_project["source_revision"] == before_source_revision + 1
+    assert applied_project["analysis_status"] == "stale"
+    app_py = next(f for f in applied_project["files"] if f["path"] == "app.py")
+    assert "demo-secret-key-123" not in app_py["content"]
+    assert "os.environ" in app_py["content"]
+
+    # --- Duplicate Apply must be safely rejected, not double-applied ---
+    second_apply = await projects_router.apply_project_fix(
+        project_id, ApplyProjectFixRequest(finding_id=finding_id), current_user=USER
+    )
+    assert second_apply.status_code in (400, 409), "re-applying an already-applied fix must not silently succeed"
+    unchanged_project = await projects_router.get_project_by_id(project_id, current_user=USER)
+    assert unchanged_project["source_revision"] == before_source_revision + 1, "duplicate apply must not bump revision again"
+
+    # --- Reanalyze: fresh from current (already-patched) source, not a reapply ---
+    reanalyze_response = await projects_router.reanalyze_project(project_id, None, current_user=USER)
+    assert reanalyze_response.status_code == 202
+    reanalyze_job_payload = json.loads(reanalyze_response.body)
+    reanalyze_job = await projects_router.get_analysis_job(reanalyze_job_payload["job_id"], current_user=USER)
+    assert reanalyze_job["status"] == "completed"
+
+    final_project = await projects_router.get_project_by_id(project_id, current_user=USER)
+    assert final_project["analysis_status"] == "completed"
+    final_rules = {f["rule_id"] for f in final_project["findings"]}
+    assert "SEC-HARDCODED-SECRET" not in final_rules, (
+        "the fixed pattern must no longer be detected -- static security re-scan "
+        "no longer finds the previous pattern"
+    )
+    # No ghost accumulation: reanalysis must not have appended onto the stale set.
+    assert len(final_project["findings"]) == len({f["finding_id"] for f in final_project["findings"]})
+
+    # --- Download: only app.py may differ; everything else byte-identical ---
+    download_response = await projects_router.download_fixed_project(project_id, current_user=USER)
+    assert download_response.status_code == 200
+    downloaded = await _streaming_response_bytes(download_response)
+    downloaded_manifest = _zip_manifest(downloaded)
+
+    assert set(downloaded_manifest.keys()) == set(original_manifest.keys()), "no file may appear or disappear"
+    changed_files = {path for path in original_manifest if original_manifest[path] != downloaded_manifest[path]}
+    assert changed_files == {"app.py"}, f"only app.py should differ, got {changed_files}"
