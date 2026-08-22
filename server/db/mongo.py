@@ -210,7 +210,13 @@ async def get_owned_project(project_id: str, owner_user_id: str):
     return doc
 
 
-async def update_owned_project(project_id: str, owner_user_id: str, updates: dict):
+async def update_owned_project(
+    project_id: str,
+    owner_user_id: str,
+    updates: dict,
+    *,
+    expected_source_revision: int | None = None,
+) -> bool:
     from bson.errors import InvalidId
     from bson import ObjectId
 
@@ -224,9 +230,12 @@ async def update_owned_project(project_id: str, owner_user_id: str, updates: dic
     try:
         object_id = ObjectId(project_id)
     except InvalidId:
-        return
+        return False
 
-    result = await database.projects.update_one({"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates})
+    query = {"_id": object_id, "owner_user_id": owner_user_id}
+    if expected_source_revision is not None:
+        query["source_revision"] = expected_source_revision
+    result = await database.projects.update_one(query, {"$set": updates})
     if result.matched_count:
         for content_ref in replaced_refs:
             try:
@@ -236,6 +245,7 @@ async def update_owned_project(project_id: str, owner_user_id: str, updates: dic
                 # orphan temporarily is safer than turning a completed write
                 # into a failed request; maintenance can retry cleanup later.
                 print(f"[mongo] deferred old GridFS cleanup: {type(exc).__name__}")
+    return bool(result.matched_count)
 
 
 async def create_analysis_job(project_id: str, owner_user_id: str) -> str:

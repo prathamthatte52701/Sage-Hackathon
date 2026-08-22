@@ -861,7 +861,7 @@ async def apply_project_fix(
             }
         )
 
-        await update_owned_project(
+        updated = await update_owned_project(
             project_id,
             current_user["_id"],
             {
@@ -872,7 +872,13 @@ async def apply_project_fix(
                 "analysis_status": "stale",
                 "compliance_score": None,
             },
+            expected_source_revision=int(project.get("source_revision", 1)),
         )
+        if updated is False:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "Project source changed while this fix was being applied. Refresh and generate a new fix."},
+            )
         print(f"[projects] fix applied user_id={current_user['_id']} project_id={project_id}")
         return {
             "status": "applied",
