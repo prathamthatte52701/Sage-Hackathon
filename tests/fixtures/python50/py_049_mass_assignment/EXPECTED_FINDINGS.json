@@ -1,0 +1,19 @@
+{
+  "test_id": 49,
+  "name": "py_049_mass_assignment",
+  "language": "python",
+  "difficulty": "medium",
+  "source_file": "app.py",
+  "source_lines": 6,
+  "expected_findings": [
+    {
+      "theme": "mass_assignment",
+      "severity": "high",
+      "category": "security",
+      "evidence": "Every payload key is assigned, including privileged attributes.",
+      "expected": "Use an explicit allowlist of mutable fields."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

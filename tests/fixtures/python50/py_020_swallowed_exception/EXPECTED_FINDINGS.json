@@ -1,0 +1,19 @@
+{
+  "test_id": 20,
+  "name": "py_020_swallowed_exception",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 5,
+  "expected_findings": [
+    {
+      "theme": "swallowed_exception",
+      "severity": "low",
+      "category": "reliability",
+      "evidence": "Broad Exception is caught and silently ignored.",
+      "expected": "Handle/log unexpected failures."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

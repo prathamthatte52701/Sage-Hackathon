@@ -1,0 +1,26 @@
+{
+  "test_id": 48,
+  "name": "py_048_csrf_cookie_form",
+  "language": "python",
+  "difficulty": "medium",
+  "source_file": "app.py",
+  "source_lines": 7,
+  "expected_findings": [
+    {
+      "theme": "csrf_missing",
+      "severity": "medium",
+      "category": "security",
+      "evidence": "Cookie/session-authenticated state-changing POST has no CSRF protection visible.",
+      "expected": "Use CSRF protection appropriate to browser cookie auth."
+    },
+    {
+      "theme": "hardcoded_session_secret",
+      "severity": "medium",
+      "category": "security",
+      "evidence": "Flask session signing secret is hard-coded.",
+      "expected": "Load signing secret from secure configuration."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

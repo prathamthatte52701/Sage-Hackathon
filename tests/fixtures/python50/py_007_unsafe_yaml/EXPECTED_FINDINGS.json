@@ -1,0 +1,19 @@
+{
+  "test_id": 7,
+  "name": "py_007_unsafe_yaml",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 3,
+  "expected_findings": [
+    {
+      "theme": "unsafe_deserialization",
+      "severity": "high",
+      "category": "security",
+      "evidence": "yaml.load uses yaml.Loader on untrusted text.",
+      "expected": "Use yaml.safe_load for untrusted YAML."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

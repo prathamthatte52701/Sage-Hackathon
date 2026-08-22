@@ -51,8 +51,26 @@ _RE_EMPTY_CATCH_JS = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
 # because that brace sits BEFORE the closing quote, not after it. Added a second
 # alternative so the documented f-string case (f"SELECT ... {var}") actually fires too.
 _RE_SQL_CONCAT = re.compile(
-    r"(?i)(select|insert|update|delete)\b[^\"'\n]*([\"'][^\"'\n]*\+|\{[^{}\"'\n]*\}[^\"'\n]*[\"'])"
+    # Third alternative added after the python50 benchmark exposed a real
+    # false negative: the single most common SQL-injection shape puts the
+    # interpolation inside SQL string quoting -- f"... WHERE name = '{name}'".
+    # The first two alternatives both stop at the inner quote (their
+    # character classes exclude quotes), so that case never matched. The
+    # third allows quotes between the SQL keyword and the interpolation.
+    r"(?i)(select|insert|update|delete)\b(?:"
+    r"[^\"'\n]*(?:[\"'][^\"'\n]*\+|\{[^{}\"'\n]*\}[^\"'\n]*[\"'])"
+    r"|[^\n]*\{[^{}\n]+\}"
+    r")"
 )
+# GOD spec Rule 2 requires evidence of the full path: untrusted source ->
+# propagation -> unsafe SQL construction -> DATABASE EXECUTION SINK. The
+# pattern above only detects the "unsafe SQL construction" step -- without
+# a sink requirement, ANY string starting with select/insert/update/delete
+# that gets concatenated fires, including plain English strings that
+# happen to start with one of those words and have nothing to do with a
+# database at all (e.g. msg = "SELECT this: " + name). Require a real SQL
+# execution call nearby before treating the construction as a finding.
+_RE_SQL_EXECUTION_SINK = re.compile(r"\.\s*execute(?:many|script)?\s*\(|\braw\s*\(")
 _RE_SUBPROCESS_SHELL = re.compile(r"subprocess\.\w+\([^)]*shell\s*=\s*True")
 _RE_OS_SYSTEM = re.compile(r"\b(os\.system|os\.popen|commands\.getoutput)\s*\(")
 _RE_SHELL_JS = re.compile(r"child_process\.(exec|execSync)\s*\(")
@@ -220,6 +238,15 @@ def _guarded_findings(content: str, path: str, pattern: re.Pattern, rule: str, s
     return findings
 
 
+# A non-secret marker word that is part of a hostname (example.com,
+# example.invalid, sample.org) says nothing about whether a nearby
+# credential assignment is real -- placeholder domains are extremely
+# common in otherwise-production code. Stripped before the context check.
+_RE_MARKER_IN_HOSTNAME = re.compile(
+    r"(?i)\b(example|sample|dummy|fake|placeholder)\.[a-z]{2,}\b"
+)
+
+
 def _is_comment_or_non_secret_context(content: str, match: re.Match) -> bool:
     line_start = content.rfind("\n", 0, match.start()) + 1
     line_end = content.find("\n", match.end())
@@ -230,11 +257,19 @@ def _is_comment_or_non_secret_context(content: str, match: re.Match) -> bool:
     if stripped.startswith(("#", "//", "/*", "*")):
         return True
     nearby = content[max(0, line_start - 180): min(len(content), line_end + 180)]
+    # Drop placeholder-domain occurrences first, so a URL like
+    # "https://example.invalid/users" can't suppress a genuine adjacent
+    # credential (real false negative found by the python50 benchmark).
+    nearby = _RE_MARKER_IN_HOSTNAME.sub("", nearby)
     return bool(_NON_SECRET_CONTEXT.search(nearby))
 
 
 def _security_context_guard(content: str, match: re.Match) -> bool:
     return bool(_HASH_SECURITY_CONTEXT.search(_nearby(content, match.start(), match.end())))
+
+
+def _sql_execution_sink_guard(content: str, match: re.Match) -> bool:
+    return bool(_RE_SQL_EXECUTION_SINK.search(_nearby(content, match.start(), match.end(), radius=250)))
 
 
 def _secret_random_guard(content: str, match: re.Match) -> bool:
@@ -321,10 +356,14 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
             "Empty or catch-all exception handler silently swallows all errors",
         )
 
-    # 4. SQL string concatenation — all languages
-    findings += _findings_for_pattern(
+    # 4. SQL string concatenation — all languages. Requires a real SQL
+    # execution sink nearby (see _sql_execution_sink_guard) -- otherwise a
+    # plain string that merely starts with select/insert/update/delete
+    # would fire with no database involved at all.
+    findings += _guarded_findings(
         content, path, _RE_SQL_CONCAT, "sql_concat", "critical", "security",
         "Possible SQL injection via string concatenation instead of parameterized query",
+        _sql_execution_sink_guard,
     )
 
     # 5. shell / command injection risk — python + js/ts

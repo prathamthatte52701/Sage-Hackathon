@@ -1,0 +1,19 @@
+{
+  "test_id": 10,
+  "name": "py_010_jwt_fallback_secret",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 4,
+  "expected_findings": [
+    {
+      "theme": "insecure_secret_fallback",
+      "severity": "high",
+      "category": "security",
+      "evidence": "JWT secret falls back to a predictable literal.",
+      "expected": "Fail closed if JWT secret configuration is missing."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

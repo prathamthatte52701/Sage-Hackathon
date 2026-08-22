@@ -1,0 +1,19 @@
+{
+  "test_id": 5,
+  "name": "py_005_path_traversal",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 4,
+  "expected_findings": [
+    {
+      "theme": "path_traversal",
+      "severity": "high",
+      "category": "security",
+      "evidence": "filename is joined directly to the upload root.",
+      "expected": "Resolve and enforce path containment."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

@@ -1,0 +1,19 @@
+{
+  "test_id": 28,
+  "name": "py_028_date_parsing_validation",
+  "language": "python",
+  "difficulty": "medium",
+  "source_file": "app.py",
+  "source_lines": 5,
+  "expected_findings": [
+    {
+      "theme": "date_input_validation",
+      "severity": "low",
+      "category": "api_design",
+      "evidence": "Malformed external date can raise ValueError without controlled validation/error handling.",
+      "expected": "Validate dates at the API boundary."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

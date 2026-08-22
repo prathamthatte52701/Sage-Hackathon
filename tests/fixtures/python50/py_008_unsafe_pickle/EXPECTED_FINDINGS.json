@@ -1,0 +1,19 @@
+{
+  "test_id": 8,
+  "name": "py_008_unsafe_pickle",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 3,
+  "expected_findings": [
+    {
+      "theme": "unsafe_deserialization",
+      "severity": "critical",
+      "category": "security",
+      "evidence": "pickle.loads is used on externally supplied bytes.",
+      "expected": "Do not deserialize untrusted pickle data."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

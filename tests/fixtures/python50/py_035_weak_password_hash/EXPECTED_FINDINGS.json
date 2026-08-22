@@ -1,0 +1,19 @@
+{
+  "test_id": 35,
+  "name": "py_035_weak_password_hash",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 3,
+  "expected_findings": [
+    {
+      "theme": "weak_password_hash",
+      "severity": "high",
+      "category": "security",
+      "evidence": "Passwords use unsalted MD5.",
+      "expected": "Use a password KDF such as Argon2/bcrypt/scrypt."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

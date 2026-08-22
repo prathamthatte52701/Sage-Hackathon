@@ -1,0 +1,19 @@
+{
+  "test_id": 17,
+  "name": "py_017_missing_http_timeout",
+  "language": "python",
+  "difficulty": "easy",
+  "source_file": "app.py",
+  "source_lines": 4,
+  "expected_findings": [
+    {
+      "theme": "missing_outbound_timeout",
+      "severity": "medium",
+      "category": "reliability",
+      "evidence": "requests.get has no timeout argument.",
+      "expected": "Use bounded outbound network timeouts."
+    }
+  ],
+  "negative_assertions": [],
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+}

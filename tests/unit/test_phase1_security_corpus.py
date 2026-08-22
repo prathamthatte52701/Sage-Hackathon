@@ -15,7 +15,18 @@ class CorpusCase:
 CORPUS = [
     CorpusCase("hardcoded_secret", "python", "password = 'real-secret-value'", True, {"hardcoded_secret"}),
     CorpusCase("eval", "python", "eval(payload)", True, {"dangerous_eval"}),
-    CorpusCase("sql_concat", "python", "query = f\"SELECT * FROM users WHERE id = {user_id}\"", True, {"sql_concat"}),
+    # Phase 3.2: GOD spec Rule 2 requires concrete evidence of the full
+    # source -> propagation -> unsafe construction -> DATABASE EXECUTION
+    # SINK path. The original one-line fixture here (just the f-string,
+    # never executed) doesn't show a sink, so it's no longer a valid
+    # positive case -- an unexecuted string assignment isn't exploitable
+    # by itself. Updated to include the cursor.execute() sink the rule
+    # now correctly requires before firing.
+    CorpusCase(
+        "sql_concat", "python",
+        "query = f\"SELECT * FROM users WHERE id = {user_id}\"\ncursor.execute(query)",
+        True, {"sql_concat"},
+    ),
     CorpusCase("subprocess_shell", "python", "subprocess.run(cmd, shell=True)", True, {"subprocess_shell_true"}),
     CorpusCase("pickle", "python", "pickle.loads(blob)", True, {"unsafe_deserialization"}),
     CorpusCase("yaml", "python", "yaml.load(body)", True, {"unsafe_deserialization"}),
