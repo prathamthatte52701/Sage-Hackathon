@@ -5,7 +5,9 @@ framework analyzer; each rule below only fires on concrete source/config signals
 with language gating and small false-positive guards where practical.
 """
 
+import io
 import re
+import tokenize
 
 _RE_SECRET = re.compile(r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"][^'\"]{4,}['\"]")
 _RE_EVAL_PY = re.compile(r"\b(eval|exec)\s*\(")
@@ -199,6 +201,34 @@ def _secret_random_guard(content: str, match: re.Match) -> bool:
     return bool(_RE_SECURITY_TOKEN_WORD.search(_nearby(content, match.start(), match.end())))
 
 
+def _python_non_code_spans(content: str) -> list[tuple[int, int]]:
+    line_offsets = []
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        line_offsets.append(offset)
+        offset += len(line)
+
+    def absolute(pos: tuple[int, int]) -> int:
+        line, col = pos
+        if line <= 0 or line > len(line_offsets):
+            return 0
+        return line_offsets[line - 1] + col
+
+    spans = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(content).readline):
+            if token.type in {tokenize.STRING, tokenize.COMMENT}:
+                spans.append((absolute(token.start), absolute(token.end)))
+    except tokenize.TokenError:
+        return spans
+    return spans
+
+
+def _outside_python_comment_or_string(content: str, match: re.Match) -> bool:
+    start = match.start()
+    return not any(span_start <= start < span_end for span_start, span_end in _python_non_code_spans(content))
+
+
 def run_rules(path: str, language: str, content: str) -> list[dict]:
     findings = []
 
@@ -222,9 +252,9 @@ def run_rules(path: str, language: str, content: str) -> list[dict]:
 
     # 2. eval/exec — language-specific pattern
     if language == "python":
-        findings += _findings_for_pattern(
+        findings += _guarded_findings(
             content, path, _RE_EVAL_PY, "dangerous_eval", "critical", "security",
-            "Use of eval/exec on potentially untrusted input",
+            "Use of eval/exec on potentially untrusted input", _outside_python_comment_or_string,
         )
     elif language in ("javascript", "typescript"):
         findings += _findings_for_pattern(

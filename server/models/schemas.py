@@ -3,7 +3,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 Language = Literal["javascript", "python", "java", "cpp", "typescript"]
-Severity = Literal["critical", "medium", "low"]
+Severity = Literal["critical", "high", "medium", "low"]
 Category = Literal[
     "security", "logic", "performance", "style", "best_practice",
     "correctness", "reliability", "database", "api_design", "architecture",

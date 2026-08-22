@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 
 from services.analyzers import get_analyzer
 from services.analyzers.rules import run_rules
+from services.structural import analyze_python_source
 
 SOURCE_LANGUAGES = {"python", "javascript", "typescript", "java", "cpp"}
 
@@ -77,7 +78,7 @@ def analyze_project(project: dict) -> dict:
     # whatever imports/functions/findings/etc a prior analyze call wrote)
     # would append onto the existing lists and double every entry on each
     # reanalysis instead of replacing them.
-    for key in ("imports", "functions", "classes", "apiEndpoints", "tests", "configs", "deploymentFiles", "findings", "warnings"):
+    for key in ("imports", "functions", "classes", "apiEndpoints", "tests", "configs", "deploymentFiles", "findings", "warnings", "structuralMetadata"):
         project[key] = []
 
     warnings = project["warnings"]
@@ -99,6 +100,56 @@ def analyze_project(project: dict) -> dict:
 
         if content is None:
             continue
+
+        if language == "python":
+            module = analyze_python_source(content)
+            if module.parse_error is None:
+                project["structuralMetadata"].append(
+                    {
+                        "file": path,
+                        "language": "python",
+                        "imports": module.imports,
+                        "from_imports": module.from_imports,
+                        "assignments": module.assignments,
+                        "functions": [
+                            {
+                                "name": fn.name,
+                                "start_line": fn.start_line,
+                                "end_line": fn.end_line,
+                                "args": fn.args,
+                                "is_async": fn.is_async,
+                                "decorators": fn.decorators,
+                                "returns": fn.returns,
+                                "calls": [call.__dict__ for call in fn.calls],
+                                "exception_handlers": fn.exception_handlers,
+                                "assignments": fn.assignments,
+                                "awaits": fn.awaits,
+                            }
+                            for fn in module.functions
+                        ],
+                        "classes": [
+                            {
+                                "name": cls.name,
+                                "start_line": cls.start_line,
+                                "end_line": cls.end_line,
+                                "decorators": cls.decorators,
+                                "methods": [
+                                    {
+                                        "name": fn.name,
+                                        "start_line": fn.start_line,
+                                        "end_line": fn.end_line,
+                                        "args": fn.args,
+                                        "is_async": fn.is_async,
+                                        "decorators": fn.decorators,
+                                        "returns": fn.returns,
+                                    }
+                                    for fn in cls.methods
+                                ],
+                            }
+                            for cls in module.classes
+                        ],
+                    }
+                )
 
         analyzer = get_analyzer(language)
         if analyzer is not None:
