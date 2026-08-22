@@ -410,7 +410,7 @@ async def import_from_github(payload: GithubImportRequest, current_user: dict = 
 @router.get("/projects/{project_id}")
 async def get_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        project = await get_owned_project(project_id, current_user["_id"])
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
         return project
@@ -506,7 +506,22 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
             "analysis_revision": project.get("source_revision", 0),
         }
     )
-    await update_owned_project(project_id, owner_user_id, updates)
+    committed = await update_owned_project(
+        project_id,
+        owner_user_id,
+        updates,
+        expected_source_revision=int(project.get("source_revision", 0)),
+    )
+    if not committed:
+        # A source-changing request won the race while this job was running.
+        # Never label its old findings as analysis of the newer source.
+        return {
+            "project_id": project_id,
+            "finding_count": 0,
+            "analysis_revision": project.get("source_revision", 0),
+            "partial": True,
+            "stale": True,
+        }
     return {
         "project_id": project_id,
         "finding_count": len(analyzed.get("findings", [])),
@@ -518,7 +533,7 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
 @router.post("/projects/{project_id}/analyze")
 async def analyze_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        project = await get_owned_project(project_id, current_user["_id"])
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
         job, created = await enqueue_analysis(

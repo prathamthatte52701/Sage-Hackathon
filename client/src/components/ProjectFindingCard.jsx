@@ -86,7 +86,7 @@ export default function ProjectFindingCard({ finding, files, language, projectId
     setFixLoading(true);
     setFixError(null);
     try {
-      const data = await transformFinding(projectId, findingIndex);
+      const data = await transformFinding(projectId, finding);
       setFix(data);
     } catch (err) {
       setFixError(err.message || "Could not generate a fix.");

@@ -37,6 +37,9 @@ class FakeProjectStore:
             return None
         return copy.deepcopy(doc)
 
+    async def get_owned_project_metadata(self, project_id: str, owner_user_id: str):
+        return await self.get_owned_project(project_id, owner_user_id)
+
     async def update_owned_project(self, project_id: str, owner_user_id: str, updates: dict, **_kwargs):
         doc = self.projects.get(project_id)
         if doc is None or doc.get("owner_user_id") != owner_user_id:
@@ -49,6 +52,7 @@ def store(monkeypatch):
     fake = FakeProjectStore()
     monkeypatch.setattr(projects_router, "save_project", fake.save_project)
     monkeypatch.setattr(projects_router, "get_owned_project", fake.get_owned_project)
+    monkeypatch.setattr(projects_router, "get_owned_project_metadata", fake.get_owned_project_metadata)
     monkeypatch.setattr(projects_router, "update_owned_project", fake.update_owned_project)
     return fake
 
