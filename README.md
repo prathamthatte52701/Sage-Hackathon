@@ -1,317 +1,310 @@
-# CODE MASTER AI
+# SAGE
 
-CODE MASTER AI is a FastAPI + React code-intelligence workspace for paste-code review, project ZIP/GitHub analysis, evidence-grounded findings, knowledge-assisted reasoning, and safe fix workflows.
+## Evidence-First Security Review for Real Repositories
 
-The current implementation is built around a strict rule: deterministic evidence and validated repository context drive the product. LLM calls are used for explanation, quality review, and fix proposals, but they are not treated as authoritative proof by themselves.
+SAGE is a repository security workspace built around a deliberately strict idea:
 
-## What CODE MASTER AI Does
+> **A security finding should be traceable to concrete code evidence, not an AI hunch.**
 
-- Reviews pasted code snippets with deterministic rules plus AI quality review.
-- Analyzes uploaded ZIP projects and imported GitHub repositories.
-- Scores projects across security, reliability, code quality, testing, performance, and production readiness.
-- Retrieves curated Code Master AI engineering standards for each validated finding.
-- Supports project chat with repository retrieval and knowledge RAG.
-- Generates scoped fixes and applies only validated exact patches.
-- Reanalyzes fixed code/projects and supports downloading applied fixes.
+Upload a ZIP, import a public GitHub repository, or review a focused snippet. SAGE maps the codebase, runs deterministic checks, presents grounded findings, retrieves rule-specific guidance, generates a scoped remediation proposal, validates the patch, and rescans the stored source after an explicit apply.
+
+SAGE is designed to prefer **no finding** over a vague or unprovable warning.
+
+---
+
+## The Product Contract
+
+SAGE is moving to a closed-world security model. Its long-term review boundary is intentionally limited to these twelve rule families:
+
+| # | Canonical family | Examples of evidence SAGE must require |
+| --- | --- | --- |
+| 01 | Hardcoded secrets | Credential-like literal plus contextual evidence |
+| 02 | SQL injection | Untrusted input reaching unsafe SQL construction and execution |
+| 03 | NoSQL injection | Untrusted object/operator flow into a recognized query context |
+| 04 | Command injection | Unsafe command construction or shell execution flow |
+| 05 | SSRF | Attacker-influenced destination reaching an outbound network sink |
+| 06 | Path and file security | Unsafe file path, upload, archive, or filesystem operation |
+| 07 | Unsafe deserialization | A concrete unsafe deserializer call and relevant input context |
+| 08 | Dynamic execution | Real `eval` or `exec` call nodes, never comments or prose |
+| 09 | TLS and CORS misconfiguration | Concrete insecure transport or credentialed CORS configuration |
+| 10 | Weak crypto or randomness | Weak primitive in a security-sensitive use case |
+| 11 | Auth and session security | Deterministically provable session or ownership defect |
+| 12 | Dependency risk | Manifest evidence matched to authoritative dependency metadata |
+
+AI, RAG, and the frontend do **not** get to invent findings. Their role is to enrich deterministic, evidence-backed results with explanation, standards guidance, and safe remediation proposals.
+
+### What SAGE refuses to do
+
+- Turn comments, documentation, variable names, or generic code smells into vulnerabilities.
+- Present model confidence as proof.
+- Mutate source code while generating a fix.
+- Apply a patch when the target is missing, ambiguous, stale, overlapping, or malformed.
+- Pretend a missing source file or validation result is available.
+
+The 12-rule contract is the product direction and certification boundary. Only test-backed detector behavior should be treated as implemented or certified.
+
+---
+
+## From Repository to Verified Change
+
+```text
+ZIP / GitHub repository / pasted code
+                |
+                v
+      Repository map and deterministic analysis
+                |
+                v
+      Evidence-backed security finding
+                |
+                v
+      Rule-aware guidance and scoped fix proposal
+                |
+                v
+      Exact-target patch validation + diff preview
+                |
+                v
+      Explicit apply to one stored source file
+                |
+                v
+      Reanalyze the current repository source
+```
+
+### Safe fix lifecycle
+
+1. **Generate** produces a preview only. Source does not change.
+2. **Validate** checks exact target presence, uniqueness, source hash, overlap, and patch shape.
+3. **Preview** shows the proposed diff and backend validation state.
+4. **Apply** performs one structured patch only when `can_apply` is true.
+5. **Reanalyze** runs the same canonical analysis flow against the newly stored source.
+
+When validation fails, the API returns a specific reason such as `target_not_found`, `ambiguous_target`, `stale_source`, `overlapping_patch`, or `malformed_fix`.
+
+---
+
+## What You Can Do Today
+
+- Review pasted Python, JavaScript, TypeScript, Java, or C/C++ snippets.
+- Upload repository ZIP archives or import public GitHub repositories.
+- Inspect findings, evidence, source locations, and rule-aware guidance.
+- Load the real stored file for a finding instead of a fabricated code preview.
+- Generate and validate a focused fix before applying it.
+- Rescan a project after a patch and download a fixed project ZIP.
+- Ask repository-grounded questions through project chat and curated engineering knowledge.
+- Run the hackathon/demo experience without signup or login.
+
+---
 
 ## Architecture
 
-### Frontend
-
-The React app lives in `client/`.
-
-Primary UI areas:
-
-- `client/src/App.jsx` - main Code Master AI workspace shell, paste review, project views, Ask AI, finding detail, and V2 fix workflow.
-- `client/src/api/client.js` - typed API wrapper for review, project import, chat, reasoning, fix generation, apply, and download.
-- `client/src/components/` - supporting editor/history/project components.
-
-The root app starts both frontend and backend with:
-
-```bash
-npm run dev
-```
-
-Frontend runs on:
-
 ```text
-http://localhost:5173/
+React + Vite workspace
+        |
+        | HTTP API
+        v
+FastAPI application
+        |
+        +-- Repository ingestion and ZIP safety controls
+        +-- Deterministic analyzers and finding normalization
+        +-- Background analysis jobs
+        +-- Patch validation and structured apply engine
+        +-- Project metadata, GridFS-backed source, and downloads
+        +-- Curated knowledge retrieval and guarded LLM enrichment
+        +-- MongoDB persistence and owner-scoped project access
 ```
 
-### Backend
+| Area | Key modules |
+| --- | --- |
+| Frontend workspace | `client/src/App.jsx`, `client/src/components/` |
+| API client and polling | `client/src/api/client.js` |
+| Application setup | `server/main.py` |
+| Project ingestion, jobs, findings, patches | `server/routers/projects.py` |
+| Snippet review and fixes | `server/routers/review.py` |
+| Deterministic rules | `server/services/analyzers/rules.py` |
+| Exact patch validation | `server/services/patching.py` |
+| Project retrieval | `server/services/retrieval.py` |
+| Curated knowledge | `server/knowledge/` |
+| MongoDB and GridFS | `server/db/mongo.py` |
 
-The FastAPI backend lives in `server/`.
+---
 
-Important modules:
+## Quick Start
 
-- `server/main.py` - FastAPI app registration.
-- `server/routers/review.py` - paste-code review, per-finding knowledge retrieval, paste fix generation.
-- `server/routers/projects.py` - ZIP/GitHub import, project analysis, scoring, reasoning, project fix/apply/download.
-- `server/services/analyzer.py` - project mapping and metadata extraction.
-- `server/services/analyzers/rules.py` - deterministic security, correctness, reliability, and production-readiness rules.
-- `server/services/retrieval.py` - project chat retrieval over files/findings/import context.
-- `server/services/patching.py` - exact structured patch validation and application.
-- `server/knowledge/retrieval.py` - Code Master AI knowledge hybrid retrieval.
-- `server/knowledge/seed_data.py` - curated Code Master AI engineering standards.
-- `server/services/prompt_builder.py` - hardened prompts for review, chat, reasoning, and fixes.
+### Prerequisites
 
-Backend runs on:
+- Node.js 20+
+- Python 3.11+
+- MongoDB or MongoDB Atlas for persistence
+- Optional: Groq API keys for AI explanation and fix enrichment
 
-```text
-http://127.0.0.1:8000
-```
-
-## Review Pipeline
-
-For pasted code:
-
-1. Detect language mismatch when possible.
-2. Run deterministic rules.
-3. Run AI quality review for non-obvious correctness/maintainability issues.
-4. Dedupe AI quality findings against deterministic findings.
-5. Retrieve Code Master AI knowledge per finding, not once per snippet.
-6. Return one clean `Review findings` list to the UI.
-
-The product UI hides internal RAG/debug metadata such as retrieval mode, top-k counts, raw vector scores, and retrieval method names. Internal logs still include finding IDs, retrieved knowledge IDs, methods, scores, and top-k counts for debugging.
-
-## Finding-Scoped Knowledge Retrieval
-
-Each finding builds its own retrieval query from:
-
-- title/message
-- rule/category
-- exact evidence
-- line/context
-- reason/fix suggestion
-- language
-
-Retrieval ordering:
-
-1. exact/curated rule match when available
-2. semantic matches
-3. dedupe
-4. category/relevance filtering
-
-Knowledge is shown as engineering guidance, not proof of a defect.
-
-## Safe Fix Workflow
-
-CODE MASTER AI uses a preview-first patch model.
-
-State model:
-
-- `original_source` - exact code initially reviewed
-- `working_source` - current editor/source after explicit user edits or applied fixes
-- `generated_patch` - proposed preview only
-- `applied_patches` - patches explicitly accepted by the user
-
-### Generate Fix
-
-Generate Fix only:
-
-- calls the backend fix-generation endpoint
-- validates the patch target
-- stores the proposed patch
-- renders Original / Proposed Preview / Diff
-- determines `can_apply`
-
-Generate Fix never mutates the editor or project files.
-
-### Apply Fix
-
-Apply Fix is the only normal paste-code action that mutates source.
-
-Before applying, the patch validator checks:
-
-- exact original snippet exists
-- target occurs once
-- replacement is scoped to that target
-- source hash matches the generation base
-- generated/applied patches do not overlap
-- patch is well formed
-
-Structured failure reasons:
-
-- `target_not_found`
-- `ambiguous_target`
-- `stale_source`
-- `overlapping_patch`
-- `malformed_fix`
-
-When validation passes:
-
-- `can_apply = true`
-- Apply Fix is enabled
-- the editor is updated only after the user clicks Apply Fix
-- finding state becomes `Fix applied`
-- Reanalyze uses current working source
-- Download Fixed File exports current working source only after a patch is applied
-
-## Project Fix Workflow
-
-For project findings:
-
-1. Generate a scoped transform from project evidence.
-2. Validate exact target snippets.
-3. Apply only to the target file.
-4. Preserve unrelated files and unrelated code.
-5. Reanalyze the patched project.
-6. Download a fixed ZIP that excludes unsafe paths and ignored secret files.
-
-## MongoDB Atlas Vector Search
-
-Trusted knowledge records live in the `sage_knowledge` collection by default. Uploaded project code is stored separately as project data and must not be ingested as Code Master AI policy knowledge.
-
-Atlas Vector Search index:
-
-```json
-{
-  "name": "sage_knowledge_vector_index",
-  "type": "vectorSearch",
-  "definition": {
-    "fields": [
-      {
-        "type": "vector",
-        "path": "embedding",
-        "numDimensions": 384,
-        "similarity": "cosine"
-      },
-      { "type": "filter", "path": "category" },
-      { "type": "filter", "path": "language" },
-      { "type": "filter", "path": "framework" },
-      { "type": "filter", "path": "severity" },
-      { "type": "filter", "path": "rule_id" },
-      { "type": "filter", "path": "version" }
-    ]
-  }
-}
-```
-
-The default local model is `all-MiniLM-L6-v2`, which emits 384-dimensional vectors.
-
-## Knowledge Ingestion
-
-Curated records are defined in `server/knowledge/seed_data.py` and validated by `server/knowledge/schema.py`.
-
-```bash
-cd server
-python -m knowledge.ingest
-```
-
-Ingestion upserts by `rule_id + version`, creates metadata indexes, stores `content_hash`, `embedding_model`, timestamps, and is safe to run repeatedly.
-
-## Project Embeddings
-
-Project embeddings use `server/services/embeddings.py`.
-
-To backfill existing project documents:
-
-```bash
-cd server
-python generate_embeddings.py
-```
-
-The script hydrates GridFS-backed file content, skips projects that already have a valid embedding, and stores the embedding on each project document.
-
-## Environment
-
-Create `server/.env` from `server/.env.example`.
-
-Important variables:
-
-```bash
-GROQ_KEYS=key1,key2,key3
-MONGO_URL=mongodb+srv://...
-MONGO_DB_NAME=code_reviewer
-KNOWLEDGE_COLLECTION=sage_knowledge
-KNOWLEDGE_VECTOR_INDEX=sage_knowledge_vector_index
-EMBEDDING_PROVIDER=local_sentence_transformers
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-EMBEDDING_DIMENSIONS=384
-EMBEDDING_API_URL=
-EMBEDDING_API_KEY=
-```
-
-Do not commit real secrets. `.env` is ignored by git.
-
-## Local Development
-
-Install everything:
+### Install
 
 ```bash
 npm install
 ```
 
-Start frontend and backend together:
+The root install script creates the backend virtual environment and installs frontend dependencies.
+
+### Configure
+
+Create `server/.env` from `server/.env.example`.
+
+```env
+MONGO_URL=mongodb+srv://...
+MONGO_DB_NAME=code_reviewer
+
+# Demo mode is the current default.
+AUTH_ENABLED=false
+DEMO_USER_ID=demo-user
+
+# Optional AI enrichment.
+GROQ_KEYS=key1,key2
+```
+
+For the frontend, copy `client/.env.example` if you need to override defaults:
+
+```env
+VITE_API_URL=http://localhost:8000
+VITE_AUTH_ENABLED=false
+```
+
+### Run
 
 ```bash
 npm run dev
 ```
 
-Backend only:
+- Workspace: `http://localhost:5173`
+- API: `http://localhost:8000`
+- Health probe: `http://localhost:8000/health`
+
+Run either side separately when needed:
 
 ```bash
-cd server
-venv\Scripts\python -m uvicorn main:app --port 8000
+npm run dev:server
+npm run dev:client
 ```
 
-Frontend only:
+---
 
-```bash
-npm --prefix client run dev
+## Demo Mode and Auth
+
+Hackathon builds default to a deliberate single-user demo mode:
+
+```env
+AUTH_ENABLED=false
 ```
 
-## Testing
+In this mode, every request receives the same internal server-owned demo identity. The browser never supplies an owner ID. This keeps the persistence model structurally consistent while letting the workspace open directly without a login screen or `/auth/me` startup call.
 
-Run all backend tests:
+The auth implementation remains intact. Set both flags to `true` to restore the cookie/JWT flow:
+
+```env
+# server/.env
+AUTH_ENABLED=true
+
+# client/.env
+VITE_AUTH_ENABLED=true
+```
+
+When auth is enabled, configure a strong `JWT_SECRET` and appropriate production cookie/CORS settings.
+
+---
+
+## Repository Ingestion Guarantees
+
+SAGE treats uploaded archives as untrusted input. ZIP processing includes controls for:
+
+- Path traversal, absolute paths, and excessive path depth.
+- Duplicate canonical file paths.
+- Maximum archive size, file count, aggregate expansion, and per-file expansion.
+- GitHub ZIP wrapper-directory normalization.
+- Binary asset preservation alongside readable source files.
+- On-demand source hydration: metadata requests do not need to load every source body.
+
+The source viewer fetches the requested project file only. If a file is unavailable, the UI says so instead of manufacturing a snippet.
+
+---
+
+## Analysis Jobs
+
+Project analysis and reanalysis are asynchronous.
+
+```text
+POST /api/projects/{project_id}/analyze
+  -> 202 { job_id, status }
+
+GET /api/analysis-jobs/{job_id}
+  -> queued | running | completed | partial | failed
+```
+
+The frontend polls the job state before loading fresh project results. Repeated requests for the same active project analysis are deduplicated rather than launching duplicate expensive work.
+
+---
+
+## API Surface
+
+| Capability | Endpoint |
+| --- | --- |
+| Upload ZIP | `POST /api/projects/upload` |
+| Import GitHub repository | `POST /api/projects/github` |
+| Start analysis | `POST /api/projects/{id}/analyze` |
+| Read analysis job | `GET /api/analysis-jobs/{job_id}` |
+| Fetch project metadata | `GET /api/projects/{id}` |
+| Fetch a real project file | `GET /api/projects/{id}/files/{path}` |
+| Explain a finding | `POST /api/projects/{id}/findings/reason` |
+| Generate a fix proposal | `POST /api/projects/{id}/findings/transform` |
+| Apply a validated fix | `POST /api/projects/{id}/fixes/apply` |
+| Reanalyze current source | `POST /api/projects/{id}/reanalyze` |
+| Download fixed project | `GET /api/projects/{id}/download-fixed` |
+| Project chat | `POST /api/projects/{id}/chat` |
+
+---
+
+## Quality Gates
+
+Run backend tests from the repository root:
 
 ```bash
 pytest -q
 ```
 
-Run frontend build:
+Build the frontend:
 
 ```bash
 npm --prefix client run build
 ```
 
-Run frontend lint:
+Lint the frontend:
 
 ```bash
 npm --prefix client run lint
 ```
 
-Current coverage includes:
+The test suite covers the core contracts behind the product: deterministic analysis, patch safety, stale-source handling, ZIP ingestion, owner scoping, job lifecycle behavior, demo mode, source hydration, prompt hardening, and regression cases.
 
-- deterministic analyzer true positives and false positives
-- expanded JavaScript/Python detector rules
-- knowledge schema and retrieval fallback
-- finding-scoped paste-code RAG
-- project vector failure fallback
-- prompt injection hardening
-- ZIP ingestion path traversal protection
-- project patch apply/download safety
-- paste fix structured patch validation
-- preview-only Generate Fix workflow
-- stale/missing/ambiguous/overlapping/malformed patch rejection
+---
 
-## Current Verification Snapshot
+## Operating Principles
 
-Latest local verification:
+1. **Evidence before explanation** - model output cannot substitute for code evidence.
+2. **One finding, one identity** - finding IDs are deterministic and do not depend on UI array position.
+3. **Preview before mutation** - generating a fix never changes source.
+4. **Current source is truth** - reanalysis runs against stored source after an explicit apply.
+5. **Missing data stays missing** - no fake code, fake validation, or fake success states.
+6. **Security scope stays narrow** - precision matters more than a large warning count.
 
-```text
-pytest -q                         70 passed
-npm --prefix client run build     passed
-npm --prefix client run lint      passed with existing warnings only
-```
+---
 
-Known lint warnings are React ergonomics warnings around synchronous state updates in effects and Fast Refresh component-only export guidance. They do not block the current hackathon workflow.
+## Important Limitations
 
-## Known Limitations
+SAGE is an evidence-first security workspace, not a replacement for a full secure-development program or expert review. Static analysis has language and semantic limits; some high-confidence remediation still needs human review. AI features can enrich a verified finding, but they are not an authority for discovering or proving one.
 
-- The frontend still has a few non-blocking React lint warnings.
-- The deterministic analyzers are heuristic, not full AST/dataflow analyzers.
-- LLM-generated fixes are previewed and exact-patch validated, but complex multi-location edits still require manual review.
-- Vector retrieval can fall back when Atlas/vector configuration is unavailable.
-- This is a hackathon-ready prototype, not a hardened multi-tenant production deployment.
+The closed-world twelve-rule model is intentionally phase-gated. Do not represent a rule family as certified until its positive, negative, adversarial, determinism, and regression gates are all green.
 
+---
+
+## Build With Proof
+
+SAGE is for teams who would rather see fewer alerts with a clear evidence trail than an impressive-looking pile of guesses.
+
+**Scan the repository. Follow the evidence. Apply only what can be validated.**
