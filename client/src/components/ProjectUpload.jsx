@@ -1,13 +1,23 @@
-import { useRef, useState } from "react";
-import { motion } from "framer-motion";
+import React, { useRef, useState } from "react";
+import {
+  UploadCloud,
+  GitBranch,
+  AlertTriangle,
+  FileArchive,
+  ArrowRight,
+  Loader2,
+  Play,
+  CheckCircle2,
+  Zap,
+  Cpu,
+  Layers,
+} from "lucide-react";
 import ErrorBanner from "./ErrorBanner";
+import Card3DTilt from "./Card3DTilt";
 import { uploadProject, importFromGithub } from "../api/client";
 
 const MAX_SIZE = 300 * 1024 * 1024;
 
-// Drag-and-drop (or click-to-browse) ZIP uploader for project-level review,
-// plus a GitHub URL import that feeds the same onUploaded callback (both
-// paths return the identical project representation shape from the backend).
 export default function ProjectUpload({ sessionId, onUploaded }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -20,14 +30,21 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
   const [source, setSource] = useState("zip"); // "zip" | "github"
   const [repoUrl, setRepoUrl] = useState("");
   const [importing, setImporting] = useState(false);
+  const busy = uploading || importing;
 
-  async function handleGithubImport(e) {
-    e.preventDefault();
-    if (!repoUrl.trim() || importing) return;
+  const sampleRepos = [
+    { label: "Sage-Hackathon", url: "prathamthatte52701/Sage-Hackathon" },
+    { label: "Flask Web Framework", url: "pallets/flask" },
+    { label: "FastAPI Core", url: "fastapi/fastapi" },
+  ];
+
+  async function handleGithubImport(targetUrl) {
+    const urlToUse = (targetUrl || repoUrl).trim();
+    if (!urlToUse || importing) return;
     setError(null);
     setImporting(true);
     try {
-      const data = await importFromGithub(repoUrl.trim(), sessionId);
+      const data = await importFromGithub(urlToUse, sessionId);
       onUploaded?.(data);
     } catch (err) {
       setError(err.message || "Could not import this repository.");
@@ -66,114 +83,263 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
     }
   }
 
+  // Instant Sample Demo Runner using client fetch or sample upload
+  async function handleSampleDemo() {
+    setImporting(true);
+    setSource("github");
+    setRepoUrl("prathamthatte52701/Sage-Hackathon");
+    setError(null);
+    try {
+      const data = await importFromGithub("prathamthatte52701/Sage-Hackathon", sessionId);
+      onUploaded?.(data);
+    } catch (err) {
+      setError(err.message || "Sample demo import failed.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   function onDrop(e) {
     e.preventDefault();
     setDragOver(false);
-    if (uploading) return;
+    if (busy) return;
     handleFile(e.dataTransfer.files?.[0]);
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="inline-flex w-fit rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
-        <button
-          type="button"
-          onClick={() => setSource("zip")}
-          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-            source === "zip" ? "bg-indigo-600 text-white" : "text-zinc-400 hover:text-zinc-200"
-          }`}
-        >
-          ZIP
-        </button>
-        <button
-          type="button"
-          onClick={() => setSource("github")}
-          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-            source === "github" ? "bg-indigo-600 text-white" : "text-zinc-400 hover:text-zinc-200"
-          }`}
-        >
-          GitHub
-        </button>
-      </div>
-
-      {source === "github" ? (
-        <form onSubmit={handleGithubImport} className="flex flex-col gap-2">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              disabled={importing}
-              placeholder="owner/repo or https://github.com/owner/repo"
-              className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/50 focus:outline-none disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!repoUrl.trim() || importing}
-              className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {importing ? "Importing..." : "Import"}
-            </button>
-          </div>
-          <p className="text-xs text-zinc-600">Public repositories only — no login required.</p>
-          <ErrorBanner message={error} onDismiss={() => setError(null)} />
-        </form>
-      ) : (
-      <>
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          if (!uploading) setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        onClick={() => !uploading && inputRef.current?.click()}
-        className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-12 text-center transition-colors ${
-          uploading
-            ? "cursor-not-allowed border-zinc-800 bg-zinc-900/40"
-            : dragOver
-              ? "cursor-pointer border-indigo-500 bg-indigo-500/5"
-              : "cursor-pointer border-zinc-700 bg-zinc-900/40 hover:border-zinc-600"
-        }`}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".zip"
-          className="hidden"
-          onChange={(e) => handleFile(e.target.files?.[0])}
-        />
-        <p className="text-sm text-zinc-300">
-          {uploading ? "Uploading..." : "Drag & drop a .zip project here, or click to browse"}
-        </p>
-        <p className="text-xs text-zinc-600">ZIP archives only, up to 300MB</p>
-      </div>
-
-      {uploading && (
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between text-xs text-zinc-500">
-            <span className="truncate">{fileName}</span>
-            <span>{progress}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
-            <motion.div
-              className="h-full rounded-full bg-indigo-500"
-              animate={{ width: `${progress}%` }}
-              transition={{ duration: 0.15 }}
-            />
-          </div>
+    <div className="max-w-4xl mx-auto space-y-6 select-none py-2 sm:py-4">
+      {/* Control Center Header */}
+      <div className="text-center space-y-3">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#7C8CFF]/10 border border-[#7C8CFF]/30 text-[#7C8CFF] text-xs font-mono font-semibold shadow-lg shadow-[#7C8CFF]/10">
+          <Cpu className="w-3.5 h-3.5" />
+          <span>CODEBASE INGESTION</span>
         </div>
-      )}
 
-      {warning && !error && (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
-          {warning}
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-[#F4F7FB] tracking-tight">
+          Import & Analyze Repository
+        </h2>
+        <p className="text-xs text-[#9AA4B2] max-w-xl mx-auto leading-relaxed">
+          Drop a project ZIP archive or input a GitHub repository URL to launch real-time AST rule scanning & grounded AI review.
         </p>
-      )}
+      </div>
 
-      <ErrorBanner message={error} onDismiss={() => setError(null)} />
-      </>
-      )}
+      {/* Visual Ingestion Pipeline Flow */}
+      <div className="p-3 rounded-xl bg-[#090B10] border border-[#232936] grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs font-mono text-[#9AA4B2] shadow-inner">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-[#36D399]" />
+          <span className="text-[#F4F7FB] font-semibold">1. Ingest</span>
+        </div>
+        <div className="flex items-center gap-2 text-[#7C8CFF]">
+          <Zap className="w-3.5 h-3.5" />
+          <span>2. AST Scan</span>
+        </div>
+        <div className="flex items-center gap-2 text-[#F4C95D]">
+          <Layers className="w-3.5 h-3.5" />
+          <span>3. Evidence Review</span>
+        </div>
+        <div className="flex items-center gap-2 text-[#36D399]">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>4. Score</span>
+        </div>
+      </div>
+
+      {/* Source Selector Tabs */}
+      <div className="flex justify-center">
+        <div className="inline-flex max-w-full rounded-xl border border-[#232936] bg-[#10131A] p-1.5 shadow-xl overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => !busy && setSource("zip")}
+            disabled={busy}
+            className={`flex items-center gap-2.5 rounded-lg px-5 py-2.5 text-xs font-semibold transition-all ${
+              source === "zip"
+                ? "bg-[#151922] text-[#F4F7FB] border border-[#232936] shadow-md shadow-[#7C8CFF]/10"
+                : "text-[#9AA4B2] hover:text-[#F4F7FB]"
+            }`}
+          >
+            <FileArchive className="w-4 h-4 text-[#7C8CFF]" />
+            <span>ZIP Project Archive</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => !busy && setSource("github")}
+            disabled={busy}
+            className={`flex items-center gap-2.5 rounded-lg px-5 py-2.5 text-xs font-semibold transition-all ${
+              source === "github"
+                ? "bg-[#151922] text-[#F4F7FB] border border-[#232936] shadow-md shadow-[#7C8CFF]/10"
+                : "text-[#9AA4B2] hover:text-[#F4F7FB]"
+            }`}
+          >
+            <GitBranch className="w-4 h-4 text-[#7C8CFF]" />
+            <span>GitHub Repository</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 3D Glassmorphic Import Container */}
+      <Card3DTilt className="cm-card p-4 sm:p-6 lg:p-8 border-[#232936] bg-[#10131A] relative shadow-2xl">
+        {source === "github" ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleGithubImport();
+            }}
+            className="space-y-6"
+          >
+            <div className="space-y-2">
+              <label className="text-xs font-mono font-semibold text-[#7C8CFF] uppercase tracking-wider block">
+                GITHUB REPOSITORY URL
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                  disabled={importing}
+                  placeholder="https://github.com/owner/repository or owner/repo"
+                  className="flex-1 rounded-xl border border-[#232936] bg-[#090B10] px-4 py-3 text-sm text-[#F4F7FB] font-mono placeholder:text-[#687386] focus:border-[#7C8CFF] focus:outline-none shadow-inner"
+                />
+                <button
+                  type="submit"
+                  disabled={!repoUrl.trim() || importing}
+                  className="cm-btn-primary px-6 py-3 text-xs shrink-0 disabled:opacity-50 shadow-lg shadow-[#7C8CFF]/20"
+                >
+                  {importing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Importing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Import & Review</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Sample Repository Chips */}
+            <div className="space-y-2 pt-2 border-t border-[#232936]">
+              <span className="text-[10px] font-mono text-[#687386] uppercase tracking-wider block">
+                TRY SAMPLE REPOSITORIES
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {sampleRepos.map((sr, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setRepoUrl(sr.url);
+                      handleGithubImport(sr.url);
+                    }}
+                    disabled={importing}
+                    className="px-3 py-1.5 rounded-lg bg-[#090B10] border border-[#232936] text-xs font-mono text-[#9AA4B2] hover:text-[#F4F7FB] hover:border-[#7C8CFF]/50 transition-all flex items-center gap-1.5"
+                  >
+                    <GitBranch className="w-3 h-3 text-[#7C8CFF]" />
+                    <span>{sr.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <ErrorBanner message={error} onDismiss={() => setError(null)} />
+          </form>
+        ) : (
+          <div className="space-y-6">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!busy) setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => !busy && inputRef.current?.click()}
+              className={`flex flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed p-8 sm:p-10 lg:p-12 text-center transition-all ${
+                busy
+                  ? "cursor-not-allowed border-[#232936] bg-[#090B10]/50 opacity-60"
+                  : dragOver
+                  ? "cursor-pointer border-[#7C8CFF] bg-[#7C8CFF]/15 scale-[1.01]"
+                  : "cursor-pointer border-[#232936] bg-[#090B10] hover:border-[#7C8CFF]/60 hover:bg-[#151922]"
+              }`}
+            >
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={(e) => handleFile(e.target.files?.[0])}
+              />
+              <div className="relative">
+                <div className="w-16 h-16 rounded-2xl bg-[#7C8CFF]/15 border border-[#7C8CFF]/30 flex items-center justify-center text-[#7C8CFF] shadow-lg shadow-[#7C8CFF]/20">
+                  <UploadCloud className="w-8 h-8" />
+                </div>
+                <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-[#36D399]" />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-base font-bold text-[#F4F7FB]">
+                  {uploading
+                    ? "Uploading project archive..."
+                    : importing
+                    ? "Importing GitHub repository..."
+                    : "Drop your project .ZIP archive here"}
+                </p>
+                <p className="text-xs text-[#9AA4B2]">
+                  {busy ? "This can take a moment for larger repositories." : "Or click anywhere to browse local files"}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 text-[11px] font-mono text-[#687386]">
+                <FileArchive className="w-3.5 h-3.5" />
+                <span>ZIP archives up to 300MB, 2,000 files</span>
+              </div>
+            </div>
+
+            {busy && (
+              <div className="space-y-2 font-mono text-xs p-4 rounded-xl bg-[#090B10] border border-[#232936]">
+                <div className="flex items-center justify-between text-[#9AA4B2]">
+                  <span className="truncate flex items-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#7C8CFF]" />
+                    <span>{uploading ? fileName || "Project Archive" : repoUrl || "Sample repository"}</span>
+                  </span>
+                  <span className="text-[#7C8CFF] font-bold">{uploading ? `${progress}%` : "Importing"}</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[#151922]">
+                  <div
+                    className={`h-full bg-gradient-to-r from-[#7C8CFF] to-[#36D399] transition-all duration-150 ${
+                      importing ? "w-1/2 animate-pulse" : ""
+                    }`}
+                    style={uploading ? { width: `${progress}%` } : undefined}
+                  />
+                </div>
+              </div>
+            )}
+
+            {warning && !error && (
+              <div className="flex items-center gap-2 p-3.5 rounded-xl border border-[#F4C95D]/30 bg-[#F4C95D]/10 text-xs text-[#F4C95D]">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{warning}</span>
+              </div>
+            )}
+
+            {/* Quick Demo Trigger Button */}
+            <div className="pt-2 border-t border-[#232936] flex items-center justify-between text-xs font-mono">
+              <span className="text-[#687386]">Want to see a live demo project first?</span>
+              <button
+                type="button"
+                onClick={handleSampleDemo}
+                disabled={busy}
+                className="cm-btn-secondary py-1.5 px-3 text-xs text-[#7C8CFF] border-[#7C8CFF]/30 hover:border-[#7C8CFF]"
+              >
+                <Play className="w-3 h-3 text-[#36D399]" />
+                <span>{importing ? "Importing sample..." : "Launch Sample Demo Review"}</span>
+              </button>
+            </div>
+
+            <ErrorBanner message={error} onDismiss={() => setError(null)} />
+          </div>
+        )}
+      </Card3DTilt>
     </div>
   );
 }
