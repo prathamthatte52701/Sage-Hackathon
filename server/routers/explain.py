@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from models.schemas import ExplainRequest
+from services.auth import get_current_user
 from services.groq_client import GroqUnavailableError, call_groq
 from services.prompt_builder import build_explain_prompt
 
@@ -11,7 +12,7 @@ _ERROR_RESPONSE = {"error": "Could not generate explanation, please retry"}
 
 
 @router.post("/explain-bug")
-async def explain_bug(request: ExplainRequest):
+async def explain_bug(request: ExplainRequest, current_user: dict = Depends(get_current_user)):
     try:
         prompt = build_explain_prompt(request.issue, request.code_context, request.language)
         try:

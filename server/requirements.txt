@@ -10,3 +10,6 @@ python-multipart
 pytest
 pytest-asyncio
 sentence-transformers
+argon2-cffi
+pyjwt
+email-validator
