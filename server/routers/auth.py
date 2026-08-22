@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import JSONResponse
 from pymongo.errors import DuplicateKeyError
 
@@ -64,6 +64,7 @@ async def signup(payload: SignupRequest, response: Response):
     token = create_session_token(user_id)
     _set_session_cookie(response, token)
     user = await get_user_by_email(email)
+    print(f"[auth] signup user_id={user_id}")
     return _user_out(user)
 
 
@@ -77,17 +78,21 @@ async def login(payload: LoginRequest, response: Response):
     user = await get_user_by_email(email)
     if user is None or not verify_password(payload.password, user["password_hash"]):
         # Deliberately identical response whether the email doesn't exist or
-        # the password is wrong -- never reveal which one it was.
+        # the password is wrong -- never reveal which one it was. Safe to log
+        # the distinction server-side though (email is not a secret).
+        print(f"[auth] login failed email={email} reason={'unknown_account' if user is None else 'bad_password'}")
         return JSONResponse(status_code=401, content=_GENERIC_AUTH_ERROR)
 
     token = create_session_token(user["_id"])
     _set_session_cookie(response, token)
+    print(f"[auth] login success user_id={user['_id']}")
     return _user_out(user)
 
 
 @router.post("/auth/logout")
 async def logout(response: Response):
     response.delete_cookie(COOKIE_NAME, path="/")
+    print("[auth] logout")
     return {"status": "ok"}
 
 
