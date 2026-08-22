@@ -845,9 +845,11 @@ async def apply_project_fix(
 
 
 @router.get("/projects/{project_id}/download-fixed")
-async def download_fixed_project(project_id: str, filename: str | None = None):
+async def download_fixed_project(
+    project_id: str, filename: str | None = None, current_user: dict = Depends(get_current_user)
+):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
         buffer = BytesIO()
@@ -897,9 +899,9 @@ def _looks_like_guidance_question(question: str) -> bool:
 
 
 @router.post("/projects/{project_id}/chat")
-async def chat_about_project(project_id: str, payload: ChatRequest):
+async def chat_about_project(project_id: str, payload: ChatRequest, current_user: dict = Depends(get_current_user)):
     try:
-        project = await get_project(project_id)
+        project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
