@@ -27,7 +27,7 @@ router = APIRouter()
 MAX_ZIP_SIZE = 300 * 1024 * 1024  # 300MB
 MAX_UNCOMPRESSED_SIZE = 600 * 1024 * 1024  # archive-bomb guard
 MAX_FILE_COUNT = 2000
-MAX_CONTENT_SIZE = 100_000  # chars
+MAX_CONTENT_SIZE = 100_000  # chars; retained as the large-file warning threshold
 MAX_PATH_DEPTH = 20
 
 IGNORE_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", "coverage", ".cache"}
@@ -211,14 +211,24 @@ def _project_from_zip_bytes(raw_bytes: bytes, project_name: str, strip_top_level
             content = None
             if _should_read_text(display_name, language):
                 text = zf.read(name).decode("utf-8", errors="replace")
-                if len(text) < MAX_CONTENT_SIZE:
-                    content = text
+                content = text
 
             files_index.append(
-                {"path": display_name, "language": language, "size": info.file_size, "content": content}
+                {
+                    "path": display_name,
+                    "language": language,
+                    "size": info.file_size,
+                    "content": content,
+                    "large_file": bool(content is not None and len(content) > MAX_CONTENT_SIZE),
+                }
             )
 
     warnings = [f"skipped {count} file(s) under {dirname}/" for dirname, count in ignored_counts.items()]
+    warnings.extend(
+        f"{f['path']}: large source file preserved for deterministic scan ({len(f.get('content') or '')} chars)"
+        for f in files_index
+        if f.get("large_file")
+    )
 
     languages = sorted({f["language"] for f in files_index if f["language"] != "other"})
 
@@ -400,8 +410,9 @@ async def analyze_project_by_id(project_id: str):
                 "configs",
                 "deploymentFiles",
                 "findings",
-                "warnings",
-            )
+            "warnings",
+            "structuralMetadata",
+        )
         }
         updates["ai_review_coverage"] = analyzed.get("ai_review_coverage", {})
         await update_project(project_id, updates)
@@ -624,6 +635,7 @@ _DERIVED_FIELDS = (
     "deploymentFiles",
     "findings",
     "warnings",
+    "structuralMetadata",
 )
 
 
@@ -896,4 +908,3 @@ async def chat_about_project(project_id: str, payload: ChatRequest):
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_CHAT_ERROR_RESPONSE)
-
