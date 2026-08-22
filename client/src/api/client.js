@@ -121,10 +121,33 @@ export async function importFromGithub(repoUrl, sessionId) {
   }
 }
 
+const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+async function waitForAnalysisJob(jobId) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const job = (await api.get(`/api/analysis-jobs/${jobId}`)).data;
+    if (job.status === "completed" || job.status === "partial") return job;
+    if (job.status === "failed" || job.status === "cancelled") {
+      throw new Error(job.error || "Project analysis did not complete.");
+    }
+    await sleep(1000);
+  }
+  throw new Error("Project analysis is still running. Please refresh in a moment.");
+}
+
+export async function getProject(projectId) {
+  try {
+    return (await api.get(`/api/projects/${projectId}`)).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load project results."));
+  }
+}
+
 export async function analyzeProject(projectId) {
   try {
-    const res = await api.post(`/api/projects/${projectId}/analyze`, null, { timeout: 60000 });
-    return res.data;
+    const { data } = await api.post(`/api/projects/${projectId}/analyze`, null);
+    await waitForAnalysisJob(data.job_id);
+    return await getProject(projectId);
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Project analysis failed. Please try again."));
   }
@@ -170,12 +193,11 @@ export async function chatAboutProject(projectId, question) {
   }
 }
 
-export async function reanalyzeProject(projectId, findingIndex) {
+export async function reanalyzeProject(projectId) {
   try {
-    const res = await api.post(`/api/projects/${projectId}/reanalyze`, {
-      finding_index: findingIndex,
-    });
-    return res.data;
+    const { data } = await api.post(`/api/projects/${projectId}/reanalyze`, {});
+    await waitForAnalysisJob(data.job_id);
+    return await getProject(projectId);
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not reanalyze the project. Please try again."));
   }

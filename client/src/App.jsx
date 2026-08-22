@@ -135,8 +135,8 @@ export default function App() {
     if (!projectBundle?.project_id || reanalyzing) return;
     setReanalyzing(true);
     try {
-      const scored = await scoreProject(projectBundle.project_id);
       const analyzed = await analyzeProject(projectBundle.project_id);
+      const scored = await scoreProject(projectBundle.project_id);
 
       setProjectBundle((prev) => ({
         ...prev,
@@ -199,29 +199,21 @@ export default function App() {
     }
   };
 
-  // Apply Validated Fix (Specification §17 & §18)
-  // CORRECT ORDER: reanalyze FIRST (simulates patch, gives delta),
-  // then apply (mutates real file in DB). Reversed order caused backend 400.
+  // Apply changes source once, then run the canonical analysis job on stored source.
   const handleApplyFix = async () => {
     if (!projectBundle?.project_id || !activeFixData || applyingFix) return;
     setApplyingFix(true);
     try {
-      // Step 1: Reanalyze (simulates the patch, produces before/after delta)
-      const reanalyzeRes = await reanalyzeProject(
-        projectBundle.project_id,
-        activeFixData.findingIndex
-      );
-      setReanalysisResult(reanalyzeRes);
-
-      // Step 2: Apply fix (mutates the actual file in MongoDB)
+      // Step 1: Apply the validated patch to stored source.
       await applyProjectFix(
         projectBundle.project_id,
         activeFixData.findingIndex
       );
 
-      // Step 3: Refresh project findings & health score
+      // Step 2: Reanalyze the current stored source and refresh its score.
+      const newAnalyzed = await reanalyzeProject(projectBundle.project_id);
       const newScored = await scoreProject(projectBundle.project_id);
-      const newAnalyzed = await analyzeProject(projectBundle.project_id);
+      setReanalysisResult({ after_score: newScored.overall_score, behavior_verified: false });
 
       setProjectBundle((prev) => ({
         ...prev,
@@ -236,7 +228,7 @@ export default function App() {
       setToast({
         type: "success",
         title: "Fix Applied & Project Reanalyzed",
-        message: `Score: ${reanalyzeRes.before_score?.toFixed(1)} → ${reanalyzeRes.after_score?.toFixed(1)}. ${reanalyzeRes.resolved_findings?.length || 1} finding(s) resolved.`,
+        message: "Fix applied and the current stored source was reanalyzed.",
       });
     } catch (err) {
       setToast({
