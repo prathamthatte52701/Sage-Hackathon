@@ -59,6 +59,7 @@ class FindingReasoning(BaseModel):
 
 class FindingReasonRequest(BaseModel):
     finding_index: int
+    finding_id: str = ""
 
 
 class GithubImportRequest(BaseModel):
@@ -102,7 +103,8 @@ class PasteFixRequest(BaseModel):
 
 
 class ApplyProjectFixRequest(BaseModel):
-    finding_index: int
+    finding_index: int = -1
+    finding_id: str = ""
 
 
 class DownloadProjectRequest(BaseModel):

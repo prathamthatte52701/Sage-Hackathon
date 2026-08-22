@@ -1,8 +1,10 @@
 import copy
+import asyncio
 import json
 import os
 import re
 import zipfile
+from hashlib import sha256
 from io import BytesIO
 from pathlib import PurePosixPath
 
@@ -10,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from db.mongo import get_owned_project, save_project, update_owned_project
+from db.mongo import get_owned_analysis_job, get_owned_project, save_project, update_owned_project
 from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectRequest, FindingReasonRequest, FindingReasoning, FindingTransform, GithubImportRequest
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
@@ -18,10 +20,11 @@ from services.auth import get_current_user
 from services.project_review import run_ai_quality_review
 from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
-from services.patching import PatchError, apply_exact_replacement, make_unified_diff, safe_archive_path
+from services.patching import PatchError, apply_exact_replacement, apply_structured_patch, build_patch_metadata, make_unified_diff, safe_archive_path
 from services.retrieval import retrieve_relevant_files, retrieve_semantic_project_context
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
+from services.analysis_jobs import enqueue_analysis
 
 router = APIRouter()
 
@@ -416,51 +419,109 @@ async def get_project_by_id(project_id: str, current_user: dict = Depends(get_cu
 _ANALYZE_ERROR_RESPONSE = {"error": "Could not analyze this project, please try again"}
 
 
+def _finding_id(finding: dict) -> str:
+    """Stable across wording changes and finding list reordering."""
+    evidence = " ".join((finding.get("evidence") or "").split()).lower()
+    parts = (finding.get("rule") or "", finding.get("file") or "", str(finding.get("line") or 0), evidence)
+    return sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def _assign_finding_ids(findings: list[dict]) -> None:
+    for finding in findings:
+        finding.setdefault("finding_id", _finding_id(finding))
+
+
+def _resolve_finding(findings: list[dict], finding_index: int, finding_id: str = "") -> tuple[int, dict] | tuple[None, None]:
+    _assign_finding_ids(findings)
+    if finding_id:
+        for index, finding in enumerate(findings):
+            if finding.get("finding_id") == finding_id:
+                return index, finding
+        return None, None
+    if 0 <= finding_index < len(findings):
+        return finding_index, findings[finding_index]
+    return None, None
+
+
+async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
+    """Canonical analysis pipeline used by both initial analysis and reanalysis."""
+    project = await get_owned_project(project_id, owner_user_id)
+    if project is None:
+        raise LookupError("Project disappeared before analysis started")
+
+    # AST/regex/taint work is CPU-bound. Keep the event loop available for
+    # health checks and other users while a large project is being scanned.
+    analyzed = await asyncio.to_thread(analyze_project, project)
+    try:
+        coverage = await run_ai_quality_review(analyzed)
+    except Exception as exc:
+        print(f"[projects] AI quality review failed, retaining deterministic findings: {type(exc).__name__}")
+        coverage = {
+            "semantic_coverage": "partial",
+            "partial_reasons": ["AI quality review failed"],
+            "failed_ai_chunks": 0,
+        }
+        analyzed["ai_review_coverage"] = coverage
+    _assign_finding_ids(analyzed.get("findings", []))
+
+    updates = {
+        key: analyzed.get(key, [])
+        for key in (
+            "dependencies",
+            "imports",
+            "functions",
+            "classes",
+            "apiEndpoints",
+            "tests",
+            "configs",
+            "deploymentFiles",
+            "findings",
+            "warnings",
+            "structuralMetadata",
+        )
+    }
+    updates.update(
+        {
+            "ai_review_coverage": coverage,
+            "analysis_status": "partial" if coverage.get("semantic_coverage") == "partial" else "completed",
+            "analysis_revision": project.get("source_revision", 0),
+        }
+    )
+    await update_owned_project(project_id, owner_user_id, updates)
+    return {
+        "project_id": project_id,
+        "finding_count": len(analyzed.get("findings", [])),
+        "analysis_revision": updates["analysis_revision"],
+        "partial": updates["analysis_status"] == "partial",
+    }
+
+
 @router.post("/projects/{project_id}/analyze")
 async def analyze_project_by_id(project_id: str, current_user: dict = Depends(get_current_user)):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
-
-        analyzed = analyze_project(project)
-
-        # Phase 13: project analysis previously stopped at deterministic
-        # regex rules -- no AI quality review, no RAG, no grounding, making
-        # it meaningfully shallower than paste-code review. Run the same
-        # quality-review stage against this project's own source files,
-        # bounded/concurrency-limited so a large project doesn't trigger
-        # hundreds of uncontrolled Groq calls. A failure here degrades
-        # gracefully -- deterministic findings above are unaffected.
-        try:
-            coverage = await run_ai_quality_review(analyzed)
-            print(f"[projects] AI quality review coverage: {coverage}")
-        except Exception as exc:
-            print(f"[projects] AI quality review failed, continuing with deterministic findings only: {exc}")
-
-        updates = {
-            key: analyzed.get(key, [])
-            for key in (
-                "dependencies",
-                "imports",
-                "functions",
-                "classes",
-                "apiEndpoints",
-                "tests",
-                "configs",
-                "deploymentFiles",
-                "findings",
-            "warnings",
-            "structuralMetadata",
+        job, created = await enqueue_analysis(
+            project_id,
+            current_user["_id"],
+            lambda _job_id: _run_project_analysis(project_id, current_user["_id"]),
         )
-        }
-        updates["ai_review_coverage"] = analyzed.get("ai_review_coverage", {})
-        await update_owned_project(project_id, current_user["_id"], updates)
-
-        return analyzed
+        return JSONResponse(
+            status_code=202,
+            content={"job_id": job["_id"], "status": job.get("status", "queued"), "created": created},
+        )
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_ANALYZE_ERROR_RESPONSE)
+
+
+@router.get("/analysis-jobs/{job_id}")
+async def get_analysis_job(job_id: str, current_user: dict = Depends(get_current_user)):
+    job = await get_owned_analysis_job(job_id, current_user["_id"])
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "Analysis job not found"})
+    return job
 
 
 _SCORE_ERROR_RESPONSE = {"error": "Could not score this project, please try again"}
@@ -515,10 +576,9 @@ async def reason_about_finding(
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
         findings = project.get("findings", [])
-        if payload.finding_index < 0 or payload.finding_index >= len(findings):
+        finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
+        if finding is None:
             return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
-
-        finding = findings[payload.finding_index]
 
         context = build_finding_context(project, finding)
         code_snippet = context["snippet"] or finding.get("evidence", "")
@@ -557,14 +617,14 @@ async def reason_about_finding(
         )
 
         try:
-            findings[payload.finding_index]["reasoning"] = result.model_dump()
-            findings[payload.finding_index]["knowledge_retrieval"] = {
+            findings[finding_index]["reasoning"] = result.model_dump()
+            findings[finding_index]["knowledge_retrieval"] = {
                 "mode": knowledge.get("mode"),
                 "available": knowledge.get("available"),
                 "record_count": len(knowledge.get("records", [])),
                 "rule_ids": [r.get("rule_id") for r in knowledge.get("records", [])],
             }
-            findings[payload.finding_index]["related_files"] = [f["path"] for f in context["related_files"]]
+            findings[finding_index]["related_files"] = [f["path"] for f in context["related_files"]]
             await update_owned_project(project_id, current_user["_id"], {"findings": findings})
         except Exception as exc:
             print(f"[projects] failed to persist finding reasoning: {exc}")
@@ -583,12 +643,10 @@ def _enrich_transform(transform: FindingTransform, finding: dict, content: str |
     fixed = transform.proposed_fix or transform.fixed_code
     diff = make_unified_diff(original, fixed, finding.get("file") or "file") if original and fixed else ""
     can_apply = False
+    metadata = {}
     if content is not None and original and fixed:
-        try:
-            apply_exact_replacement(content, original, fixed)
-            can_apply = True
-        except PatchError:
-            can_apply = False
+        metadata = build_patch_metadata(content, original, fixed, filename=finding.get("file") or "file")
+        can_apply = metadata["can_apply"]
     transform.finding_id = f"{finding.get('file', '')}:{finding.get('line', '')}:{finding.get('rule', '')}"
     transform.rule_id = finding.get("rule", "")
     transform.file = finding.get("file", "")
@@ -601,6 +659,12 @@ def _enrich_transform(transform: FindingTransform, finding: dict, content: str |
     transform.fixed_code = fixed
     transform.diff = diff
     transform.can_apply = can_apply
+    transform.apply_failure_reason = metadata.get("apply_failure_reason", "")
+    transform.source_hash = metadata.get("source_hash", "")
+    transform.target_start = metadata.get("target_start", 0)
+    transform.target_end = metadata.get("target_end", 0)
+    transform.start_line = metadata.get("start_line", 0)
+    transform.end_line = metadata.get("end_line", 0)
     return transform
 
 
@@ -614,10 +678,9 @@ async def transform_finding(
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
         findings = project.get("findings", [])
-        if payload.finding_index < 0 or payload.finding_index >= len(findings):
+        finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
+        if finding is None:
             return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
-
-        finding = findings[payload.finding_index]
 
         context = build_finding_context(project, finding)
         code_snippet = context["snippet"] or finding.get("evidence", "")
@@ -654,9 +717,11 @@ async def transform_finding(
         )
         file_entry = next((f for f in project.get("files", []) if f.get("path") == finding.get("file")), None)
         result = _enrich_transform(result, finding, file_entry.get("content") if file_entry else None)
+        result.finding_id = finding["finding_id"]
+        result.document_type = "project"
 
         try:
-            findings[payload.finding_index]["transform"] = result.model_dump()
+            findings[finding_index]["transform"] = result.model_dump()
             await update_owned_project(project_id, current_user["_id"], {"findings": findings})
         except Exception as exc:
             print(f"[projects] failed to persist finding transform: {exc}")
@@ -703,69 +768,18 @@ def _verification_note(before_project: dict) -> str:
 
 @router.post("/projects/{project_id}/reanalyze")
 async def reanalyze_project(
-    project_id: str, payload: FindingReasonRequest, current_user: dict = Depends(get_current_user)
+    project_id: str, payload: FindingReasonRequest | None = None, current_user: dict = Depends(get_current_user)
 ):
     try:
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
-
-        findings = project.get("findings", [])
-        if payload.finding_index < 0 or payload.finding_index >= len(findings):
-            return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
-
-        finding = findings[payload.finding_index]
-        transform = finding.get("transform")
-        if not transform or not transform.get("proposed_fix"):
-            return JSONResponse(status_code=400, content={"error": "Generate a fix for this finding first"})
-
-        before_score = compute_score(project)
-
-        patched = copy.deepcopy(project)
-
-        file_entry = next((f for f in patched.get("files", []) if f.get("path") == finding.get("file")), None)
-        content = file_entry.get("content") if file_entry else None
-        if file_entry is None or content is None:
-            return JSONResponse(
-                status_code=400, content={"error": "Could not locate the original file content to apply the patch"}
-            )
-
-        original_snippet = transform.get("original_snippet", "")
-        if not original_snippet or original_snippet not in content:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Could not locate the original snippet in the file — it may have changed since the fix was generated"},
-            )
-        file_entry["content"] = content.replace(original_snippet, transform.get("proposed_fix", ""), 1)
-
-        for key in _DERIVED_FIELDS:
-            patched[key] = []
-
-        analyze_project(patched)
-        after_score = compute_score(patched)
-
-        before_keys = _finding_keys(project.get("findings", []))
-        after_keys = _finding_keys(patched.get("findings", []))
-
-        resolved_findings = [f for f in project.get("findings", []) if (f.get("file"), f.get("rule")) not in after_keys]
-        remaining_findings = [f for f in project.get("findings", []) if (f.get("file"), f.get("rule")) in after_keys]
-        new_findings = [f for f in patched.get("findings", []) if (f.get("file"), f.get("rule")) not in before_keys]
-
-        patched["compliance_score"] = after_score
-        patched.pop("_id", None)  # let Mongo assign a fresh id — this must be a separate document
-        session_id = project.get("session_id")
-        new_project_id = await save_project(patched, session_id, current_user["_id"])
-
-        return {
-            "new_project_id": new_project_id,
-            "before_score": before_score["overall_score"],
-            "after_score": after_score["overall_score"],
-            "resolved_findings": resolved_findings,
-            "remaining_findings": remaining_findings,
-            "new_findings": new_findings,
-            "behavior_verified": False,
-            "verification_note": _verification_note(project),
-        }
+        job, created = await enqueue_analysis(
+            project_id,
+            current_user["_id"],
+            lambda _job_id: _run_project_analysis(project_id, current_user["_id"]),
+        )
+        return JSONResponse(status_code=202, content={"job_id": job["_id"], "status": job.get("status", "queued"), "created": created})
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_REANALYZE_ERROR_RESPONSE)
@@ -784,10 +798,9 @@ async def apply_project_fix(
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
         findings = project.get("findings", [])
-        if payload.finding_index < 0 or payload.finding_index >= len(findings):
+        finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
+        if finding is None:
             return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
-
-        finding = findings[payload.finding_index]
         transform = finding.get("transform") or {}
         original = transform.get("original_snippet") or transform.get("original_code") or ""
         fixed = transform.get("proposed_fix") or transform.get("fixed_code") or ""
@@ -799,7 +812,12 @@ async def apply_project_fix(
             return JSONResponse(status_code=400, content={"error": "Could not locate target file content"})
 
         try:
-            applied = apply_exact_replacement(file_entry["content"], original, fixed)
+            applied = apply_structured_patch(
+                file_entry["content"],
+                original,
+                fixed,
+                expected_hash=transform.get("source_hash") or None,
+            )
         except PatchError as exc:
             finding["fix_state"] = "Conflict"
             await update_owned_project(project_id, current_user["_id"], {"findings": findings})
@@ -816,7 +834,7 @@ async def apply_project_fix(
         project.setdefault("patches", [])
         project["patches"].append(
             {
-                "finding_index": payload.finding_index,
+                "finding_id": finding["finding_id"],
                 "rule_id": finding.get("rule"),
                 "file": finding.get("file"),
                 "diff": applied.diff,
@@ -824,23 +842,25 @@ async def apply_project_fix(
             }
         )
 
-        for key in _DERIVED_FIELDS:
-            project[key] = [] if key != "findings" else findings
-        analyze_project(project)
-        after_score = compute_score(project)
-        project["compliance_score"] = after_score
         await update_owned_project(
             project_id,
             current_user["_id"],
-            {"files": project["files"], "findings": project["findings"], "patches": project.get("patches", []), "compliance_score": after_score},
+            {
+                "files": project["files"],
+                "findings": findings,
+                "patches": project.get("patches", []),
+                "source_revision": int(project.get("source_revision", 1)) + 1,
+                "analysis_status": "stale",
+                "compliance_score": None,
+            },
         )
         print(f"[projects] fix applied user_id={current_user['_id']} project_id={project_id}")
         return {
             "status": "applied",
             "file": finding.get("file"),
             "modified_files": sorted({p.get("file") for p in project.get("patches", []) if p.get("file")}),
-            "after_score": after_score,
-            "verification": "Reanalyzed with static detectors after applying patch.",
+            "analysis_status": "stale",
+            "verification": "Source updated. Run reanalysis to produce current findings and score.",
         }
     except Exception as exc:
         print(f"[projects] apply fix error: {exc}")
