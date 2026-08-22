@@ -203,3 +203,27 @@ def test_each_mapped_rule_individually_passes_with_valid_location(rule_key):
     gated = to_closed_world_findings(findings)
     assert len(gated) == 1
     assert gated[0]["rule_id"] == DETECTOR_RULE_TO_CANONICAL[rule_key]
+
+
+# ------------------------------------------------------ severity immutability
+
+@pytest.mark.parametrize("severity", ["critical", "high", "medium", "low"])
+def test_gate_passes_severity_through_unchanged(severity):
+    # Severity is decided once, by the detector, at detection time. The gate
+    # attaches rule_id/evidence_type/cwe but must never recompute or
+    # override the severity a detector already assigned -- there is no
+    # "central severity authority" downstream of detection, and there must
+    # never be one, or severity stops being a deterministic property of the
+    # vulnerability and becomes something AI/RAG could influence indirectly.
+    findings = [{"file": "x.py", "line": 7, "rule": "hardcoded_secret", "severity": severity, "evidence": "API_KEY = 'x'"}]
+    gated = to_closed_world_findings(findings)
+    assert gated[0]["severity"] == severity
+
+
+def test_gate_does_not_mutate_the_input_finding_dict():
+    # Defensive proof the gate is read-only on its input, not just on the
+    # severity key specifically.
+    original = {"file": "x.py", "line": 7, "rule": "sql_concat", "severity": "critical", "evidence": "q"}
+    snapshot = dict(original)
+    to_closed_world_findings([original])
+    assert original == snapshot
