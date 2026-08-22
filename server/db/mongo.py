@@ -172,35 +172,54 @@ async def hydrate_file_content(files: list[dict], max_concurrency: int = GRIDFS_
     await hydrate_selected_files(files, paths=None, max_concurrency=max_concurrency)
 
 
-async def _replace_content_with_refs(files: list[dict], project_id_hint: str = "") -> list[str]:
-    """In place: for every file entry carrying inline "content", store it in
-    GridFS and swap "content" for "content_ref" - never leaves both keys
-    holding the same data, so the persisted document never embeds full file
-    text (the thing that blew past Mongo's 16MB document limit)."""
-    replaced_refs = []
-    for file_entry in files:
-        binary_content = file_entry.pop("binary_content", None)
-        if binary_content is not None:
-            old_ref = file_entry.get("binary_ref")
-            file_entry["binary_ref"] = await store_binary_content(binary_content, project_id_hint or file_entry.get("path", "asset"))
-            if old_ref:
+async def _replace_one_file_with_ref(
+    file_entry: dict, project_id_hint: str, replaced_refs: list[str], lock: asyncio.Lock
+) -> None:
+    binary_content = file_entry.pop("binary_content", None)
+    if binary_content is not None:
+        old_ref = file_entry.get("binary_ref")
+        file_entry["binary_ref"] = await store_binary_content(binary_content, project_id_hint or file_entry.get("path", "asset"))
+        if old_ref:
+            async with lock:
                 replaced_refs.append(old_ref)
-        content = file_entry.get("content")
-        if content is not None:
-            digest = _content_hash(content)
-            # A hydrated but unchanged file should keep its existing GridFS
-            # object. This prevents a one-file patch from rewriting a whole
-            # project and keeps the document compact after every update.
-            if file_entry.get("content_ref") and file_entry.get("content_hash") == digest:
-                del file_entry["content"]
-                continue
-            hint = project_id_hint or file_entry.get("path", "file")
-            old_ref = file_entry.get("content_ref")
-            file_entry["content_ref"] = await store_file_content(content, hint)
-            file_entry["content_hash"] = digest
+    content = file_entry.get("content")
+    if content is not None:
+        digest = _content_hash(content)
+        # A hydrated but unchanged file should keep its existing GridFS
+        # object. This prevents a one-file patch from rewriting a whole
+        # project and keeps the document compact after every update.
+        if file_entry.get("content_ref") and file_entry.get("content_hash") == digest:
             del file_entry["content"]
-            if old_ref:
+            return
+        hint = project_id_hint or file_entry.get("path", "file")
+        old_ref = file_entry.get("content_ref")
+        file_entry["content_ref"] = await store_file_content(content, hint)
+        file_entry["content_hash"] = digest
+        del file_entry["content"]
+        if old_ref:
+            async with lock:
                 replaced_refs.append(old_ref)
+
+
+async def _replace_content_with_refs(
+    files: list[dict], project_id_hint: str = "", max_concurrency: int = GRIDFS_MAX_CONCURRENCY
+) -> list[str]:
+    """In place: for every file entry carrying inline "content"/"binary_content",
+    store it in GridFS and swap it for a "content_ref"/"binary_ref" - never
+    leaves both keys holding the same data, so the persisted document never
+    embeds full file text (the thing that blew past Mongo's 16MB document
+    limit). Bounded concurrency, same reasoning as hydrate_selected_files:
+    an initial save of a 5000-file project must not open 5000 simultaneous
+    GridFS upload streams."""
+    replaced_refs: list[str] = []
+    lock = asyncio.Lock()
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _bounded(file_entry: dict) -> None:
+        async with semaphore:
+            await _replace_one_file_with_ref(file_entry, project_id_hint, replaced_refs, lock)
+
+    await asyncio.gather(*(_bounded(file_entry) for file_entry in files))
     return replaced_refs
 
 
