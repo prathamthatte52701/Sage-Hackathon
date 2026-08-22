@@ -145,6 +145,28 @@ def test_binary_assets_do_not_count_toward_the_eligible_file_limit():
     assert all(f["content"] is None and f["binary_content"] for f in png_files)  # ...but as binary, not source
 
 
+def test_completely_empty_zip_is_handled_cleanly():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w"):
+        pass  # zero entries
+    project, warnings, error = _project_from_zip_bytes(buffer.getvalue(), "empty")
+    assert error is None
+    assert project["files"] == []
+    assert project["project"]["projectType"] == "unknown"
+
+
+def test_zip_with_only_junk_directory_files_is_handled_cleanly():
+    """Nothing eligible survives filtering, but that's a valid (if useless)
+    upload, not a crash or a false rejection."""
+    entries = {f"node_modules/pkg{i}/index.js": "x\n" for i in range(50)}
+    entries["dist/bundle.js"] = "x\n"
+    project, warnings, error = _project_from_zip_bytes(_zip_bytes(entries), "junk-only")
+    assert error is None
+    assert project["files"] == []
+    assert any("node_modules" in w for w in warnings)
+    assert any("dist" in w for w in warnings)
+
+
 def test_zip_duplicate_file_paths_rejected():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
