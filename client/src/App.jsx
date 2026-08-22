@@ -1654,6 +1654,9 @@ export default function App() {
   const [selectedFinding, setSelectedFinding] = useState(0);
   const [questionSeed, setQuestionSeed] = useState("");
 
+  if (loading) return null;
+  if (!user) return <AuthScreen />;
+
   const project = projectBundle.project ? { ...projectBundle.project, _id: projectBundle.id } : null;
 
   let content;
