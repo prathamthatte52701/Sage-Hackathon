@@ -20,6 +20,34 @@ def _rules(content, language="javascript", path="app.js"):
     return {finding["rule"] for finding in run_rules(path, language, content)}
 
 
+def test_sql_injection_dedup_merges_regex_and_ast_root_cause():
+    # Same underlying vulnerability is independently caught by two detectors:
+    # the regex sql_concat rule (deterministic_pattern) sees the f-string SQL
+    # construction on its own line, and the AST taint engine sees the full
+    # request -> variable -> execute() sink path (ast_source_sink) one line
+    # later at the sink itself. Root-cause dedup in analyze_project must
+    # collapse these into a single finding and keep the stronger AST evidence
+    # -- otherwise the same vulnerability would be reported to the user twice.
+    content = (
+        "def handler(request):\n"
+        '    name = request.args.get("name")\n'
+        "    query = f\"SELECT * FROM users WHERE name = '{name}'\"\n"
+        "    cursor.execute(query)\n"
+    )
+
+    # Sanity: the regex rule really does fire standalone on this content, so
+    # the dedup below is proven to be merging two real detections, not just
+    # observing that only one ever fired in the first place.
+    assert "sql_concat" in _rules(content, language="python", path="app.py")
+
+    project = {"files": [{"path": "app.py", "language": "python", "content": content}]}
+    result = analyze_project(project)
+
+    sql_findings = [f for f in result["findings"] if f["rule"] in {"sql_injection", "sql_concat"}]
+    assert len(sql_findings) == 1, f"expected the two detections to merge into one, got {sql_findings}"
+    assert sql_findings[0]["evidence_type"] == "ast_source_sink", "the stronger source-to-sink evidence must win the merge"
+
+
 def test_rule_metadata_has_stable_entries_for_all_current_rules():
     assert len(RULE_METADATA) >= 28
     for rule_id, meta in RULE_METADATA.items():
