@@ -98,6 +98,24 @@ def test_supported_deterministic_finding_passes_the_gate():
     assert gated[0]["cwe"] == "CWE-798"
 
 
+def test_python_taint_sql_injection_passes_the_locked_sql_gate():
+    findings = [
+        {
+            "file": "app.py",
+            "line": 11,
+            "rule": "sql_injection",
+            "severity": "critical",
+            "message": "Request-derived input reaches SQL execution.",
+            "evidence": 'sqlite3.connect("app.db").execute(query)',
+            "evidence_type": "ast_source_sink",
+        }
+    ]
+    gated = to_closed_world_findings(findings)
+    assert len(gated) == 1
+    assert gated[0]["rule_id"] == "SEC-SQL-INJECTION"
+    assert gated[0]["deterministic_evidence"] is True
+
+
 def test_all_12_families_have_at_least_one_mapped_detector():
     mapped_canonicals = set(DETECTOR_RULE_TO_CANONICAL.values())
     # SEC-DEPENDENCY-RISK is intentionally not detector-mapped -- it comes

@@ -2,7 +2,7 @@ import pytest
 
 from models.schemas import HackerLensReport
 from services import hacker_lens
-from services.hacker_lens import _build_context, _build_report, _score_label, run_hacker_lens
+from services.hacker_lens import _build_context, _build_report, _evidence_catalog, _score_label, run_hacker_lens
 from services.groq_client import GroqUnavailableError
 
 
@@ -76,7 +76,7 @@ def test_build_report_drops_evidence_for_files_not_in_project():
         "hardening_priorities": ["Add authentication check to /login"],
     }
 
-    report = _build_report(raw, {"app.py", "utils.py"}, ["app.py", "utils.py"])
+    report = _build_report(raw, {"app.py", "utils.py"}, ["app.py", "utils.py"], _evidence_catalog(PROJECT))
 
     assert isinstance(report, HackerLensReport)
     assert report.attack_surface_score == 7
@@ -85,6 +85,33 @@ def test_build_report_drops_evidence_for_files_not_in_project():
     # The real app.py reference survives; the hallucinated file is dropped.
     assert [e.file for e in obs.evidence] == ["app.py"]
     assert obs.verified is True
+
+
+def test_build_report_strips_fake_function_and_route_evidence():
+    raw = {
+        "summary": "x",
+        "attack_surface_score": 7,
+        "adversarial_observations": [
+            {
+                "title": "Real file but fake symbols",
+                "risk": "high",
+                "evidence": [
+                    {"file": "app.py", "line": 500, "function": "not_a_real_function", "route": "/fake"},
+                    {"file": "app.py", "line": 5, "function": "login", "route": "/login"},
+                ],
+            }
+        ],
+    }
+
+    report = _build_report(raw, {"app.py"}, ["app.py"], _evidence_catalog(PROJECT))
+    evidence = report.adversarial_observations[0].evidence
+
+    assert evidence[0].file == "app.py"
+    assert evidence[0].line is None
+    assert evidence[0].function == ""
+    assert evidence[0].route == ""
+    assert evidence[1].function == "login"
+    assert evidence[1].route == "/login"
 
 
 def test_build_report_marks_observation_unverified_when_all_evidence_is_fake():

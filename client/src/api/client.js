@@ -227,12 +227,48 @@ export function fixedProjectZipUrl(projectId) {
   return `${baseURL}/api/projects/${projectId}/download-fixed`;
 }
 
+export async function startFixAll(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/fix-all`, {});
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not start Fix All. Please try again."));
+  }
+}
+
+export async function getFixAllStatus(projectId) {
+  try {
+    const res = await api.get(`/api/projects/${projectId}/fix-all/status`);
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load Fix All progress."));
+  }
+}
+
+export async function stopFixAll(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/fix-all/stop`, {});
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not stop Fix All."));
+  }
+}
+
 export async function runHackerLens(projectId) {
   try {
     const res = await api.post(`/api/projects/${projectId}/hacker-lens`, {}, { timeout: 45000 });
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Hacker Mode analysis failed. Please retry."));
+  }
+}
+
+export async function runBrutalAudit(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/brutal-audit`, {}, { timeout: 60000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Brutal Audit failed. Please retry."));
   }
 }
 

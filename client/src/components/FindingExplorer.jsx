@@ -4,9 +4,11 @@ import {
   Search,
   CheckCircle2,
   ChevronRight,
+  Zap,
 } from "lucide-react";
 import CodeViewer from "./CodeViewer";
 import EvidencePanel from "./EvidencePanel";
+import FixAllModal from "./FixAllModal";
 import { getProjectFile } from "../api/client";
 
 export default function FindingExplorer({
@@ -17,9 +19,14 @@ export default function FindingExplorer({
   generatingFix,
   onReasonFinding,
   reasoning,
+  onFixAllComplete,
 }) {
   const findings = project?.findings ?? [];
   const files = project?.files ?? [];
+  const [showFixAll, setShowFixAll] = useState(false);
+
+  const analysisFresh = project?.analysis_status !== "stale";
+  const canFixAll = Boolean(project?.project_id) && analysisFresh && findings.length > 0;
 
   const [severityFilter, setSeverityFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -110,16 +117,25 @@ export default function FindingExplorer({
   }, [filteredFindings, activeFinding, onSelectFinding, onGenerateFix]);
 
   return (
+    <>
     <div className="min-h-[calc(100vh-5rem)] lg:h-[calc(100vh-5rem)] grid grid-cols-1 lg:grid-cols-12 gap-4 p-0 sm:p-2 lg:p-4 overflow-visible lg:overflow-hidden select-none">
       {/* COLUMN 1: Findings Navigation Sidebar (3 cols) */}
       <div className="lg:col-span-3 cm-card border-[#232936] bg-[#10131A] flex flex-col h-[360px] lg:h-full overflow-hidden">
         {/* Header & Filter Controls */}
         <div className="p-3 border-b border-[#232936] space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-mono font-semibold text-[#F4F7FB] flex items-center gap-1.5">
               <ShieldAlert className="w-3.5 h-3.5 text-[#7C8CFF]" />
               FINDINGS ({filteredFindings.length})
             </span>
+            <button
+              onClick={() => setShowFixAll(true)}
+              disabled={!canFixAll}
+              title={!analysisFresh ? "Re-analyze the project before running Fix All" : !findings.length ? "No confirmed security findings to fix" : "Fix All Issues"}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide bg-[#F4C95D]/15 border border-[#F4C95D]/40 text-[#F4C95D] hover:bg-[#F4C95D]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F4C95D]/15"
+            >
+              <Zap className="w-3 h-3" /> Fix All Issues
+            </button>
           </div>
 
           {/* Search Input */}
@@ -247,5 +263,18 @@ export default function FindingExplorer({
         />
       </div>
     </div>
+    {showFixAll && (
+      <FixAllModal
+        projectId={project?.project_id}
+        findings={findings}
+        onClose={() => setShowFixAll(false)}
+        onComplete={() => onFixAllComplete?.()}
+        onRetryFinding={(finding) => {
+          setShowFixAll(false);
+          onSelectFinding?.(finding);
+        }}
+      />
+    )}
+    </>
   );
 }

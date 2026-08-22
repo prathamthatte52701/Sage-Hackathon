@@ -14,6 +14,7 @@ import ReanalysisResult from "./components/ReanalysisResult";
 import ProjectChat from "./components/ProjectChat";
 import ArchitectureView from "./components/ArchitectureView";
 import HackerLens from "./components/HackerLens";
+import BrutalAudit from "./components/BrutalAudit";
 import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
@@ -28,6 +29,7 @@ import {
   applyProjectFix,
   reanalyzeProject,
   getHistory,
+  getProject,
 } from "./api/client";
 
 export default function App() {
@@ -160,6 +162,30 @@ export default function App() {
       });
     } finally {
       setReanalyzing(false);
+    }
+  };
+
+  // Fix All already runs its own server-side reanalysis before reporting
+  // completion -- this just pulls the already-updated project + score into
+  // local state, without triggering a second full analyze pass.
+  const handleFixAllComplete = async () => {
+    if (!projectBundle?.project_id) return;
+    try {
+      const fresh = await getProject(projectBundle.project_id);
+      const scored = await scoreProject(projectBundle.project_id);
+      setProjectBundle((prev) => ({
+        ...prev,
+        project: fresh.project || fresh,
+        files: fresh.files || prev.files,
+        findings: fresh.findings || [],
+        score: scored,
+      }));
+    } catch (err) {
+      setToast({
+        type: "error",
+        title: "Refresh Failed",
+        message: err.message || "Fix All finished, but the project view could not be refreshed. Reload to see the latest state.",
+      });
     }
   };
 
@@ -359,6 +385,7 @@ export default function App() {
                   });
                 }
               }}
+              onFixAllComplete={handleFixAllComplete}
             />
           )}
 
@@ -473,6 +500,11 @@ export default function App() {
           {/* View: Hacker Mode */}
           {activeTab === "hacker_lens" && (
             <HackerLens projectId={projectBundle?.project_id} />
+          )}
+
+          {/* View: Brutal Audit */}
+          {activeTab === "brutal_audit" && (
+            <BrutalAudit projectId={projectBundle?.project_id} project={projectBundle} />
           )}
 
           {/* View: Review History */}

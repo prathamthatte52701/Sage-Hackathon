@@ -18,6 +18,8 @@ from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectR
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.auth import get_request_user
+from services.brutal_audit import run_brutal_audit
+from services.fix_all import get_fix_all_status, is_fix_all_running, request_stop, start_fix_all
 from services.hacker_lens import run_hacker_lens
 from services.project_review import run_ai_quality_review
 from services.context_expansion import build_finding_context
@@ -781,6 +783,8 @@ async def transform_finding(
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if is_fix_all_running(project_id):
+            return JSONResponse(status_code=409, content={"error": "Fix All is currently running for this project. Wait for it to finish before making manual changes."})
 
         findings = project.get("findings", [])
         finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
@@ -862,6 +866,25 @@ async def hacker_lens_report(project_id: str, current_user: dict = Depends(get_r
         return JSONResponse(status_code=500, content=_HACKER_LENS_ERROR_RESPONSE)
 
 
+_BRUTAL_AUDIT_ERROR_RESPONSE = {"error": "Brutal Audit failed, please retry"}
+
+
+@router.post("/projects/{project_id}/brutal-audit")
+async def brutal_audit_report(project_id: str, current_user: dict = Depends(get_request_user)):
+    # Independent production-readiness review. Reuses the existing stored
+    # project and does not touch normal findings, Hacker Mode, or RAG.
+    try:
+        project = await get_owned_project(project_id, current_user["_id"])
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        report = await run_brutal_audit(project)
+        return report
+    except Exception as exc:
+        print(f"[projects] brutal-audit unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_BRUTAL_AUDIT_ERROR_RESPONSE)
+
+
 _REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}
 
 _DERIVED_FIELDS = (
@@ -939,6 +962,8 @@ async def apply_project_fix(
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if is_fix_all_running(project_id):
+            return JSONResponse(status_code=409, content={"error": "Fix All is currently running for this project. Wait for it to finish before making manual changes."})
         findings = project.get("findings", [])
         finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
         if finding is None:
@@ -1013,6 +1038,67 @@ async def apply_project_fix(
     except Exception as exc:
         print(f"[projects] apply fix error: {exc}")
         return JSONResponse(status_code=500, content=_APPLY_ERROR_RESPONSE)
+
+
+_FIX_ALL_ERROR_RESPONSE = {"error": "Could not start Fix All, please try again"}
+
+
+@router.post("/projects/{project_id}/fix-all")
+async def start_fix_all_endpoint(project_id: str, current_user: dict = Depends(get_request_user)):
+    try:
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if is_fix_all_running(project_id):
+            existing = get_fix_all_status(project_id)
+            return JSONResponse(
+                status_code=202,
+                content={"job_id": existing["job_id"], "status": existing["status"], "total": existing["total"]},
+            )
+        security_findings = project.get("security_findings", [])
+        if not security_findings:
+            return JSONResponse(status_code=400, content={"error": "No confirmed security findings to fix."})
+        if project.get("analysis_status") == "stale":
+            return JSONResponse(
+                status_code=409,
+                content={"error": "Repository changed after the last analysis. Re-analyze before running Fix All."},
+            )
+        state = await start_fix_all(project_id, current_user["_id"])
+        return JSONResponse(
+            status_code=202,
+            content={"job_id": state["job_id"], "status": state["status"], "total": state["total"]},
+        )
+    except Exception as exc:
+        print(f"[projects] fix-all start error: {exc}")
+        return JSONResponse(status_code=500, content=_FIX_ALL_ERROR_RESPONSE)
+
+
+@router.get("/projects/{project_id}/fix-all/status")
+async def fix_all_status(project_id: str, current_user: dict = Depends(get_request_user)):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    state = get_fix_all_status(project_id)
+    if state is None:
+        return JSONResponse(status_code=404, content={"error": "No Fix All run found for this project"})
+    return {
+        "job_id": state["job_id"],
+        "status": state["status"],
+        "total": state["total"],
+        "processed": state["processed"],
+        "results": state["results"],
+        "report": state.get("report"),
+        "error": state.get("error"),
+    }
+
+
+@router.post("/projects/{project_id}/fix-all/stop")
+async def stop_fix_all_endpoint(project_id: str, current_user: dict = Depends(get_request_user)):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    stopped = request_stop(project_id)
+    return {"stopped": stopped}
 
 
 @router.get("/projects/{project_id}/download-fixed")

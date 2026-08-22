@@ -125,6 +125,10 @@ _RE_JS_AUTH_COOKIE = re.compile(
 )
 _RE_JS_NUMERIC_COERCION_DEFAULT = re.compile(r"\bNumber\s*\([^)]*\)\s*\|\|\s*0\b")
 _RE_JS_DATE_SLICE = re.compile(r"\.\s*(date|createdAt|updatedAt)\s*\.slice\s*\(")
+_RE_JS_DATE_COMPONENT_RANGE = re.compile(
+    r"(?is)\b(?:const|let|var)\s*\[[^\]]*\bmonth\b[^\]]*\]\s*=\s*[^;\n]+\.split\s*\([^;\n]+\.map\s*\(\s*Number\s*\)"
+    r"(?:(?!function\s+\w|=>\s*\{).){0,450}\bnew\s+Date\s*\([^)]*\bmonth\b[^)]*\)"
+)
 _RE_JS_PERCENT_ZERO_BASELINE = re.compile(r"if\s*\(\s*!\s*(previous|prev|oldValue|baseline)\s*\)\s*return\s+0\s*;")
 _RE_JS_UNKNOWN_TYPE_DEFAULT = re.compile(r"if\s*\([^)]*\.type\s*={2,3}\s*['\"][^'\"]+['\"][^)]*\)\s*\{[^{}]*\}\s*else\s*\{", re.DOTALL)
 _RE_PLAINTEXT_PASSWORD_PY = re.compile(r"password\s*=\s*(request\.(json|form)|req\.(json|form)|input\s*\()", re.IGNORECASE)
@@ -172,6 +176,7 @@ RULE_METADATA = {
     "mongoose_money_number_no_validation": {"title": "Monetary Number field lacks validation", "languages": ["javascript", "typescript"], "category": "data_integrity"},
     "js_numeric_coercion_default": {"title": "Silent numeric coercion to zero", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_date_slice_without_validation": {"title": "Date slicing without visible validation", "languages": ["javascript", "typescript"], "category": "logic"},
+    "js_date_component_range_without_validation": {"title": "Date component range without visible validation", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_zero_baseline_fallback": {"title": "Zero baseline treated as missing", "languages": ["javascript", "typescript"], "category": "logic"},
     "js_unknown_type_default": {"title": "Unknown enum/type falls into default branch", "languages": ["javascript", "typescript"], "category": "logic"},
     "process_global_auth_cache": {"title": "Process-global authentication cache", "languages": ["javascript", "typescript"], "category": "security"},

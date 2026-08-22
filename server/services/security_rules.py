@@ -53,6 +53,7 @@ def is_supported_security_rule(rule_id) -> bool:
 DETECTOR_RULE_TO_CANONICAL = {
     "hardcoded_secret": "SEC-HARDCODED-SECRET",
     "sql_concat": "SEC-SQL-INJECTION",
+    "sql_injection": "SEC-SQL-INJECTION",
     "nosql_untrusted_filter": "SEC-NOSQL-INJECTION",
     "subprocess_shell_true": "SEC-COMMAND-INJECTION",
     "os_system_call": "SEC-COMMAND-INJECTION",

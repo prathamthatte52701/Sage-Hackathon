@@ -16,6 +16,7 @@ from services.groq_client import GroqUnavailableError, call_groq
 from services.prompt_builder import build_hacker_lens_prompt
 from services.project_review import GLOBAL_AI_SEMAPHORE
 from services.reasoning_engine import _extract_json
+from services.structural.python_ast import analyze_python_source
 
 # Bounds mirror services/project_review.py's philosophy: bounded, not
 # exhaustive. A single Hacker Mode call must stay inside the existing Groq
@@ -33,6 +34,9 @@ _PRIORITY_PATTERNS = [
     (re.compile(r"(?i)\b(http|requests|axios|fetch|urllib|httpx)\b"), 2),
     (re.compile(r"(?i)\b(config|secret|env|api[_-]?key|credential)\b"), 3),
 ]
+
+_ROUTE_RE = re.compile(r"\b(?:app|router|api|bp|blueprint)\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['\"]([^'\"]+)", re.I)
+_FUNCTION_RE = re.compile(r"\b(?:def\s+([A-Za-z_]\w*)\s*\(|function\s+([A-Za-z_$][\w$]*)|const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>)")
 
 
 def _priority_score(path: str, content: str) -> int:
@@ -70,7 +74,38 @@ def _valid_file_paths(project: dict) -> set[str]:
     return {f.get("path", "") for f in project.get("files", []) if f.get("path")}
 
 
-def _coerce_evidence(raw, valid_files: set[str]) -> list[HackerLensEvidence]:
+def _route_path(route: str) -> str:
+    parts = (route or "").strip().split()
+    return parts[-1] if parts else ""
+
+
+def _evidence_catalog(project: dict) -> dict[str, dict]:
+    catalog: dict[str, dict] = {}
+    for file_entry in project.get("files", []):
+        path = file_entry.get("path")
+        content = file_entry.get("content") or ""
+        if not path:
+            continue
+        functions: set[str] = set()
+        routes: set[str] = set()
+        if file_entry.get("language") == "python":
+            module = analyze_python_source(content)
+            for fn in module.functions:
+                functions.add(fn.name)
+                routes.update(route["path"] for route in fn.routes)
+        else:
+            for match in _FUNCTION_RE.finditer(content):
+                functions.update(name for name in match.groups() if name)
+            routes.update(match.group(2) for match in _ROUTE_RE.finditer(content))
+        catalog[path] = {
+            "line_count": max(1, len(content.splitlines())),
+            "functions": functions,
+            "routes": routes,
+        }
+    return catalog
+
+
+def _coerce_evidence(raw, valid_files: set[str], catalog: dict[str, dict]) -> list[HackerLensEvidence]:
     if not isinstance(raw, list):
         return []
     out = []
@@ -84,18 +119,27 @@ def _coerce_evidence(raw, valid_files: set[str]) -> list[HackerLensEvidence]:
         # project -- a hallucinated path is worse than no evidence at all.
         if file_path and file_path not in valid_files:
             continue
+        file_meta = catalog.get(file_path, {}) if file_path else {}
         line = item.get("line")
         if not isinstance(line, int) or isinstance(line, bool) or line <= 0:
             line = None
+        elif file_meta and line > file_meta.get("line_count", line):
+            line = None
         function = item.get("function") if isinstance(item.get("function"), str) else ""
         route = item.get("route") if isinstance(item.get("route"), str) else ""
+        if file_path and function and function not in file_meta.get("functions", set()):
+            function = ""
+        if file_path and route:
+            route = _route_path(route)
+        if file_path and route and route not in file_meta.get("routes", set()):
+            route = ""
         if not (file_path or function or route):
             continue
         out.append(HackerLensEvidence(file=file_path, line=line, function=function, route=route))
     return out
 
 
-def _coerce_observation(raw, valid_files: set[str]) -> HackerLensObservation | None:
+def _coerce_observation(raw, valid_files: set[str], catalog: dict[str, dict]) -> HackerLensObservation | None:
     if not isinstance(raw, dict):
         return None
     title = raw.get("title")
@@ -104,7 +148,7 @@ def _coerce_observation(raw, valid_files: set[str]) -> HackerLensObservation | N
     risk = raw.get("risk")
     if risk not in ("critical", "high", "medium", "low"):
         risk = "low"
-    evidence = _coerce_evidence(raw.get("evidence"), valid_files)
+    evidence = _coerce_evidence(raw.get("evidence"), valid_files, catalog)
     return HackerLensObservation(
         title=title.strip(),
         risk=risk,
@@ -116,7 +160,7 @@ def _coerce_observation(raw, valid_files: set[str]) -> HackerLensObservation | N
     )
 
 
-def _coerce_top_targets(raw, valid_files: set[str]) -> list[HackerLensTopTarget]:
+def _coerce_top_targets(raw, valid_files: set[str], catalog: dict[str, dict]) -> list[HackerLensTopTarget]:
     if not isinstance(raw, list):
         return []
     out = []
@@ -134,13 +178,13 @@ def _coerce_top_targets(raw, valid_files: set[str]) -> list[HackerLensTopTarget]
                 rank=rank,
                 title=title.strip(),
                 reason=item.get("reason") if isinstance(item.get("reason"), str) else "",
-                evidence=_coerce_evidence(item.get("evidence"), valid_files),
+                evidence=_coerce_evidence(item.get("evidence"), valid_files, catalog),
             )
         )
     return out
 
 
-def _coerce_risk_paths(raw, valid_files: set[str]) -> list[HackerLensRiskPath]:
+def _coerce_risk_paths(raw, valid_files: set[str], catalog: dict[str, dict]) -> list[HackerLensRiskPath]:
     if not isinstance(raw, list):
         return []
     out = []
@@ -156,7 +200,7 @@ def _coerce_risk_paths(raw, valid_files: set[str]) -> list[HackerLensRiskPath]:
             HackerLensRiskPath(
                 label=label.strip() if isinstance(label, str) and label.strip() else " -> ".join(steps[:2]),
                 steps=steps,
-                evidence=_coerce_evidence(item.get("evidence"), valid_files),
+                evidence=_coerce_evidence(item.get("evidence"), valid_files, catalog),
             )
         )
     return out
@@ -181,8 +225,9 @@ def _score_label(score: float) -> str:
     return "low"
 
 
-def _build_report(raw: dict, valid_files: set[str], included_files: list[str]) -> HackerLensReport:
+def _build_report(raw: dict, valid_files: set[str], included_files: list[str], catalog: dict[str, dict] | None = None) -> HackerLensReport:
     data = raw if isinstance(raw, dict) else {}
+    catalog = catalog or {}
 
     score = data.get("attack_surface_score")
     if not isinstance(score, (int, float)) or isinstance(score, bool):
@@ -198,14 +243,14 @@ def _build_report(raw: dict, valid_files: set[str], included_files: list[str]) -
         attack_surface_score=score,
         attack_surface_label=_score_label(score),
         score_reasoning=data.get("score_reasoning") if isinstance(data.get("score_reasoning"), str) else "",
-        top_targets=_coerce_top_targets(data.get("top_targets"), valid_files),
+        top_targets=_coerce_top_targets(data.get("top_targets"), valid_files, catalog),
         attack_surfaces=_coerce_string_list(data.get("attack_surfaces"), 6),
-        risk_paths=_coerce_risk_paths(data.get("risk_paths"), valid_files),
+        risk_paths=_coerce_risk_paths(data.get("risk_paths"), valid_files, catalog),
         adversarial_observations=[
-            o for o in (_coerce_observation(item, valid_files) for item in (data.get("adversarial_observations") or [])[:6]) if o
+            o for o in (_coerce_observation(item, valid_files, catalog) for item in (data.get("adversarial_observations") or [])[:6]) if o
         ],
         hacker_hypotheses=[
-            o for o in (_coerce_observation(item, valid_files) for item in (data.get("hacker_hypotheses") or [])[:5]) if o
+            o for o in (_coerce_observation(item, valid_files, catalog) for item in (data.get("hacker_hypotheses") or [])[:5]) if o
         ],
         hardening_priorities=_coerce_string_list(data.get("hardening_priorities"), 6),
         files_analyzed=included_files,
@@ -221,6 +266,7 @@ async def run_hacker_lens(project: dict) -> HackerLensReport:
         )
 
     valid_files = _valid_file_paths(project)
+    catalog = _evidence_catalog(project)
     prompt = build_hacker_lens_prompt(repo_context, included_files)
     messages = [{"role": "user", "content": prompt}]
 
@@ -253,4 +299,4 @@ async def run_hacker_lens(project: dict) -> HackerLensReport:
             error="invalid_model_output",
         )
 
-    return _build_report(parsed, valid_files, included_files)
+    return _build_report(parsed, valid_files, included_files, catalog)

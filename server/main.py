@@ -64,12 +64,16 @@ _AUTH_WINDOW_SECONDS = 60
 # was exhausting the shared 30/60s IP budget on every analysis over ~25s,
 # turning normal usage into random 429s on whatever request came next.
 _RATE_LIMIT_EXEMPT_PREFIXES = ("/api/analysis-jobs/",)
+# Same reasoning, same fix, for Fix All's own progress poll -- the project_id
+# is embedded mid-path so this is a suffix check instead of a prefix one.
+_RATE_LIMIT_EXEMPT_SUFFIXES = ("/fix-all/status",)
 
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/") and not path.startswith(_RATE_LIMIT_EXEMPT_PREFIXES):
+    exempt = path.startswith(_RATE_LIMIT_EXEMPT_PREFIXES) or path.endswith(_RATE_LIMIT_EXEMPT_SUFFIXES)
+    if path.startswith("/api/") and not exempt:
         client_ip = request.client.host if request.client else "unknown"
         if path in ("/api/auth/login", "/api/auth/signup"):
             allowed = check_rate_limit(f"auth:{client_ip}", _AUTH_MAX_REQUESTS, _AUTH_WINDOW_SECONDS)
