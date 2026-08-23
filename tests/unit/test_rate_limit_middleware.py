@@ -29,6 +29,12 @@ def test_analysis_job_polling_is_exempt_from_rate_limit():
     assert all(status == 200 for status in statuses)
 
 
+def test_automation_status_polling_is_exempt_from_rate_limit():
+    rate_limit_module._buckets.clear()
+    statuses = _hit("/api/projects/project-1/automation/status", "10.0.0.3", 60)
+    assert all(status == 200 for status in statuses)
+
+
 def test_other_api_routes_are_still_rate_limited():
     # The exemption must be scoped to analysis-jobs only -- everything else
     # on /api/* still needs real IP throttling to stay a working guard.

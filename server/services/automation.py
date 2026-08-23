@@ -22,7 +22,7 @@ from services.fix_all import get_fix_all_status_with_recovery, is_fix_all_runnin
 from services.hacker_lens import run_hacker_lens
 
 MAX_AUTO_FIX_CYCLES = 3
-TERMINAL_STATUSES = {"completed", "completed_with_warnings", "paused", "failed", "stopped"}
+TERMINAL_STATUSES = {"complete", "paused", "failed", "stopped"}
 RUNNING_STATUSES = {"queued", "running"}
 
 _active_runs: dict[str, dict] = {}
@@ -201,7 +201,8 @@ async def _run_defender(project_id: str, owner_user_id: str, state: dict) -> Non
     if state.get("status") == "stopped":
         return
     remaining = state["defender"].get("remaining_findings", 0)
-    state["defender"]["status"] = "complete" if remaining == 0 else "manual_review"
+    state["defender"]["status"] = "complete"
+    state["defender"]["manual_review_required"] = remaining > 0
     state["message"] = "Defender complete." if remaining == 0 else "Defender completed with issues requiring manual review."
     await _persist(state)
 
@@ -243,7 +244,8 @@ async def _run_read_only_stage(state: dict, name: str, label: str, work):
         await _persist(state)
         return result
     except Exception as exc:
-        state[name]["status"] = "unavailable"
+        state[name]["status"] = "failed"
+        state[name]["continue_after_failure"] = True
         state[name]["error"] = f"{type(exc).__name__}: {exc}"
         state["message"] = f"{label} unavailable. Automation will continue."
         await _persist(state)
@@ -328,9 +330,10 @@ async def _run_automation(project_id: str, owner_user_id: str, state: dict) -> N
         await _run_read_only_stage(state, "blast_radius", "Blast Radius", lambda: build_blast_radius(project))
 
         state["final_report"] = await _build_final_report(project_id, owner_user_id, state)
-        warnings = any(state[s].get("status") in {"unavailable", "manual_review"} for s in ("hacker", "brutal", "blast_radius"))
-        warnings = warnings or state["defender"].get("status") == "manual_review"
-        state["status"] = "completed_with_warnings" if warnings else "completed"
+        warnings = any(state[s].get("status") == "failed" for s in ("hacker", "brutal", "blast_radius"))
+        warnings = warnings or bool(state["defender"].get("manual_review_required"))
+        state["status"] = "complete"
+        state["warnings"] = warnings
         state["current_stage"] = "complete"
         state["message"] = "Automation complete."
         await _persist(state)

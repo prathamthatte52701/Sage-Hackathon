@@ -39,7 +39,7 @@ import {
 } from "./api/client";
 
 const ACTIVE_PROJECT_KEY = "code_master_ai_active_project_id";
-const TERMINAL_AUTOMATION = new Set(["completed", "completed_with_warnings", "paused", "failed", "stopped"]);
+const TERMINAL_AUTOMATION = new Set(["complete", "paused", "failed", "stopped"]);
 
 export default function App() {
   const sessionId = useSessionId();
@@ -148,7 +148,7 @@ export default function App() {
           return;
         }
       } catch {
-        if (!cancelled && automationStatus?.status && !TERMINAL_AUTOMATION.has(automationStatus.status)) {
+        if (!cancelled) {
           setToast({
             type: "error",
             title: "Automation Status Unavailable",

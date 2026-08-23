@@ -57,7 +57,7 @@ async def test_automation_completes_without_fix_loop_for_zero_findings(monkeypat
     state = _state()
     await automation._run_automation(PROJECT_ID, OWNER, state)
 
-    assert state["status"] == "completed"
+    assert state["status"] == "complete"
     assert state["defender"]["status"] == "complete"
     assert state["defender"]["fix_cycles"] == 0
     assert state["final_report"]["defender"]["requires_manual_review"] == 0
@@ -122,7 +122,8 @@ async def test_defender_max_cycle_safety_leaves_manual_review(monkeypatch):
     await automation._run_defender(PROJECT_ID, OWNER, state)
 
     assert calls["fix"] == automation.MAX_AUTO_FIX_CYCLES
-    assert state["defender"]["status"] == "manual_review"
+    assert state["defender"]["status"] == "complete"
+    assert state["defender"]["manual_review_required"] is True
     assert state["defender"]["remaining_findings"] == 1
 
 
@@ -156,8 +157,9 @@ async def test_hacker_failure_does_not_block_brutal_or_blast(monkeypatch):
     state = _state()
     await automation._run_automation(PROJECT_ID, OWNER, state)
 
-    assert state["status"] == "completed_with_warnings"
-    assert state["hacker"]["status"] == "unavailable"
+    assert state["status"] == "complete"
+    assert state["warnings"] is True
+    assert state["hacker"]["status"] == "failed"
     assert state["brutal"]["status"] == "complete"
     assert state["blast_radius"]["status"] == "complete"
 

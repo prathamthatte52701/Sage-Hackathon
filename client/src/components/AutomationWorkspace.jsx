@@ -42,13 +42,13 @@ const STAGES = [
   },
 ];
 
-const TERMINAL = new Set(["completed", "completed_with_warnings", "paused", "failed", "stopped"]);
+const TERMINAL = new Set(["complete", "paused", "failed", "stopped"]);
 
 function stageTone(stage) {
   const status = stage?.status || "pending";
   if (status === "complete") return "text-[#36D399] border-[#36D399]/35 bg-[#36D399]/10";
   if (status === "running") return "text-[#7C8CFF] border-[#7C8CFF]/40 bg-[#7C8CFF]/10";
-  if (["manual_review", "unavailable", "paused"].includes(status)) return "text-[#F4C95D] border-[#F4C95D]/35 bg-[#F4C95D]/10";
+  if (["paused", "skipped"].includes(status)) return "text-[#F4C95D] border-[#F4C95D]/35 bg-[#F4C95D]/10";
   if (status === "failed") return "text-[#FF5D73] border-[#FF5D73]/35 bg-[#FF5D73]/10";
   return "text-[#687386] border-[#232936] bg-[#10131A]";
 }
@@ -57,7 +57,7 @@ function statusIcon(stage) {
   const status = stage?.status || "pending";
   if (status === "complete") return <CheckCircle2 className="w-4 h-4" />;
   if (status === "running") return <Loader2 className="w-4 h-4 animate-spin" />;
-  if (["manual_review", "unavailable", "paused"].includes(status)) return <AlertTriangle className="w-4 h-4" />;
+  if (["paused", "skipped"].includes(status)) return <AlertTriangle className="w-4 h-4" />;
   if (status === "failed") return <XCircle className="w-4 h-4" />;
   return <span className="w-2 h-2 rounded-full bg-current opacity-70" />;
 }
@@ -88,6 +88,7 @@ function StageRow({ config, stage, active }) {
           ))}
         </div>
       )}
+      {stage?.manual_review_required && <p className="mt-3 text-xs text-[#F4D98A]">Manual review required for remaining Defender findings.</p>}
       {stage?.error && <p className="mt-3 text-xs text-[#FFB4C0]">{stage.error}</p>}
     </div>
   );

@@ -543,6 +543,12 @@ async def import_from_github(payload: GithubImportRequest, current_user: dict = 
         if error is not None:
             return JSONResponse(status_code=400, content=error)
 
+        # Commit Guard's only supported source: without owner/repo persisted
+        # here, there is no way to later resolve real commit history for
+        # this project at all. The zipball itself carries no git metadata.
+        project_representation["github_owner"] = owner
+        project_representation["github_repo"] = repo
+
         project_id = await save_project(project_representation, payload.session_id, current_user["_id"])
         for file_entry in project_representation["files"]:
             file_entry.pop("binary_content", None)

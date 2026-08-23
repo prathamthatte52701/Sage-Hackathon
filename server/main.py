@@ -66,7 +66,7 @@ _AUTH_WINDOW_SECONDS = 60
 _RATE_LIMIT_EXEMPT_PREFIXES = ("/api/analysis-jobs/",)
 # Same reasoning, same fix, for Fix All's own progress poll -- the project_id
 # is embedded mid-path so this is a suffix check instead of a prefix one.
-_RATE_LIMIT_EXEMPT_SUFFIXES = ("/fix-all/status",)
+_RATE_LIMIT_EXEMPT_SUFFIXES = ("/fix-all/status", "/automation/status")
 
 
 @app.middleware("http")
