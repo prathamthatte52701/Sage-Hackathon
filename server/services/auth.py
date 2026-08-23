@@ -87,7 +87,7 @@ async def get_current_user(session_token: str | None = Cookie(default=None, alia
 
 
 async def get_request_user(session_token: str | None = Cookie(default=None, alias=COOKIE_NAME)):
-    """Central identity dependency for all SAGE workspaces.
+    """Central identity dependency for all CODE MASTER AI workspaces.
 
     Demo mode has one server-owned identity, while enabled auth delegates to
     the existing strict JWT/cookie validation path.

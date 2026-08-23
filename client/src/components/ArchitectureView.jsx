@@ -109,7 +109,7 @@ export default function ArchitectureView({ project }) {
                 Grounded Dependencies ({graph.edges.length})
               </div>
               {graph.edges.length === 0 ? (
-                <p className="text-xs text-[#687386]">No Python import edges were found. SAGE is showing valid nodes without invented dependencies.</p>
+                <p className="text-xs text-[#687386]">No Python import edges were found. CODE MASTER AI is showing valid nodes without invented dependencies.</p>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {graph.edges.map((edge, index) => (

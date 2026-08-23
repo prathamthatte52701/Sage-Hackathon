@@ -1,4 +1,4 @@
-"""Fix All: sequential, safe auto-fix of every confirmed SAGE security finding.
+"""Fix All: sequential, safe auto-fix of every confirmed CODE MASTER AI security finding.
 
 Pure orchestration -- no new fixer. Reuses exactly the same pieces the
 single-finding "Generate Fix" / "Apply Fix" endpoints in routers/projects.py

@@ -188,7 +188,7 @@ async def test_run_hacker_lens_returns_error_report_when_groq_unavailable(monkey
     assert report.files_analyzed == ["app.py", "utils.py"]
     # Failure must be self-contained: no exception propagates, so a caller
     # (the router) can return this report as a normal 200 with error/retry
-    # state, leaving the rest of SAGE completely unaffected.
+    # state, leaving the rest of CODE MASTER AI completely unaffected.
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 """Phase 1: closed-world security rule registry.
 
-SAGE is a closed-world security reviewer supporting EXACTLY these 12 locked
+CODE MASTER AI is a closed-world security reviewer supporting EXACTLY these 12 locked
 rule families. This is permanent product scope -- no coding agent, LLM, RAG
 document, or frontend component may introduce a 13th category.
 

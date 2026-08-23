@@ -1,22 +1,24 @@
-# SAGE
+# CODE MASTER AI
 
 ## Evidence-First Security Review for Real Repositories
 
-SAGE is a repository security workspace built around a deliberately strict idea:
+CODE MASTER AI is a repository security workspace built around a deliberately strict idea:
 
 > **A security finding should be traceable to concrete code evidence, not an AI hunch.**
 
-Upload a ZIP, import a public GitHub repository, or review a focused snippet. SAGE maps the codebase, runs deterministic checks, presents grounded findings, retrieves rule-specific guidance, generates a scoped remediation proposal, validates the patch, and rescans the stored source after an explicit apply.
+Upload a ZIP, import a public GitHub repository, or review a focused snippet. CODE MASTER AI maps the codebase, runs deterministic checks, presents grounded findings, retrieves rule-specific guidance, generates a scoped remediation proposal, validates the patch, and rescans the stored source after an explicit apply.
 
-SAGE is designed to prefer **no finding** over a vague or unprovable warning.
+CODE MASTER AI is designed to prefer **no finding** over a vague or unprovable warning.
+
+Current product capabilities include Python repository analysis, deterministic security review with curated RAG guidance, Hacker Mode adversarial review, Brutal Audit production-readiness review, Fix All remediation, Architecture View, Blast Radius View, and ZIP/GitHub repository ingestion.
 
 ---
 
 ## The Product Contract
 
-SAGE is moving to a closed-world security model. Its long-term review boundary is intentionally limited to these twelve rule families:
+CODE MASTER AI is moving to a closed-world security model. Its long-term review boundary is intentionally limited to these twelve rule families:
 
-| # | Canonical family | Examples of evidence SAGE must require |
+| # | Canonical family | Examples of evidence CODE MASTER AI must require |
 | --- | --- | --- |
 | 01 | Hardcoded secrets | Credential-like literal plus contextual evidence |
 | 02 | SQL injection | Untrusted input reaching unsafe SQL construction and execution |
@@ -33,7 +35,7 @@ SAGE is moving to a closed-world security model. Its long-term review boundary i
 
 AI, RAG, and the frontend do **not** get to invent findings. Their role is to enrich deterministic, evidence-backed results with explanation, standards guidance, and safe remediation proposals.
 
-### What SAGE refuses to do
+### What CODE MASTER AI refuses to do
 
 - Turn comments, documentation, variable names, or generic code smells into vulnerabilities.
 - Present model confidence as proof.
@@ -81,18 +83,18 @@ When validation fails, the API returns a specific reason such as `target_not_fou
 
 ---
 
-## The Complete SAGE Flow, A to Z
+## The Complete CODE MASTER AI Flow, A to Z
 
 This is the exact product journey for a repository review.
 
-| Step | User action | SAGE does | What remains true |
+| Step | User action | CODE MASTER AI does | What remains true |
 | --- | --- | --- | --- |
 | A | Open the workspace | Starts in demo mode or validates the configured session mode | The browser never chooses an owner identity |
 | B | Upload a ZIP or enter `owner/repo` | Validates archive/repository input and creates a stored project | Archive paths, sizes, duplicate paths, and binary files are handled safely |
 | C | Start analysis | Enqueues one canonical analysis job | The request returns quickly instead of holding the browser open for a long scan |
 | D | Watch scan state | Polls the job until it is `completed`, `partial`, or `failed` | The UI does not invent completion or percentage progress |
 | E | Open the report | Loads project metadata, findings, score, and source revision state | Metadata reads do not need to hydrate every source file |
-| F | Select a finding | Fetches the real stored file and highlights the evidence location | If source is unavailable, SAGE says so rather than fabricating code |
+| F | Select a finding | Fetches the real stored file and highlights the evidence location | If source is unavailable, CODE MASTER AI says so rather than fabricating code |
 | G | Ask for reasoning | Uses the verified finding and repository context to retrieve relevant guidance | Guidance explains a finding; it does not create one |
 | H | Generate a fix | Produces a scoped proposal, unified diff, source hash, and validation result | No source code changes during generation or preview |
 | I | Review validation | Checks target presence, uniqueness, source freshness, overlap, and patch structure | Apply stays disabled unless the backend returns `can_apply: true` |
@@ -278,11 +280,17 @@ The backend streams a ZIP from persisted project state. It includes changed sour
 
 ## What You Can Do Today
 
+- Analyze Python repositories from ZIP archives or public GitHub imports.
 - Review pasted Python, JavaScript, TypeScript, Java, or C/C++ snippets.
-- Upload repository ZIP archives or import public GitHub repositories.
+- Run deterministic security review backed by rule-specific RAG guidance.
 - Inspect findings, evidence, source locations, and rule-aware guidance.
 - Load the real stored file for a finding instead of a fabricated code preview.
 - Generate and validate a focused fix before applying it.
+- Run Fix All across confirmed security findings with per-finding validation.
+- Use Hacker Mode for independent attacker-perspective analysis without RAG.
+- Use Brutal Audit for production-readiness review without changing normal findings.
+- Use Architecture View to inspect grounded Python components and imports.
+- Use Blast Radius View to understand which components, routes, and sinks are affected if a Python component fails.
 - Rescan a project after a patch and download a fixed project ZIP.
 - Ask repository-grounded questions through project chat and curated engineering knowledge.
 - Run the hackathon/demo experience without signup or login.
@@ -316,6 +324,9 @@ FastAPI application
 | Snippet review and fixes | `server/routers/review.py` |
 | Deterministic rules | `server/services/analyzers/rules.py` |
 | Exact patch validation | `server/services/patching.py` |
+| Hacker Mode | `server/services/hacker_lens.py`, `client/src/components/HackerLens.jsx` |
+| Brutal Audit | `server/services/brutal_audit.py`, `client/src/components/BrutalAudit.jsx` |
+| Blast Radius View | `server/services/blast_radius.py`, `client/src/components/BlastRadiusView.jsx` |
 | Project retrieval | `server/services/retrieval.py` |
 | Curated knowledge | `server/knowledge/` |
 | MongoDB and GridFS | `server/db/mongo.py` |
@@ -407,7 +418,7 @@ When auth is enabled, configure a strong `JWT_SECRET` and appropriate production
 
 ## Repository Ingestion Guarantees
 
-SAGE treats uploaded archives as untrusted input. ZIP processing includes controls for:
+CODE MASTER AI treats uploaded archives as untrusted input. ZIP processing includes controls for:
 
 - Path traversal, absolute paths, and excessive path depth.
 - Duplicate canonical file paths.
@@ -452,6 +463,9 @@ The frontend polls the job state before loading fresh project results. Repeated 
 | Reanalyze current source | `POST /api/projects/{id}/reanalyze` |
 | Download fixed project | `GET /api/projects/{id}/download-fixed` |
 | Project chat | `POST /api/projects/{id}/chat` |
+| Hacker Mode | `POST /api/projects/{id}/hacker-lens` |
+| Brutal Audit | `POST /api/projects/{id}/brutal-audit` |
+| Blast Radius | `GET /api/projects/{id}/blast-radius` |
 
 ---
 
@@ -492,7 +506,7 @@ The test suite covers the core contracts behind the product: deterministic analy
 
 ## Important Limitations
 
-SAGE is an evidence-first security workspace, not a replacement for a full secure-development program or expert review. Static analysis has language and semantic limits; some high-confidence remediation still needs human review. AI features can enrich a verified finding, but they are not an authority for discovering or proving one.
+CODE MASTER AI is an evidence-first security workspace, not a replacement for a full secure-development program or expert review. Static analysis has language and semantic limits; some high-confidence remediation still needs human review. AI features can enrich a verified finding, but they are not an authority for discovering or proving one.
 
 The closed-world twelve-rule model is intentionally phase-gated. Do not represent a rule family as certified until its positive, negative, adversarial, determinism, and regression gates are all green.
 
@@ -500,6 +514,6 @@ The closed-world twelve-rule model is intentionally phase-gated. Do not represen
 
 ## Build With Proof
 
-SAGE is for teams who would rather see fewer alerts with a clear evidence trail than an impressive-looking pile of guesses.
+CODE MASTER AI is for teams who would rather see fewer alerts with a clear evidence trail than an impressive-looking pile of guesses.
 
 **Scan the repository. Follow the evidence. Apply only what can be validated.**

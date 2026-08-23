@@ -31,7 +31,7 @@ export default function ProjectUpload({ sessionId, onUploaded }) {
   const [importing, setImporting] = useState(false);
 
   const sampleRepos = [
-    { label: "Sage-Hackathon", url: "prathamthatte52701/Sage-Hackathon" },
+    { label: "CODE MASTER AI Demo", url: "prathamthatte52701/Sage-Hackathon" },
     { label: "Flask Web Framework", url: "pallets/flask" },
     { label: "FastAPI Core", url: "fastapi/fastapi" },
   ];

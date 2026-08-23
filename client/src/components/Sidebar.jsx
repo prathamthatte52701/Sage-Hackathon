@@ -14,6 +14,7 @@ import {
   Lock,
   Skull,
   Flame,
+  Bomb,
 } from "lucide-react";
 import { getAuthoritativeScore } from "../utils/postFixResult";
 
@@ -77,6 +78,12 @@ export default function Sidebar({
       id: "brutal_audit",
       label: "🔥 Brutal Audit",
       icon: Flame,
+      disabled: !hasProject,
+    },
+    {
+      id: "blast_radius",
+      label: "💥 Blast Radius",
+      icon: Bomb,
       disabled: !hasProject,
     },
     {

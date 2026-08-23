@@ -278,4 +278,13 @@ export async function runBrutalAudit(projectId) {
   }
 }
 
+export async function getBlastRadius(projectId) {
+  try {
+    const res = await api.get(`/api/projects/${projectId}/blast-radius`, { timeout: 60000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Blast Radius analysis failed. Please retry."));
+  }
+}
+
 export default api;

@@ -17,5 +17,5 @@
   "negative_assertions": [
     "Do not report missing timeout; timeout=5 is present."
   ],
-  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to SAGE as source evidence."
+  "evaluation_rule": "Compare semantically. Oracle is evaluation-only and must not be passed to CODE MASTER AI as source evidence."
 }

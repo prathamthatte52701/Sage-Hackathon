@@ -1,4 +1,4 @@
-# SAGE Quality Report
+# CODE MASTER AI Quality Report
 
 This report is generated from actual local test execution. Update it after running:
 

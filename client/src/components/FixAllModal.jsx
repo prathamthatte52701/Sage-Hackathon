@@ -139,7 +139,7 @@ export default function FixAllModal({ projectId, findings, onClose, onComplete, 
           {phase === "confirm" && (
             <>
               <p className="text-sm text-[#C7CDD6] leading-relaxed">
-                SAGE will process <span className="font-semibold text-[#F4F7FB]">{queue.length}</span> confirmed
+                CODE MASTER AI will process <span className="font-semibold text-[#F4F7FB]">{queue.length}</span> confirmed
                 security findings sequentially using the latest project source.
               </p>
               <div className="flex flex-wrap gap-2">

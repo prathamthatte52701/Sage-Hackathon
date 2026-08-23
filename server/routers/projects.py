@@ -19,6 +19,7 @@ from models.schemas import ApplyProjectFixRequest, ChatRequest, DownloadProjectR
 from knowledge.retrieval import build_finding_knowledge_query, retrieve_knowledge
 from services.analyzer import SOURCE_LANGUAGES, analyze_project
 from services.auth import get_request_user
+from services.blast_radius import build_blast_radius
 from services.brutal_audit import run_brutal_audit
 from services.fix_all import get_fix_all_status, get_fix_all_status_with_recovery, is_fix_all_running, request_stop, start_fix_all
 from services.hacker_lens import run_hacker_lens
@@ -57,7 +58,7 @@ IGNORE_DIRS = {
 # other unlisted directory) is left alone, per "be conservative" above.
 IGNORE_PATH_PREFIXES = (".next/cache/",)
 
-# Assets SAGE cannot meaningfully analyze as source. These are still stored
+# Assets CODE MASTER AI cannot meaningfully analyze as source. These are still stored
 # (for byte-exact download-fixed-ZIP fidelity -- GridFS/binary_content,
 # unchanged from today) but never counted toward MAX_REPOSITORY_FILES and
 # never sent to any AI/RAG context, matching existing _should_read_text
@@ -983,10 +984,10 @@ _HACKER_LENS_ERROR_RESPONSE = {"error": "Hacker Mode analysis failed, please ret
 @router.post("/projects/{project_id}/hacker-lens")
 async def hacker_lens_report(project_id: str, current_user: dict = Depends(get_request_user)):
     # Independent adversarial AI review -- reuses the same stored project the
-    # normal SAGE pipeline already analyzed (one ZIP upload, one project_id).
+    # normal CODE MASTER AI pipeline already analyzed (one ZIP upload, one project_id).
     # Deliberately does NOT touch security_findings, RAG/knowledge retrieval,
     # or the deterministic analyzer -- failure here must never affect Normal
-    # SAGE, which is why this is its own try/except around its own call.
+    # CODE MASTER AI, which is why this is its own try/except around its own call.
     stage_start = time.monotonic()
     print(f"[stage] HACKER_START project_id={project_id}")
     try:
@@ -1028,6 +1029,33 @@ async def brutal_audit_report(project_id: str, current_user: dict = Depends(get_
     except Exception as exc:
         print(f"[projects] brutal-audit unhandled error: {exc}")
         return JSONResponse(status_code=500, content=_BRUTAL_AUDIT_ERROR_RESPONSE)
+
+
+_BLAST_RADIUS_ERROR_RESPONSE = {"error": "Blast Radius analysis failed, please retry"}
+
+
+@router.get("/projects/{project_id}/blast-radius")
+async def blast_radius_report(project_id: str, current_user: dict = Depends(get_request_user)):
+    # Static Python dependency-impact analysis. It reuses the same stored
+    # project_id, hydrates a bounded Python file selection inside the service,
+    # and does not query RAG or modify normal findings.
+    stage_start = time.monotonic()
+    print(f"[stage] BLAST_RADIUS_START project_id={project_id}")
+    try:
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+
+        report = await build_blast_radius(project)
+        print(
+            f"[stage] BLAST_RADIUS_COMPLETE project_id={project_id} components={report.get('summary', {}).get('components_analyzed', 0)} "
+            f"edges={len(report.get('edges', []))} ai_error={bool(report.get('ai', {}).get('error'))} "
+            f"duration_ms={round((time.monotonic() - stage_start) * 1000)}"
+        )
+        return report
+    except Exception as exc:
+        print(f"[projects] blast-radius unhandled error: {exc}")
+        return JSONResponse(status_code=500, content=_BLAST_RADIUS_ERROR_RESPONSE)
 
 
 _REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}

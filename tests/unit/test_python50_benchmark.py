@@ -5,7 +5,7 @@ SAGE_PYTHON_50_BENCHMARK_SUITE). Each has an app.py plus an
 EXPECTED_FINDINGS.json oracle -- the oracle is EVALUATION-ONLY and is
 never passed to the detector as source.
 
-SAGE is closed-world: it supports exactly 12 security families. The
+CODE MASTER AI is closed-world: it supports exactly 12 security families. The
 benchmark's 50 fixtures deliberately span a WIDER set of themes than
 that (reliability, performance, data-integrity, LLM-boundary, etc), so
 this suite measures two separate things:
@@ -31,7 +31,7 @@ from services.security_rules import to_closed_world_findings
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "python50"
 
-# Oracle theme -> the locked canonical family SAGE should report for it.
+# Oracle theme -> the locked canonical family CODE MASTER AI should report for it.
 # Only themes that genuinely belong to one of the 12 families appear here;
 # everything else is deliberately out of scope for the closed-world product.
 THEME_TO_CANONICAL = {
@@ -91,7 +91,7 @@ def test_fixture_corpus_is_present_and_substantial():
 def test_out_of_scope_fixtures_produce_no_closed_world_finding(fixture):
     """Closed-world silence: a fixture whose only real issue is outside the
     12 locked families must not produce a security finding. This is the
-    strictest closed-world guarantee -- reporting here would mean SAGE
+    strictest closed-world guarantee -- reporting here would mean CODE MASTER AI
     invented a security family for a non-security (or unsupported) issue."""
     findings = _security_findings(fixture["code"])
     assert findings == [], (

@@ -15,6 +15,7 @@ import ProjectChat from "./components/ProjectChat";
 import ArchitectureView from "./components/ArchitectureView";
 import HackerLens from "./components/HackerLens";
 import BrutalAudit from "./components/BrutalAudit";
+import BlastRadiusView from "./components/BlastRadiusView";
 import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
@@ -552,6 +553,11 @@ export default function App() {
           {/* View: Brutal Audit */}
           {activeTab === "brutal_audit" && (
             <BrutalAudit projectId={projectBundle?.project_id} project={projectBundle} />
+          )}
+
+          {/* View: Blast Radius */}
+          {activeTab === "blast_radius" && (
+            <BlastRadiusView projectId={projectBundle?.project_id} />
           )}
 
           {/* View: Review History */}

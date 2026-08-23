@@ -1,4 +1,4 @@
-# PIPELINE_MAP.md — SAGE / Code Master AI architecture map
+# PIPELINE_MAP.md — CODE MASTER AI architecture map
 
 HEAD at audit time: `9d969cf63834168b1bbf7aed9cc6eff73f327cfb` (branch `main`)
 

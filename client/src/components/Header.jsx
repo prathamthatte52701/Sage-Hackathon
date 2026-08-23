@@ -27,7 +27,7 @@ export default function Header({
       case "history":
         return "Review History & Logs";
       default:
-        return "Code Master AI Workspace";
+        return "CODE MASTER AI Workspace";
     }
   };
   const healthScore = getAuthoritativeScore(project?.score);

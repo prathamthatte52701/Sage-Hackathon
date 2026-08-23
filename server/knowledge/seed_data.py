@@ -1054,7 +1054,7 @@ def _detector_record(
         detection_hints=[detection_hint],
         fix_strategy=recommendation,
         production_impact="Use the detector evidence as the source of truth; this knowledge record explains why the observed pattern matters and how to fix it safely.",
-        standards=[{"name": "Code Master AI", "reference": f"detector:{rule_id}"}],
+        standards=[{"name": "CODE MASTER AI", "reference": f"detector:{rule_id}"}],
         source_urls=[],
         content=(
             f"Principle: {title}. Warning signal: {detection_hint}. "
@@ -1225,4 +1225,3 @@ KNOWLEDGE_RECORDS.extend(
         ),
     ]
 )
-

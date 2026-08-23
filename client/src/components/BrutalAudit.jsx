@@ -340,7 +340,7 @@ export default function BrutalAudit({ projectId, project }) {
 
           <p className="text-[10px] text-[#4B5565] pt-2 border-t border-[#232936]">
             Brutal Audit analyzed {report.files_analyzed?.length || 0} bounded source file(s). It uses Groq directly, no
-            RAG/vector retrieval, no second upload, and no changes to normal SAGE findings.
+            RAG/vector retrieval, no second upload, and no changes to normal CODE MASTER AI findings.
           </p>
         </div>
       )}

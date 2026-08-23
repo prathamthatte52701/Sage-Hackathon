@@ -1,6 +1,6 @@
 """Brutal Audit: strict production-readiness review for an uploaded repository.
 
-This is intentionally separate from normal SAGE findings, Hacker Mode, and RAG.
+This is intentionally separate from normal CODE MASTER AI findings, Hacker Mode, and RAG.
 It reuses the already-stored project, builds bounded factual repository context,
 calls Groq directly, validates evidence against real project files, and derives
 the final weighted score server-side.
@@ -345,13 +345,13 @@ async def build_audit_context(project: dict) -> tuple[str, list[str], BrutalAudi
 
 def build_brutal_audit_prompt(repo_context: str, included_files: list[str]) -> str:
     files_block = "\n".join(f"- {path}" for path in included_files) or "(no eligible source files)"
-    return f"""You are SAGE Brutal Audit: a strict senior/staff engineer judging production readiness.
+    return f"""You are CODE MASTER AI Brutal Audit: a strict senior/staff engineer judging production readiness.
 You MUST respond with ONLY valid JSON, no markdown fences, no preamble.
 
 Your job is to answer: how good is this codebase really, and is it production-ready?
 Be critical. Do not be generous just because code appears to work.
 
-You are NOT running SAGE normal analysis, NOT Hacker Mode, and NOT RAG. Use only
+You are NOT running CODE MASTER AI normal analysis, NOT Hacker Mode, and NOT RAG. Use only
 the factual repository context below as evidence. Do not repeat generic advice.
 
 EVIDENCE RULES:
