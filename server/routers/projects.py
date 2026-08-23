@@ -38,6 +38,7 @@ from services.automation import (
     request_stop as request_automation_stop,
     start_automation,
 )
+from services.commit_guard import get_commit_guard_status, start_commit_guard
 
 router = APIRouter()
 
@@ -1106,6 +1107,36 @@ async def stop_project_automation(project_id: str, current_user: dict = Depends(
     if project is None:
         return JSONResponse(status_code=404, content={"error": "Project not found"})
     return {"stopped": request_automation_stop(project_id)}
+
+
+_COMMIT_GUARD_ERROR_RESPONSE = {"error": "Could not start Commit Guard, please retry"}
+
+
+@router.post("/projects/{project_id}/commit-guard")
+async def start_commit_guard_endpoint(project_id: str, current_user: dict = Depends(get_request_user)):
+    # Read-only: never applies a patch, never touches source, never calls
+    # Fix All. Ownership + existence checked the same way every other
+    # project-scoped endpoint here does.
+    try:
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+        state = await start_commit_guard(project_id, current_user["_id"])
+        return JSONResponse(status_code=202, content={"job_id": state["job_id"], "status": state["status"]})
+    except Exception as exc:
+        print(f"[projects] commit-guard start error: {exc}")
+        return JSONResponse(status_code=500, content=_COMMIT_GUARD_ERROR_RESPONSE)
+
+
+@router.get("/projects/{project_id}/commit-guard/status")
+async def commit_guard_status_endpoint(project_id: str, current_user: dict = Depends(get_request_user)):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    state = get_commit_guard_status(project_id)
+    if state is None:
+        return JSONResponse(status_code=404, content={"error": "No Commit Guard run found for this project"})
+    return state
 
 
 _REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}

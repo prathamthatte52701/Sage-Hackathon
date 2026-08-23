@@ -521,6 +521,50 @@ async def get_user_by_id(user_id: str):
     return doc
 
 
+# Commit Guard reports are keyed by (project_id, base_sha, head_sha) --
+# immutable once written (a given commit pair's comparison never changes),
+# so this is a genuine cache: an identical request is a document lookup,
+# never a repeated Defender/blast/Groq run. Project isolation is enforced
+# the same way every other owned-document lookup in this file is: the
+# query always includes owner_user_id.
+async def create_commit_guard_run(project_id: str, owner_user_id: str, base_sha: str | None, head_sha: str, report: dict) -> str:
+    database = _require_db()
+    result = await database.commit_guard_runs.insert_one(
+        {
+            "project_id": project_id,
+            "owner_user_id": owner_user_id,
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "report": report,
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+    return str(result.inserted_id)
+
+
+async def get_owned_commit_guard_report(project_id: str, owner_user_id: str, base_sha: str | None, head_sha: str):
+    database = _require_db()
+    doc = await database.commit_guard_runs.find_one(
+        {"project_id": project_id, "owner_user_id": owner_user_id, "base_sha": base_sha, "head_sha": head_sha}
+    )
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def update_commit_guard_run(run_id: str, owner_user_id: str, updates: dict) -> None:
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(run_id)
+    except InvalidId:
+        return
+    await _require_db().commit_guard_runs.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates}
+    )
+
+
 async def ensure_indexes() -> None:
     """Called once at app startup. Safe to call repeatedly (create_index is
     idempotent on an unchanged spec)."""
@@ -530,3 +574,4 @@ async def ensure_indexes() -> None:
     await database.analysis_jobs.create_index([("owner_user_id", 1), ("project_id", 1), ("status", 1)])
     await database.fix_all_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])
     await database.automation_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])
+    await database.commit_guard_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("base_sha", 1), ("head_sha", 1)])
