@@ -448,6 +448,44 @@ async def get_owned_fix_all_run(project_id: str, owner_user_id: str):
     return doc
 
 
+async def create_automation_run(project_id: str, owner_user_id: str, state: dict) -> str:
+    database = _require_db()
+    doc = {
+        **copy.deepcopy(state),
+        "project_id": project_id,
+        "owner_user_id": owner_user_id,
+        "started_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+    result = await database.automation_runs.insert_one(doc)
+    return str(result.inserted_id)
+
+
+async def update_automation_run(run_id: str, owner_user_id: str, updates: dict) -> None:
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(run_id)
+    except InvalidId:
+        return
+    payload = {**copy.deepcopy(updates), "updated_at": datetime.now(timezone.utc)}
+    await _require_db().automation_runs.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id}, {"$set": payload}
+    )
+
+
+async def get_owned_automation_run(project_id: str, owner_user_id: str):
+    database = _require_db()
+    doc = await database.automation_runs.find_one(
+        {"project_id": project_id, "owner_user_id": owner_user_id},
+        sort=[("started_at", -1)],
+    )
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
 async def create_user(email: str, password_hash: str) -> str:
     """Raises pymongo.errors.DuplicateKeyError if the unique email index rejects it."""
     database = _require_db()
@@ -491,3 +529,4 @@ async def ensure_indexes() -> None:
     await database.projects.create_index("owner_user_id")
     await database.analysis_jobs.create_index([("owner_user_id", 1), ("project_id", 1), ("status", 1)])
     await database.fix_all_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])
+    await database.automation_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])

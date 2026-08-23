@@ -16,6 +16,7 @@ import ArchitectureView from "./components/ArchitectureView";
 import HackerLens from "./components/HackerLens";
 import BrutalAudit from "./components/BrutalAudit";
 import BlastRadiusView from "./components/BlastRadiusView";
+import AutomationWorkspace from "./components/AutomationWorkspace";
 import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
@@ -32,7 +33,13 @@ import {
   reanalyzeProject,
   getHistory,
   getProject,
+  startAutomation,
+  getAutomationStatus,
+  stopAutomation,
 } from "./api/client";
+
+const ACTIVE_PROJECT_KEY = "code_master_ai_active_project_id";
+const TERMINAL_AUTOMATION = new Set(["completed", "completed_with_warnings", "paused", "failed", "stopped"]);
 
 export default function App() {
   const sessionId = useSessionId();
@@ -46,6 +53,11 @@ export default function App() {
   const [projectBundle, setProjectBundle] = useState(null); // { id, project, score, sourceType }
   const [scanStage, setScanStage] = useState(null); // null | "reading" | "analyzing" | "scoring" | "done"
   const [scanError, setScanError] = useState(null);
+  const [automationStatus, setAutomationStatus] = useState(null);
+  const [automationMinimized, setAutomationMinimized] = useState(false);
+  const [stoppingAutomation, setStoppingAutomation] = useState(false);
+  const [automationRefreshedKey, setAutomationRefreshedKey] = useState(null);
+  const [newProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
 
   // Toast Notification State
   const [toast, setToast] = useState(null); // { type: "error"|"success"|"info", title, message }
@@ -87,6 +99,88 @@ export default function App() {
     refreshHistory();
   }, [refreshHistory]);
 
+  const refreshActiveProject = useCallback(async (projectId) => {
+    if (!projectId) return;
+    const fresh = await getProject(projectId);
+    let scored = null;
+    try {
+      scored = await scoreProject(projectId);
+    } catch {
+      scored = null;
+    }
+    setProjectBundle((prev) => ({
+      ...prev,
+      id: projectId,
+      project_id: projectId,
+      name: fresh.project?.name || fresh.name || prev?.name || "Imported Project",
+      project: fresh.project || fresh,
+      files: fresh.files || [],
+      findings: fresh.findings || [],
+      score: scored || prev?.score || null,
+    }));
+  }, []);
+
+  useEffect(() => {
+    const projectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
+    if (!projectId || projectBundle) return;
+    refreshActiveProject(projectId).catch(() => {
+      localStorage.removeItem(ACTIVE_PROJECT_KEY);
+    });
+  }, [projectBundle, refreshActiveProject]);
+
+  useEffect(() => {
+    const projectId = projectBundle?.project_id;
+    if (!projectId) return undefined;
+    let cancelled = false;
+    let timer = null;
+
+    async function poll() {
+      try {
+        const status = await getAutomationStatus(projectId);
+        if (cancelled) return;
+        setAutomationStatus(status);
+        if (TERMINAL_AUTOMATION.has(status.status)) {
+          const key = status.job_id || status.run_id || `${projectId}:${status.status}`;
+          if (automationRefreshedKey !== key) {
+            setAutomationRefreshedKey(key);
+            refreshActiveProject(projectId).catch(() => {});
+          }
+          return;
+        }
+      } catch {
+        if (!cancelled && automationStatus?.status && !TERMINAL_AUTOMATION.has(automationStatus.status)) {
+          setToast({
+            type: "error",
+            title: "Automation Status Unavailable",
+            message: "Could not refresh automation progress.",
+          });
+        }
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 2000);
+    }
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [projectBundle?.project_id, automationRefreshedKey, refreshActiveProject]);
+
+  useEffect(() => {
+    const hasActiveWork =
+      applyingFix ||
+      reanalyzing ||
+      (automationStatus?.status && !TERMINAL_AUTOMATION.has(automationStatus.status));
+    if (!hasActiveWork) return undefined;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = "Analysis is still running. Leaving this page may interrupt the current view.";
+      return event.returnValue;
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [applyingFix, reanalyzing, automationStatus?.status]);
+
   // Project Import Handler
   const handleProjectUploaded = async (uploadData) => {
     const projId = uploadData.project_id || uploadData.id;
@@ -96,43 +190,68 @@ export default function App() {
     setScanStage("reading");
 
     try {
-      setScanStage("analyzing");
-      const analyzed = await analyzeProject(projId);
-
-      setScanStage("scoring");
-      const scored = await scoreProject(projId);
-
+      localStorage.setItem(ACTIVE_PROJECT_KEY, projId);
       setProjectBundle({
         id: projId,
         project_id: projId,
         name: uploadData.name || uploadData.repo_name || "Imported Project",
-        project: analyzed.project || analyzed,
-        files: analyzed.files || [],
-        findings: analyzed.findings || [],
-        score: scored,
+        project: uploadData.project?.project || uploadData.project || {},
+        files: uploadData.project?.files || [],
+        findings: [],
+        score: null,
       });
 
-      if (analyzed.findings && analyzed.findings.length > 0) {
-        setSelectedFinding(analyzed.findings[0]);
-      }
-
+      setScanStage("analyzing");
+      const automation = await startAutomation(projId);
+      setAutomationStatus(automation);
+      setAutomationMinimized(false);
       setScanStage("done");
       setActiveTab("overview");
       refreshHistory();
       setToast({
         type: "success",
-        title: "Project Analysis Complete",
-        message: `Successfully analyzed repository with ${analyzed.findings?.length || 0} findings.`,
+        title: "Automation Started",
+        message: "CODE MASTER AI is hardening and analyzing the repository.",
       });
     } catch (err) {
-      setScanError(err.message || "Analysis failed.");
+      setScanError(err.message || "Automation failed to start.");
       setScanStage(null);
       setToast({
         type: "error",
-        title: "Analysis Failed",
-        message: err.message || "Could not analyze the repository.",
+        title: "Automation Failed",
+        message: err.message || "Could not start the automated workflow.",
       });
     }
+  };
+
+  const requestNewProject = () => {
+    if (projectBundle) {
+      setNewProjectConfirmOpen(true);
+      return;
+    }
+    setActiveTab("projects");
+  };
+
+  const confirmNewProject = () => {
+    localStorage.removeItem(ACTIVE_PROJECT_KEY);
+    setProjectBundle(null);
+    setSelectedFinding(null);
+    setAutomationStatus(null);
+    setAutomationMinimized(false);
+    setReanalysisResult(null);
+    setActiveFixData(null);
+    setScanStage(null);
+    setScanError(null);
+    setNewProjectConfirmOpen(false);
+    setActiveTab("projects");
+  };
+
+  const handleNavigation = (tab) => {
+    if (tab === "projects" && projectBundle) {
+      requestNewProject();
+      return;
+    }
+    setActiveTab(tab);
   };
 
   // Reanalyze Active Project
@@ -370,7 +489,7 @@ export default function App() {
       <Sidebar
         activeTab={activeTab}
         setActiveTab={(tab) => {
-          setActiveTab(tab);
+          handleNavigation(tab);
           setMobileSidebarOpen(false);
         }}
         project={projectBundle}
@@ -581,6 +700,67 @@ export default function App() {
 
       {/* Toast Notification Banner */}
       <ToastNotification toast={toast} onClose={() => setToast(null)} />
+
+      {automationStatus && projectBundle?.project_id && (
+        <AutomationWorkspace
+          status={automationStatus}
+          projectId={projectBundle.project_id}
+          minimized={automationMinimized}
+          onMinimize={() => setAutomationMinimized(true)}
+          onRestore={() => setAutomationMinimized(false)}
+          stopping={stoppingAutomation}
+          onStop={async () => {
+            if (!projectBundle?.project_id || stoppingAutomation) return;
+            setStoppingAutomation(true);
+            try {
+              await stopAutomation(projectBundle.project_id);
+              const status = await getAutomationStatus(projectBundle.project_id);
+              setAutomationStatus(status);
+              setToast({
+                type: "info",
+                title: "Automation Stop Requested",
+                message: "Automation will stop at the next safe boundary.",
+              });
+            } catch (err) {
+              setToast({
+                type: "error",
+                title: "Stop Failed",
+                message: err.message || "Could not stop automation.",
+              });
+            } finally {
+              setStoppingAutomation(false);
+            }
+          }}
+          onOpenReport={() => {
+            setAutomationMinimized(true);
+            setActiveTab("overview");
+          }}
+        />
+      )}
+
+      {newProjectConfirmOpen && (
+        <div className="fixed inset-0 z-[60] bg-[#090B10]/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl border border-[#232936] bg-[#10131A] p-6 shadow-2xl space-y-5">
+            <div>
+              <h2 className="text-lg font-extrabold text-[#F4F7FB]">START A NEW PROJECT?</h2>
+              <p className="mt-2 text-sm text-[#9AA4B2] leading-relaxed">
+                Your current repository session contains analysis, fixes and generated reports. Starting a new project will leave this workspace and switch CODE MASTER AI to a new repository.
+              </p>
+              <p className="mt-3 text-xs text-[#F4C95D]">
+                Make sure you have downloaded any hardened source or reports you want to keep.
+              </p>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setNewProjectConfirmOpen(false)} className="cm-btn-secondary text-xs">
+                Cancel
+              </button>
+              <button type="button" onClick={confirmNewProject} className="cm-btn-primary text-xs">
+                Start New Project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reanalysis Confirmation Banner */}
       {reanalysisResult && (

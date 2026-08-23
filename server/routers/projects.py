@@ -32,6 +32,12 @@ from services.security_rules import to_closed_world_findings
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
 from services.analysis_jobs import enqueue_analysis, get_analysis_job_with_recovery
+from services.automation import (
+    get_automation_status,
+    is_automation_running,
+    request_stop as request_automation_stop,
+    start_automation,
+)
 
 router = APIRouter()
 
@@ -699,6 +705,8 @@ async def analyze_project_by_id(project_id: str, current_user: dict = Depends(ge
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if is_automation_running(project_id):
+            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before starting manual analysis."})
         job, created = await enqueue_analysis(
             project_id,
             current_user["_id"],
@@ -1058,6 +1066,42 @@ async def blast_radius_report(project_id: str, current_user: dict = Depends(get_
         return JSONResponse(status_code=500, content=_BLAST_RADIUS_ERROR_RESPONSE)
 
 
+_AUTOMATION_ERROR_RESPONSE = {"error": "Could not start automation, please retry"}
+
+
+@router.post("/projects/{project_id}/automation")
+async def start_project_automation(project_id: str, current_user: dict = Depends(get_request_user)):
+    try:
+        state = await start_automation(project_id, current_user["_id"])
+        return JSONResponse(status_code=202, content=state)
+    except LookupError:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+    except Exception as exc:
+        print(f"[projects] automation start error: {exc}")
+        return JSONResponse(status_code=500, content=_AUTOMATION_ERROR_RESPONSE)
+
+
+@router.get("/projects/{project_id}/automation/status")
+async def project_automation_status(project_id: str, current_user: dict = Depends(get_request_user)):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    state = await get_automation_status(project_id, current_user["_id"])
+    if state is None:
+        return JSONResponse(status_code=404, content={"error": "No automation run found for this project"})
+    return state
+
+
+@router.post("/projects/{project_id}/automation/stop")
+async def stop_project_automation(project_id: str, current_user: dict = Depends(get_request_user)):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    return {"stopped": request_automation_stop(project_id)}
+
+
 _REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}
 
 _DERIVED_FIELDS = (
@@ -1100,6 +1144,8 @@ async def reanalyze_project(
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if is_automation_running(project_id):
+            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before reanalyzing manually."})
         job, created = await enqueue_analysis(
             project_id,
             current_user["_id"],
@@ -1135,6 +1181,8 @@ async def apply_project_fix(
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if is_automation_running(project_id):
+            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before applying manual fixes."})
         if is_fix_all_running(project_id):
             return JSONResponse(status_code=409, content={"error": "Fix All is currently running for this project. Wait for it to finish before making manual changes."})
         findings = project.get("findings", [])
@@ -1222,6 +1270,8 @@ async def start_fix_all_endpoint(project_id: str, current_user: dict = Depends(g
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if is_automation_running(project_id):
+            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Fix All is already controlled by the automation workflow."})
         if is_fix_all_running(project_id):
             existing = get_fix_all_status(project_id)
             return JSONResponse(

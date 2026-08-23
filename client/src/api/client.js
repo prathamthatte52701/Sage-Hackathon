@@ -287,4 +287,31 @@ export async function getBlastRadius(projectId) {
   }
 }
 
+export async function startAutomation(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/automation`, {}, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not start automation."));
+  }
+}
+
+export async function getAutomationStatus(projectId) {
+  try {
+    const res = await api.get(`/api/projects/${projectId}/automation/status`, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load automation status."));
+  }
+}
+
+export async function stopAutomation(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/automation/stop`, {}, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not stop automation."));
+  }
+}
+
 export default api;
