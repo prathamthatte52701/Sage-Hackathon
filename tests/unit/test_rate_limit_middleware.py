@@ -29,10 +29,14 @@ def test_analysis_job_polling_is_exempt_from_rate_limit():
     assert all(status == 200 for status in statuses)
 
 
-def test_automation_status_polling_is_exempt_from_rate_limit():
+def test_automation_status_polling_is_not_exempt_in_v1():
+    # V2_AUTOMATION_DISABLED:
+    # Automation is intentionally excluded from CODE MASTER AI V1.
+    # Preserve this code for the V2 automation workflow.
     rate_limit_module._buckets.clear()
     statuses = _hit("/api/projects/project-1/automation/status", "10.0.0.3", 60)
-    assert all(status == 200 for status in statuses)
+    assert 429 in statuses
+    assert statuses[:30] == [200] * 30
 
 
 def test_commit_guard_status_polling_is_exempt_from_rate_limit():

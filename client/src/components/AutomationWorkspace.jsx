@@ -1,4 +1,7 @@
 import React from "react";
+// V2_AUTOMATION_DISABLED:
+// Automation is intentionally excluded from CODE MASTER AI V1.
+// Preserve this code for the V2 automation workflow.
 import {
   AlertTriangle,
   Bomb,

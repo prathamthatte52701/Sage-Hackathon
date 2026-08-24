@@ -5,6 +5,10 @@ Brutal Audit, or Blast Radius logic. It coordinates the existing services and
 keeps a small server-side run state so refreshes can recover the current stage.
 """
 
+# V2_AUTOMATION_DISABLED:
+# Automation is intentionally excluded from CODE MASTER AI V1.
+# Preserve this code for the V2 automation workflow.
+
 import asyncio
 import copy
 import time

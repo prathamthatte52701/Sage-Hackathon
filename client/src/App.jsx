@@ -16,7 +16,10 @@ import ArchitectureView from "./components/ArchitectureView";
 import HackerLens from "./components/HackerLens";
 import BrutalAudit from "./components/BrutalAudit";
 import BlastRadiusView from "./components/BlastRadiusView";
-import AutomationWorkspace from "./components/AutomationWorkspace";
+// V2_AUTOMATION_DISABLED:
+// Automation is intentionally excluded from CODE MASTER AI V1.
+// Preserve this code for the V2 automation workflow.
+// import AutomationWorkspace from "./components/AutomationWorkspace";
 import GuardWorkspace from "./components/GuardWorkspace";
 import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
@@ -34,13 +37,13 @@ import {
   reanalyzeProject,
   getHistory,
   getProject,
-  startAutomation,
-  getAutomationStatus,
-  stopAutomation,
 } from "./api/client";
 
 const ACTIVE_PROJECT_KEY = "code_master_ai_active_project_id";
-const TERMINAL_AUTOMATION = new Set(["complete", "paused", "failed", "stopped"]);
+// V2_AUTOMATION_DISABLED:
+// Automation is intentionally excluded from CODE MASTER AI V1.
+// Preserve this code for the V2 automation workflow.
+// const TERMINAL_AUTOMATION = new Set(["complete", "paused", "failed", "stopped"]);
 
 export default function App() {
   const sessionId = useSessionId();
@@ -54,10 +57,13 @@ export default function App() {
   const [projectBundle, setProjectBundle] = useState(null); // { id, project, score, sourceType }
   const [scanStage, setScanStage] = useState(null); // null | "reading" | "analyzing" | "scoring" | "done"
   const [scanError, setScanError] = useState(null);
-  const [automationStatus, setAutomationStatus] = useState(null);
-  const [automationMinimized, setAutomationMinimized] = useState(false);
-  const [stoppingAutomation, setStoppingAutomation] = useState(false);
-  const [automationRefreshedKey, setAutomationRefreshedKey] = useState(null);
+  // V2_AUTOMATION_DISABLED:
+  // Automation is intentionally excluded from CODE MASTER AI V1.
+  // Preserve this code for the V2 automation workflow.
+  // const [automationStatus, setAutomationStatus] = useState(null);
+  // const [automationMinimized, setAutomationMinimized] = useState(false);
+  // const [stoppingAutomation, setStoppingAutomation] = useState(false);
+  // const [automationRefreshedKey, setAutomationRefreshedKey] = useState(null);
   const [newProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
 
   // Toast Notification State
@@ -133,53 +139,13 @@ export default function App() {
     });
   }, [projectBundle, refreshActiveProject]);
 
-  useEffect(() => {
-    const projectId = projectBundle?.project_id;
-    if (!projectId) return undefined;
-    let cancelled = false;
-    let timer = null;
-
-    async function poll() {
-      try {
-        const status = await getAutomationStatus(projectId, { allowMissing: true });
-        if (cancelled) return;
-        if (!status) {
-          setAutomationStatus(null);
-          return;
-        }
-        setAutomationStatus(status);
-        if (TERMINAL_AUTOMATION.has(status.status)) {
-          const key = status.job_id || status.run_id || `${projectId}:${status.status}`;
-          if (automationRefreshedKey !== key) {
-            setAutomationRefreshedKey(key);
-            refreshActiveProject(projectId).catch(() => {});
-          }
-          return;
-        }
-      } catch {
-        if (!cancelled) {
-          setToast({
-            type: "error",
-            title: "Automation Status Unavailable",
-            message: "Could not refresh automation progress.",
-          });
-        }
-      }
-      if (!cancelled) timer = window.setTimeout(poll, 2000);
-    }
-
-    poll();
-    return () => {
-      cancelled = true;
-      if (timer) window.clearTimeout(timer);
-    };
-  }, [projectBundle?.project_id, automationRefreshedKey, refreshActiveProject]);
+  // V2_AUTOMATION_DISABLED:
+  // Automation is intentionally excluded from CODE MASTER AI V1.
+  // Preserve this code for the V2 automation workflow.
+  // Automation status polling is disabled in V1 runtime.
 
   useEffect(() => {
-    const hasActiveWork =
-      applyingFix ||
-      reanalyzing ||
-      (automationStatus?.status && !TERMINAL_AUTOMATION.has(automationStatus.status));
+    const hasActiveWork = applyingFix || reanalyzing;
     if (!hasActiveWork) return undefined;
     const warn = (event) => {
       event.preventDefault();
@@ -188,7 +154,7 @@ export default function App() {
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [applyingFix, reanalyzing, automationStatus?.status]);
+  }, [applyingFix, reanalyzing]);
 
   // Project Import Handler
   const handleProjectUploaded = async (uploadData) => {
@@ -211,24 +177,41 @@ export default function App() {
       });
 
       setScanStage("analyzing");
-      const automation = await startAutomation(projId);
-      setAutomationStatus(automation);
-      setAutomationMinimized(false);
+      const analyzed = await analyzeProject(projId);
+      setProjectBundle((prev) => ({
+        ...prev,
+        project: analyzed.project || analyzed,
+        files: analyzed.files || prev.files,
+        findings: analyzed.findings || [],
+      }));
+      setScanStage("scoring");
+      let scored = null;
+      try {
+        scored = await scoreProject(projId);
+      } catch {
+        scored = null;
+      }
+      if (scored) {
+        setProjectBundle((prev) => ({
+          ...prev,
+          score: scored,
+        }));
+      }
       setScanStage("done");
       setActiveTab("overview");
       refreshHistory();
       setToast({
         type: "success",
-        title: "Automation Started",
-        message: "CODE MASTER AI is hardening and analyzing the repository.",
+        title: "Defender Complete",
+        message: "Project analysis finished. Review the overview and findings.",
       });
     } catch (err) {
-      setScanError(err.message || "Automation failed to start.");
+      setScanError(err.message || "Project analysis failed.");
       setScanStage(null);
       setToast({
         type: "error",
-        title: "Automation Failed",
-        message: err.message || "Could not start the automated workflow.",
+        title: "Analysis Failed",
+        message: err.message || "Could not analyze the project.",
       });
     }
   };
@@ -245,8 +228,11 @@ export default function App() {
     localStorage.removeItem(ACTIVE_PROJECT_KEY);
     setProjectBundle(null);
     setSelectedFinding(null);
-    setAutomationStatus(null);
-    setAutomationMinimized(false);
+    // V2_AUTOMATION_DISABLED:
+    // Automation is intentionally excluded from CODE MASTER AI V1.
+    // Preserve this code for the V2 automation workflow.
+    // setAutomationStatus(null);
+    // setAutomationMinimized(false);
     setReanalysisResult(null);
     setActiveFixData(null);
     setScanStage(null);
@@ -726,42 +712,10 @@ export default function App() {
       {/* Toast Notification Banner */}
       <ToastNotification toast={toast} onClose={() => setToast(null)} />
 
-      {automationStatus && projectBundle?.project_id && (
-        <AutomationWorkspace
-          status={automationStatus}
-          projectId={projectBundle.project_id}
-          minimized={automationMinimized}
-          onMinimize={() => setAutomationMinimized(true)}
-          onRestore={() => setAutomationMinimized(false)}
-          stopping={stoppingAutomation}
-          onStop={async () => {
-            if (!projectBundle?.project_id || stoppingAutomation) return;
-            setStoppingAutomation(true);
-            try {
-              await stopAutomation(projectBundle.project_id);
-              const status = await getAutomationStatus(projectBundle.project_id);
-              setAutomationStatus(status);
-              setToast({
-                type: "info",
-                title: "Automation Stop Requested",
-                message: "Automation will stop at the next safe boundary.",
-              });
-            } catch (err) {
-              setToast({
-                type: "error",
-                title: "Stop Failed",
-                message: err.message || "Could not stop automation.",
-              });
-            } finally {
-              setStoppingAutomation(false);
-            }
-          }}
-          onOpenReport={() => {
-            setAutomationMinimized(true);
-            setActiveTab("overview");
-          }}
-        />
-      )}
+      {/* V2_AUTOMATION_DISABLED:
+          Automation is intentionally excluded from CODE MASTER AI V1.
+          Preserve this code for the V2 automation workflow.
+          The AutomationWorkspace runtime widget is not mounted in V1. */}
 
       {newProjectConfirmOpen && (
         <div className="fixed inset-0 z-[60] bg-[#090B10]/80 backdrop-blur-sm flex items-center justify-center p-4">

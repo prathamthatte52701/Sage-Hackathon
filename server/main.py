@@ -66,7 +66,14 @@ _AUTH_WINDOW_SECONDS = 60
 _RATE_LIMIT_EXEMPT_PREFIXES = ("/api/analysis-jobs/",)
 # Same reasoning, same fix, for Fix All's own progress poll -- the project_id
 # is embedded mid-path so this is a suffix check instead of a prefix one.
-_RATE_LIMIT_EXEMPT_SUFFIXES = ("/fix-all/status", "/automation/status", "/commit-guard/status")
+_RATE_LIMIT_EXEMPT_SUFFIXES = (
+    "/fix-all/status",
+    # V2_AUTOMATION_DISABLED:
+    # Automation is intentionally excluded from CODE MASTER AI V1.
+    # Preserve this code for the V2 automation workflow.
+    # "/automation/status",
+    "/commit-guard/status",
+)
 
 
 def _is_rate_limit_exempt_status_path(path: str) -> bool:

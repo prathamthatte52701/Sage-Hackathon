@@ -33,12 +33,15 @@ from services.security_rules import to_closed_world_findings
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
 from services.analysis_jobs import enqueue_analysis, get_analysis_job_with_recovery
-from services.automation import (
-    get_automation_status,
-    is_automation_running,
-    request_stop as request_automation_stop,
-    start_automation,
-)
+# V2_AUTOMATION_DISABLED:
+# Automation is intentionally excluded from CODE MASTER AI V1.
+# Preserve this code for the V2 automation workflow.
+# from services.automation import (
+#     get_automation_status,
+#     is_automation_running,
+#     request_stop as request_automation_stop,
+#     start_automation,
+# )
 from services.commit_guard import get_commit_guard_status, start_commit_guard
 from services.pr_guard import get_pr_guard_status, start_pr_guard
 
@@ -718,8 +721,11 @@ async def analyze_project_by_id(project_id: str, current_user: dict = Depends(ge
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
-        if is_automation_running(project_id):
-            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before starting manual analysis."})
+        # V2_AUTOMATION_DISABLED:
+        # Automation is intentionally excluded from CODE MASTER AI V1.
+        # Preserve this code for the V2 automation workflow.
+        # if is_automation_running(project_id):
+        #     return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before starting manual analysis."})
         job, created = await enqueue_analysis(
             project_id,
             current_user["_id"],
@@ -1082,8 +1088,13 @@ async def blast_radius_report(project_id: str, current_user: dict = Depends(get_
 _AUTOMATION_ERROR_RESPONSE = {"error": "Could not start automation, please retry"}
 
 
-@router.post("/projects/{project_id}/automation")
+# V2_AUTOMATION_DISABLED:
+# Automation is intentionally excluded from CODE MASTER AI V1.
+# Preserve this code for the V2 automation workflow.
+# @router.post("/projects/{project_id}/automation")
 async def start_project_automation(project_id: str, current_user: dict = Depends(get_request_user)):
+    from services.automation import start_automation
+
     try:
         state = await start_automation(project_id, current_user["_id"])
         return JSONResponse(status_code=202, content=state)
@@ -1096,8 +1107,13 @@ async def start_project_automation(project_id: str, current_user: dict = Depends
         return JSONResponse(status_code=500, content=_AUTOMATION_ERROR_RESPONSE)
 
 
-@router.get("/projects/{project_id}/automation/status")
+# V2_AUTOMATION_DISABLED:
+# Automation is intentionally excluded from CODE MASTER AI V1.
+# Preserve this code for the V2 automation workflow.
+# @router.get("/projects/{project_id}/automation/status")
 async def project_automation_status(project_id: str, current_user: dict = Depends(get_request_user)):
+    from services.automation import get_automation_status
+
     project = await get_owned_project_metadata(project_id, current_user["_id"])
     if project is None:
         return JSONResponse(status_code=404, content={"error": "Project not found"})
@@ -1107,8 +1123,13 @@ async def project_automation_status(project_id: str, current_user: dict = Depend
     return state
 
 
-@router.post("/projects/{project_id}/automation/stop")
+# V2_AUTOMATION_DISABLED:
+# Automation is intentionally excluded from CODE MASTER AI V1.
+# Preserve this code for the V2 automation workflow.
+# @router.post("/projects/{project_id}/automation/stop")
 async def stop_project_automation(project_id: str, current_user: dict = Depends(get_request_user)):
+    from services.automation import request_stop as request_automation_stop
+
     project = await get_owned_project_metadata(project_id, current_user["_id"])
     if project is None:
         return JSONResponse(status_code=404, content={"error": "Project not found"})
@@ -1235,8 +1256,11 @@ async def reanalyze_project(
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
-        if is_automation_running(project_id):
-            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before reanalyzing manually."})
+        # V2_AUTOMATION_DISABLED:
+        # Automation is intentionally excluded from CODE MASTER AI V1.
+        # Preserve this code for the V2 automation workflow.
+        # if is_automation_running(project_id):
+        #     return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before reanalyzing manually."})
         job, created = await enqueue_analysis(
             project_id,
             current_user["_id"],
@@ -1272,8 +1296,11 @@ async def apply_project_fix(
         project = await get_owned_project(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
-        if is_automation_running(project_id):
-            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before applying manual fixes."})
+        # V2_AUTOMATION_DISABLED:
+        # Automation is intentionally excluded from CODE MASTER AI V1.
+        # Preserve this code for the V2 automation workflow.
+        # if is_automation_running(project_id):
+        #     return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before applying manual fixes."})
         if is_fix_all_running(project_id):
             return JSONResponse(status_code=409, content={"error": "Fix All is currently running for this project. Wait for it to finish before making manual changes."})
         findings = project.get("findings", [])
@@ -1368,8 +1395,11 @@ async def start_fix_all_endpoint(project_id: str, current_user: dict = Depends(g
         project = await get_owned_project_metadata(project_id, current_user["_id"])
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
-        if is_automation_running(project_id):
-            return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Fix All is already controlled by the automation workflow."})
+        # V2_AUTOMATION_DISABLED:
+        # Automation is intentionally excluded from CODE MASTER AI V1.
+        # Preserve this code for the V2 automation workflow.
+        # if is_automation_running(project_id):
+        #     return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Fix All is already controlled by the automation workflow."})
         if is_fix_all_running(project_id):
             existing = get_fix_all_status(project_id)
             return JSONResponse(
