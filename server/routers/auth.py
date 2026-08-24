@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Cookie, Depends, Response
+from fastapi import APIRouter, Cookie, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from pymongo.errors import DuplicateKeyError
 
@@ -22,7 +22,10 @@ from services.auth import (
     create_verification_token,
     get_current_user,
     hash_password,
+    list_active_sessions,
     normalize_email,
+    revoke_all_sessions_for_user,
+    revoke_session,
     revoke_session_for_token,
     validate_password_strength,
     verify_password,
@@ -66,8 +69,60 @@ def _clear_session_cookie(response: Response) -> None:
     response.delete_cookie(COOKIE_NAME, path="/")
 
 
+def _extract_device_metadata(request: Request) -> dict:
+    """Extract safe device metadata from request for session record."""
+    user_agent = request.headers.get("user-agent", "")
+    # Derive a simple label from user agent (display only, not for auth)
+    device_label = "Unknown device"
+    if "Mobile" in user_agent or "Android" in user_agent or "iPhone" in user_agent:
+        if "Chrome" in user_agent:
+            device_label = "Chrome on Mobile"
+        elif "Safari" in user_agent:
+            device_label = "Safari on Mobile"
+        elif "Firefox" in user_agent:
+            device_label = "Firefox on Mobile"
+        else:
+            device_label = "Mobile Browser"
+    elif "Windows" in user_agent:
+        if "Chrome" in user_agent:
+            device_label = "Chrome on Windows"
+        elif "Firefox" in user_agent:
+            device_label = "Firefox on Windows"
+        elif "Edg" in user_agent:
+            device_label = "Edge on Windows"
+        else:
+            device_label = "Windows Browser"
+    elif "Macintosh" in user_agent or "macOS" in user_agent:
+        if "Chrome" in user_agent:
+            device_label = "Chrome on macOS"
+        elif "Safari" in user_agent:
+            device_label = "Safari on macOS"
+        elif "Firefox" in user_agent:
+            device_label = "Firefox on macOS"
+        else:
+            device_label = "macOS Browser"
+    elif "Linux" in user_agent:
+        if "Chrome" in user_agent:
+            device_label = "Chrome on Linux"
+        elif "Firefox" in user_agent:
+            device_label = "Firefox on Linux"
+        else:
+            device_label = "Linux Browser"
+
+    # Hash IP for minimal metadata (privacy-preserving)
+    from hashlib import sha256
+    client_ip = request.client.host if request.client else "unknown"
+    ip_hash = sha256(client_ip.encode()).hexdigest()[:16]
+
+    return {
+        "device_label": device_label,
+        "user_agent_summary": user_agent[:200],  # Truncate for storage
+        "created_ip_hash": ip_hash,
+    }
+
+
 @router.post("/auth/signup", response_model=UserOut)
-async def signup(payload: SignupRequest, response: Response):
+async def signup(payload: SignupRequest, response: Response, request: Request = None):
     try:
         email_normalized = normalize_email(payload.email)
         validate_password_strength(payload.password)
@@ -101,14 +156,15 @@ async def signup(payload: SignupRequest, response: Response):
 
     # Auto-establish a session so the new user lands in the app immediately;
     # the UI shows a verify-your-email notice until verified.
-    token = await create_session(user_id)
+    metadata = _extract_device_metadata(request) if request else None
+    token = await create_session(user_id, metadata)
     _set_session_cookie(response, token)
     user = await get_user_by_email(email_normalized)
     return _user_out(user)
 
 
 @router.post("/auth/login", response_model=UserOut)
-async def login(payload: LoginRequest, response: Response):
+async def login(payload: LoginRequest, response: Response, request: Request = None):
     try:
         email_normalized = normalize_email(payload.email)
     except AuthError:
@@ -123,7 +179,8 @@ async def login(payload: LoginRequest, response: Response):
     if user.get("status") != "active":
         return JSONResponse(status_code=401, content=_GENERIC_AUTH_ERROR)
 
-    token = await create_session(user["_id"])
+    metadata = _extract_device_metadata(request) if request else None
+    token = await create_session(user["_id"], metadata)
     _set_session_cookie(response, token)
     return _user_out(user)
 
@@ -135,6 +192,67 @@ async def logout(response: Response, session_token: str | None = Cookie(default=
     await revoke_session_for_token(session_token)
     _clear_session_cookie(response)
     return {"status": "ok"}
+
+
+@router.get("/auth/sessions")
+async def list_sessions(
+    current_user: dict = Depends(get_current_user),
+    session_token: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """List all active sessions for the current user with current session indicator."""
+    sessions = await list_active_sessions(current_user["_id"])
+    current_token_hash = None
+    if session_token:
+        from services.auth import _hash_token
+
+        current_token_hash = _hash_token(session_token)
+
+    # Mark current session
+    for s in sessions:
+        s["is_current"] = s.get("session_id") == current_token_hash
+
+    return {"sessions": sessions}
+
+
+@router.delete("/auth/sessions/{session_id}")
+async def revoke_session_endpoint(
+    session_id: str,
+    response: Response,
+    current_user: dict = Depends(get_current_user),
+    session_token: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Revoke a specific session by ID. If it's the current session, also logout."""
+    user_id = current_user["_id"]
+
+    # Check if this is the current session
+    from services.auth import _hash_token
+
+    current_token_hash = _hash_token(session_token) if session_token else None
+    is_current = current_token_hash == session_id
+
+    success = await revoke_session(session_id, user_id)
+
+    if not success:
+        # Session not found or not owned - return generic success to avoid enumeration
+        return {"status": "ok"}
+
+    if is_current:
+        # Current session was revoked - clear cookie
+        _clear_session_cookie(response)
+
+    return {"status": "ok", "revoked_current": is_current}
+
+
+@router.post("/auth/logout-all")
+async def logout_all(
+    response: Response,
+    current_user: dict = Depends(get_current_user),
+):
+    """Revoke all sessions for the current user and clear cookie."""
+    user_id = current_user["_id"]
+    count = await revoke_all_sessions_for_user(user_id)
+    _clear_session_cookie(response)
+    return {"status": "ok", "revoked_count": count}
 
 
 @router.post("/auth/verify-email")

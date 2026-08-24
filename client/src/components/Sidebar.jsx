@@ -17,6 +17,7 @@ import {
   Bomb,
   GitCommit,
   GitPullRequest,
+  Monitor,
 } from "lucide-react";
 import { getAuthoritativeScore } from "../utils/postFixResult";
 import { getSecurityFindings } from "../utils/securityFindings";
@@ -106,6 +107,11 @@ export default function Sidebar({
       id: "history",
       label: "History",
       icon: History,
+    },
+    {
+      id: "sessions",
+      label: "Sessions",
+      icon: Monitor,
     },
   ];
 

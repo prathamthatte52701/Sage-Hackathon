@@ -6,6 +6,9 @@ import api, {
   resendVerification as apiResendVerification,
   signup as apiSignup,
   verifyEmail as apiVerifyEmail,
+  getSessions,
+  revokeSession,
+  logoutAll,
 } from "../api/client";
 
 const AuthContext = createContext(null);
@@ -83,9 +86,39 @@ export function AuthProvider({ children, enabled = import.meta.env.VITE_AUTH_ENA
     return apiResendVerification();
   }
 
+  async function fetchSessions() {
+    if (!enabled) return [];
+    return getSessions();
+  }
+
+  async function revokeSessionById(sessionId) {
+    if (!enabled) return;
+    return revokeSession(sessionId);
+  }
+
+  async function logoutAllDevices() {
+    if (!enabled) return;
+    const result = await logoutAll();
+    setUser(null);
+    return result;
+  }
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, signup, logout, refresh, verifyEmail, resendVerification, enabled }}
+      value={{
+        user,
+        loading,
+        login,
+        signup,
+        logout,
+        refresh,
+        verifyEmail,
+        resendVerification,
+        fetchSessions,
+        revokeSessionById,
+        logoutAllDevices,
+        enabled,
+      }}
     >
       {children}
     </AuthContext.Provider>

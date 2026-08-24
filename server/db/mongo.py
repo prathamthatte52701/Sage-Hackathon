@@ -1,7 +1,7 @@
 import asyncio
 import copy
 from hashlib import sha256
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import certifi
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
@@ -560,7 +560,9 @@ async def create_session_record(token_hash: str, user_id: str, expires_at, metad
         "last_seen_at": now,
         "expires_at": expires_at,
         "revoked_at": None,
-        "metadata": metadata or {},
+        "device_label": metadata.get("device_label") if metadata else None,
+        "user_agent_summary": metadata.get("user_agent_summary") if metadata else None,
+        "created_ip_hash": metadata.get("created_ip_hash") if metadata else None,
     }
     result = await database.sessions.insert_one(doc)
     return str(result.inserted_id)
@@ -572,6 +574,61 @@ async def get_session(token_hash: str):
     if doc:
         doc["_id"] = str(doc["_id"])
     return doc
+
+
+async def get_active_sessions_for_user(user_id: str):
+    """Return all active (not expired, not revoked) sessions for a user."""
+    database = _require_db()
+    now = datetime.now(timezone.utc)
+    cursor = database.sessions.find({
+        "user_id": user_id,
+        "revoked_at": None,
+        "expires_at": {"$gt": now},
+    }).sort("last_seen_at", -1)
+    sessions = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        sessions.append(doc)
+    return sessions
+
+
+async def revoke_session_by_id(session_id: str, user_id: str) -> bool:
+    """Revoke a session by its _id, only if owned by user_id. Returns True if revoked."""
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(session_id)
+    except InvalidId:
+        return False
+    result = await database.sessions.update_one(
+        {"_id": object_id, "user_id": user_id, "revoked_at": None},
+        {"$set": {"revoked_at": datetime.now(timezone.utc)}},
+    )
+    return result.modified_count > 0
+
+
+async def revoke_all_sessions_for_user(user_id: str) -> int:
+    """Revoke all active sessions for a user. Returns count of revoked sessions."""
+    database = _require_db()
+    now = datetime.now(timezone.utc)
+    result = await database.sessions.update_many(
+        {"user_id": user_id, "revoked_at": None, "expires_at": {"$gt": now}},
+        {"$set": {"revoked_at": now}},
+    )
+    return result.modified_count
+
+
+async def update_session_last_seen(token_hash: str) -> None:
+    """Update last_seen_at for a session if older than 5 minutes (bounded writes)."""
+    database = _require_db()
+    now = datetime.now(timezone.utc)
+    five_min_ago = now - timedelta(minutes=5)
+    await database.sessions.update_one(
+        {"token_hash": token_hash, "last_seen_at": {"$lt": five_min_ago}, "revoked_at": None},
+        {"$set": {"last_seen_at": now}},
+    )
 
 
 async def revoke_session_by_token_hash(token_hash: str) -> None:

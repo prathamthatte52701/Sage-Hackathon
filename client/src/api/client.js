@@ -72,6 +72,30 @@ export async function resendVerification() {
   }
 }
 
+export async function getSessions() {
+  try {
+    return (await api.get("/api/auth/sessions")).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load sessions."));
+  }
+}
+
+export async function revokeSession(sessionId) {
+  try {
+    return (await api.delete(`/api/auth/sessions/${sessionId}`)).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not revoke session."));
+  }
+}
+
+export async function logoutAll() {
+  try {
+    return (await api.post("/api/auth/logout-all")).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not log out all devices."));
+  }
+}
+
 export async function reviewCode(code, language, sessionId) {
   try {
     const res = await api.post("/api/review", { code, language, session_id: sessionId });

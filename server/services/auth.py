@@ -216,11 +216,12 @@ async def get_current_user(session_token: str | None = Cookie(default=None, alia
     session, verify it is live (not expired, not revoked), then load the user
     and confirm it is active.
     """
-    from db.mongo import get_session, get_user_by_id
+    from db.mongo import get_session, get_user_by_id, update_session_last_seen
 
     if not session_token:
         raise _unauthorized()
-    session = await get_session(_hash_token(session_token))
+    token_hash = _hash_token(session_token)
+    session = await get_session(token_hash)
     if session is None:
         raise _unauthorized()
     if session.get("revoked_at") is not None:
@@ -233,6 +234,8 @@ async def get_current_user(session_token: str | None = Cookie(default=None, alia
         raise _unauthorized()
     if user.get("status") != "active":
         raise _unauthorized()
+    # Bounded last_seen update (only if older than 5 minutes)
+    await update_session_last_seen(token_hash)
     # Never hand the password hash to callers/routers.
     user.pop("password_hash", None)
     return user
@@ -247,3 +250,76 @@ async def get_request_user(session_token: str | None = Cookie(default=None, alia
     if not AUTH_ENABLED:
         return {"_id": DEMO_USER_ID, "email": "demo@sage.local", "demo_mode": True}
     return await get_current_user(session_token)
+    """Like get_current_user but also returns the session record for current-session identification."""
+    from db.mongo import get_session, get_user_by_id, update_session_last_seen
+
+    if not session_token:
+        raise _unauthorized()
+    token_hash = _hash_token(session_token)
+    session = await get_session(token_hash)
+    if session is None:
+        raise _unauthorized()
+    if session.get("revoked_at") is not None:
+        raise _unauthorized()
+    expires_at = _as_aware_utc(session.get("expires_at"))
+    if expires_at is None or expires_at <= datetime.now(timezone.utc):
+        raise _unauthorized()
+    user = await get_user_by_id(session["user_id"])
+    if user is None:
+        raise _unauthorized()
+    if user.get("status") != "active":
+        raise _unauthorized()
+    # Bounded last_seen update (only if older than 5 minutes)
+    await update_session_last_seen(token_hash)
+    user.pop("password_hash", None)
+    # Return both user and session (without token_hash)
+    safe_session = {
+        "session_id": session["_id"],
+        "created_at": session.get("created_at"),
+        "last_seen_at": session.get("last_seen_at"),
+        "expires_at": session.get("expires_at"),
+        "device_label": session.get("device_label"),
+        "user_agent_summary": session.get("user_agent_summary"),
+    }
+    return user, safe_session
+
+
+async def list_active_sessions(user_id: str) -> list[dict]:
+    """List all active sessions for a user with safe fields only."""
+    from db.mongo import get_active_sessions_for_user
+
+    sessions = await get_active_sessions_for_user(user_id)
+    return [
+        {
+            "session_id": s["_id"],
+            "created_at": s.get("created_at"),
+            "last_seen_at": s.get("last_seen_at"),
+            "expires_at": s.get("expires_at"),
+            "device_label": s.get("device_label"),
+            "user_agent_summary": s.get("user_agent_summary"),
+        }
+        for s in sessions
+    ]
+
+
+async def revoke_session(session_id: str, user_id: str) -> bool:
+    """Revoke a specific session by ID, only if owned by user_id."""
+    from db.mongo import revoke_session as mongo_revoke_session
+
+    return await mongo_revoke_session(session_id, user_id)
+
+
+async def revoke_all_sessions_for_user(user_id: str) -> int:
+    """Revoke all active sessions for a user. Returns count."""
+    from db.mongo import revoke_all_sessions_for_user as mongo_revoke_all
+
+    return await mongo_revoke_all(user_id)
+
+
+async def update_last_seen(session_token: str) -> None:
+    """Update last_seen_at for the current session (bounded writes)."""
+    if not session_token:
+        return
+    from db.mongo import update_session_last_seen
+
+    await update_session_last_seen(_hash_token(session_token))
