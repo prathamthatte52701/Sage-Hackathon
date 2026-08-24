@@ -15,6 +15,8 @@ import {
   Skull,
   Flame,
   Bomb,
+  GitCommit,
+  GitPullRequest,
 } from "lucide-react";
 import { getAuthoritativeScore } from "../utils/postFixResult";
 
@@ -84,6 +86,18 @@ export default function Sidebar({
       id: "blast_radius",
       label: "💥 Blast Radius",
       icon: Bomb,
+      disabled: !hasProject,
+    },
+    {
+      id: "commit_guard",
+      label: "Commit Guard",
+      icon: GitCommit,
+      disabled: !hasProject,
+    },
+    {
+      id: "pr_guard",
+      label: "PR Guard",
+      icon: GitPullRequest,
       disabled: !hasProject,
     },
     {

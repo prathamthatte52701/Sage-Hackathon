@@ -17,6 +17,7 @@ import HackerLens from "./components/HackerLens";
 import BrutalAudit from "./components/BrutalAudit";
 import BlastRadiusView from "./components/BlastRadiusView";
 import AutomationWorkspace from "./components/AutomationWorkspace";
+import GuardWorkspace from "./components/GuardWorkspace";
 import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
@@ -136,8 +137,12 @@ export default function App() {
 
     async function poll() {
       try {
-        const status = await getAutomationStatus(projectId);
+        const status = await getAutomationStatus(projectId, { allowMissing: true });
         if (cancelled) return;
+        if (!status) {
+          setAutomationStatus(null);
+          return;
+        }
         setAutomationStatus(status);
         if (TERMINAL_AUTOMATION.has(status.status)) {
           const key = status.job_id || status.run_id || `${projectId}:${status.status}`;
@@ -677,6 +682,22 @@ export default function App() {
           {/* View: Blast Radius */}
           {activeTab === "blast_radius" && (
             <BlastRadiusView projectId={projectBundle?.project_id} />
+          )}
+
+          {/* View: Commit Guard */}
+          {activeTab === "commit_guard" && (
+            <GuardWorkspace
+              mode="commit"
+              project={projectBundle}
+            />
+          )}
+
+          {/* View: PR Guard */}
+          {activeTab === "pr_guard" && (
+            <GuardWorkspace
+              mode="pr"
+              project={projectBundle}
+            />
           )}
 
           {/* View: Review History */}

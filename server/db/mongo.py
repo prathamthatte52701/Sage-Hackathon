@@ -565,6 +565,76 @@ async def update_commit_guard_run(run_id: str, owner_user_id: str, updates: dict
     )
 
 
+async def create_pr_guard_run(project_id: str, owner_user_id: str, pull_request_number: int, state: dict) -> str:
+    database = _require_db()
+    doc = {
+        **copy.deepcopy(state),
+        "project_id": project_id,
+        "owner_user_id": owner_user_id,
+        "pull_request_number": pull_request_number,
+        "started_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+    result = await database.pr_guard_runs.insert_one(doc)
+    return str(result.inserted_id)
+
+
+async def update_pr_guard_run(run_id: str, owner_user_id: str, updates: dict) -> None:
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(run_id)
+    except InvalidId:
+        return
+    payload = {**copy.deepcopy(updates), "updated_at": datetime.now(timezone.utc)}
+    await _require_db().pr_guard_runs.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id}, {"$set": payload}
+    )
+
+
+async def get_owned_pr_guard_run(project_id: str, owner_user_id: str, run_id: str):
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(run_id)
+    except InvalidId:
+        return None
+    doc = await _require_db().pr_guard_runs.find_one(
+        {"_id": object_id, "project_id": project_id, "owner_user_id": owner_user_id}
+    )
+    if doc:
+        doc["_id"] = str(doc["_id"])
+        doc["run_id"] = str(doc["_id"])
+        doc["job_id"] = str(doc["_id"])
+    return doc
+
+
+async def get_owned_pr_guard_cached_report(
+    project_id: str,
+    owner_user_id: str,
+    pull_request_number: int,
+    merge_base_sha: str,
+    head_sha: str,
+):
+    doc = await _require_db().pr_guard_runs.find_one(
+        {
+            "project_id": project_id,
+            "owner_user_id": owner_user_id,
+            "pull_request_number": pull_request_number,
+            "merge_base_sha": merge_base_sha,
+            "head_sha": head_sha,
+            "status": "complete",
+            "report.stale": {"$ne": True},
+        },
+        sort=[("updated_at", -1)],
+    )
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
 async def ensure_indexes() -> None:
     """Called once at app startup. Safe to call repeatedly (create_index is
     idempotent on an unchanged spec)."""
@@ -575,3 +645,5 @@ async def ensure_indexes() -> None:
     await database.fix_all_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])
     await database.automation_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])
     await database.commit_guard_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("base_sha", 1), ("head_sha", 1)])
+    await database.pr_guard_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("pull_request_number", 1), ("started_at", -1)])
+    await database.pr_guard_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("pull_request_number", 1), ("merge_base_sha", 1), ("head_sha", 1)])

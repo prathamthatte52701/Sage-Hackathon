@@ -24,6 +24,16 @@ export default function Header({
         return "Codebase Intelligence Chat";
       case "architecture":
         return "System Dependency Graph";
+      case "hacker_lens":
+        return "Hacker Mode";
+      case "brutal_audit":
+        return "Brutal Audit";
+      case "blast_radius":
+        return "Blast Radius Analysis";
+      case "commit_guard":
+        return "Commit Guard";
+      case "pr_guard":
+        return "Pull Request Guard";
       case "history":
         return "Review History & Logs";
       default:

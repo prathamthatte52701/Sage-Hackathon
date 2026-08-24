@@ -59,6 +59,27 @@ class CommitInfo:
     truncated: bool = False  # True if changed_files was bounded below the real total
 
 
+@dataclass
+class PullRequestInfo:
+    number: int
+    title: str
+    body: str
+    state: str
+    merged: bool
+    author: str
+    base_branch: str
+    head_branch: str
+    base_sha: str
+    head_sha: str
+    merge_base_sha: str
+    commit_count: int
+    changed_file_count: int
+    additions: int
+    deletions: int
+    changed_files: list[ChangedFile] = field(default_factory=list)
+    truncated: bool = False
+
+
 def _auth_headers() -> dict[str, str]:
     # No GITHUB_TOKEN is configured anywhere in this codebase today (the
     # existing zipball import already runs unauthenticated) -- matching
@@ -148,6 +169,83 @@ async def resolve_commit(owner: str, repo: str, head_sha: str, *, client: httpx.
     finally:
         if owns_client:
             await client.aclose()
+
+
+async def resolve_pull_request(owner: str, repo: str, number: int) -> PullRequestInfo:
+    """Resolve one GitHub pull request and its combined PR diff truth.
+
+    The caller supplies only a PR number. Owner/repo come from the persisted
+    GitHub-backed project, and every SHA/branch/file count below is resolved
+    from GitHub, never trusted from the frontend.
+    """
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        raise GitHistoryUnavailable("Invalid pull request number")
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        pr = await _get_json(client, f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}")
+        base_repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name", "")
+        if base_repo.lower() != f"{owner}/{repo}".lower():
+            raise GitHistoryUnavailable("Pull request does not belong to this repository")
+
+        base = pr.get("base") or {}
+        head = pr.get("head") or {}
+        base_sha = base.get("sha") or ""
+        head_sha = head.get("sha") or ""
+        if not base_sha or not head_sha:
+            raise GitHistoryUnavailable("Pull request is missing base/head commit data")
+
+        compare = await _get_json(client, f"{GITHUB_API}/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}")
+        merge_base_sha = ((compare.get("merge_base_commit") or {}).get("sha")) or base_sha
+
+        files: list[ChangedFile] = []
+        page = 1
+        while len(files) < MAX_CHANGED_PYTHON_FILES:
+            batch = await _get_json(client, f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}/files", per_page=100, page=page)
+            if not batch:
+                break
+            for item in batch:
+                if len(files) >= MAX_CHANGED_PYTHON_FILES:
+                    break
+                files.append(
+                    ChangedFile(
+                        path=item.get("filename", ""),
+                        status={"added": "added", "removed": "removed", "modified": "modified", "renamed": "renamed"}.get(item.get("status"), "modified"),
+                        previous_path=item.get("previous_filename"),
+                        additions=item.get("additions", 0),
+                        deletions=item.get("deletions", 0),
+                        patch=item.get("patch", "") or "",
+                    )
+                )
+            if len(batch) < 100:
+                break
+            page += 1
+
+        changed_file_count = int(pr.get("changed_files") or len(files))
+        return PullRequestInfo(
+            number=number,
+            title=pr.get("title") or "",
+            body=pr.get("body") or "",
+            state=pr.get("state") or "unknown",
+            merged=bool(pr.get("merged")),
+            author=((pr.get("user") or {}).get("login")) or "unknown",
+            base_branch=base.get("ref") or "",
+            head_branch=head.get("label") or head.get("ref") or "",
+            base_sha=base_sha,
+            head_sha=head_sha,
+            merge_base_sha=merge_base_sha,
+            commit_count=int(pr.get("commits") or 0),
+            changed_file_count=changed_file_count,
+            additions=int(pr.get("additions") or 0),
+            deletions=int(pr.get("deletions") or 0),
+            changed_files=files,
+            truncated=changed_file_count > len(files),
+        )
+
+
+async def resolve_pull_request_head_sha(owner: str, repo: str, number: int) -> str:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        pr = await _get_json(client, f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}")
+        return ((pr.get("head") or {}).get("sha")) or ""
 
 
 async def fetch_file_at_ref(owner: str, repo: str, path: str, ref: str, *, client: httpx.AsyncClient) -> str | None:

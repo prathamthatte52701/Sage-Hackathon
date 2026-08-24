@@ -12,6 +12,7 @@ from pathlib import PurePosixPath
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from db.mongo import fetch_binary_content, get_owned_project, get_owned_project_file, get_owned_project_metadata, save_project, update_owned_finding, update_owned_project
@@ -39,8 +40,13 @@ from services.automation import (
     start_automation,
 )
 from services.commit_guard import get_commit_guard_status, start_commit_guard
+from services.pr_guard import get_pr_guard_status, start_pr_guard
 
 router = APIRouter()
+
+
+class PRGuardRequest(BaseModel):
+    pull_request_number: int = Field(..., ge=1, le=999999)
 
 MAX_ZIP_SIZE = 300 * 1024 * 1024  # 300MB
 MAX_UNCOMPRESSED_SIZE = 600 * 1024 * 1024  # archive-bomb guard
@@ -1136,6 +1142,39 @@ async def commit_guard_status_endpoint(project_id: str, current_user: dict = Dep
     state = get_commit_guard_status(project_id)
     if state is None:
         return JSONResponse(status_code=404, content={"error": "No Commit Guard run found for this project"})
+    return state
+
+
+_PR_GUARD_ERROR_RESPONSE = {"error": "Could not start PR Guard, please retry"}
+
+
+@router.post("/projects/{project_id}/pr-guard")
+async def start_pr_guard_endpoint(
+    project_id: str,
+    payload: PRGuardRequest,
+    current_user: dict = Depends(get_request_user),
+):
+    try:
+        project = await get_owned_project_metadata(project_id, current_user["_id"])
+        if project is None:
+            return JSONResponse(status_code=404, content={"error": "Project not found"})
+        if not project.get("github_owner") or not project.get("github_repo"):
+            return JSONResponse(status_code=400, content={"error": "PR Guard requires a GitHub-backed project."})
+        state = await start_pr_guard(project_id, current_user["_id"], payload.pull_request_number)
+        return JSONResponse(status_code=202, content=state)
+    except Exception as exc:
+        print(f"[projects] pr-guard start error: {exc}")
+        return JSONResponse(status_code=500, content=_PR_GUARD_ERROR_RESPONSE)
+
+
+@router.get("/projects/{project_id}/pr-guard/{run_id}/status")
+async def pr_guard_status_endpoint(project_id: str, run_id: str, current_user: dict = Depends(get_request_user)):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    state = await get_pr_guard_status(project_id, current_user["_id"], run_id)
+    if state is None:
+        return JSONResponse(status_code=404, content={"error": "No PR Guard run found for this project"})
     return state
 
 

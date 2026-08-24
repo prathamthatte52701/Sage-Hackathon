@@ -296,11 +296,12 @@ export async function startAutomation(projectId) {
   }
 }
 
-export async function getAutomationStatus(projectId) {
+export async function getAutomationStatus(projectId, options = {}) {
   try {
     const res = await api.get(`/api/projects/${projectId}/automation/status`, { timeout: 30000 });
     return res.data;
   } catch (err) {
+    if (options.allowMissing && err?.response?.status === 404) return null;
     throw new Error(toFriendlyMessage(err, "Could not load automation status."));
   }
 }
@@ -311,6 +312,46 @@ export async function stopAutomation(projectId) {
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not stop automation."));
+  }
+}
+
+export async function startCommitGuard(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/commit-guard`, {}, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not start Commit Guard."));
+  }
+}
+
+export async function getCommitGuardStatus(projectId) {
+  try {
+    const res = await api.get(`/api/projects/${projectId}/commit-guard/status`, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load Commit Guard status."));
+  }
+}
+
+export async function startPrGuard(projectId, pullRequestNumber) {
+  try {
+    const res = await api.post(
+      `/api/projects/${projectId}/pr-guard`,
+      { pull_request_number: Number(pullRequestNumber) },
+      { timeout: 30000 }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not start PR Guard."));
+  }
+}
+
+export async function getPrGuardStatus(projectId, runId) {
+  try {
+    const res = await api.get(`/api/projects/${projectId}/pr-guard/${runId}/status`, { timeout: 30000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not load PR Guard status."));
   }
 }
 

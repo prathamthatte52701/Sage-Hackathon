@@ -62,6 +62,7 @@ def _new_state(project_id: str, owner_user_id: str, job_id: str) -> dict:
         "updated_at": now,
         "message": "Repository loaded. Defender analysis is starting.",
         "defender": _stage("running", initial_findings=0, remaining_findings=0, fixed=0, failed=0, fix_cycles=0),
+        "fix_cycles": [],
         "hacker": _stage(),
         "brutal": _stage(),
         "blast_radius": _stage(),
@@ -165,7 +166,12 @@ async def _run_defender(project_id: str, owner_user_id: str, state: dict) -> Non
     state["message"] = "Defender is analyzing confirmed security findings."
     await _persist(state)
 
-    await _run_project_analysis(project_id, owner_user_id)
+    analysis = await _run_project_analysis(project_id, owner_user_id)
+    if analysis.get("stale"):
+        state["defender"]["status"] = "paused"
+        state["defender"]["error"] = "Project source changed during Defender analysis."
+        await _persist(state)
+        raise RuntimeError("Project source changed during Defender analysis; rerun automation on the latest revision.")
     project = await get_owned_project_metadata(project_id, owner_user_id)
     if project is None:
         raise LookupError("Project not found")
@@ -182,6 +188,9 @@ async def _run_defender(project_id: str, owner_user_id: str, state: dict) -> Non
             return
         project = await get_owned_project_metadata(project_id, owner_user_id)
         remaining = len(project.get("security_findings") or project.get("findings") or []) if project else 0
+        source_revision_before = project.get("source_revision") if project else None
+        analysis_revision_before = project.get("analysis_revision") if project else None
+        signature_before = _finding_signature(project)
         state["defender"]["remaining_findings"] = remaining
         if remaining == 0:
             break
@@ -195,8 +204,43 @@ async def _run_defender(project_id: str, owner_user_id: str, state: dict) -> Non
         state["defender"]["fixed"] = state["defender"].get("fixed", 0) + int(report.get("fixed", 0) or 0)
         state["defender"]["failed"] = state["defender"].get("failed", 0) + int(report.get("failed", 0) or 0)
         project = await get_owned_project_metadata(project_id, owner_user_id)
-        state["defender"]["remaining_findings"] = len(project.get("security_findings") or project.get("findings") or []) if project else remaining
+        findings_after = len(project.get("security_findings") or project.get("findings") or []) if project else remaining
+        source_revision_after = project.get("source_revision") if project else None
+        analysis_revision_after = project.get("analysis_revision") if project else None
+        signature_after = _finding_signature(project)
+        attempted = int(report.get("attempted", 0) or report.get("total", 0) or remaining)
+        fixed = int(report.get("fixed", 0) or 0)
+        failed = int(report.get("failed", 0) or 0)
+        skipped = int(report.get("skipped", 0) or max(0, attempted - fixed - failed))
+        cycle_record = {
+            "cycle_number": cycle,
+            "findings_before": remaining,
+            "attempted": attempted,
+            "fixed": fixed,
+            "failed": failed,
+            "skipped": skipped,
+            "findings_after": findings_after,
+            "source_revision_before": source_revision_before,
+            "source_revision_after": source_revision_after,
+            "analysis_revision_before": analysis_revision_before,
+            "analysis_revision_after": analysis_revision_after,
+            "status": "complete",
+        }
+        no_progress = (
+            findings_after == remaining
+            and signature_after == signature_before
+            and source_revision_after == source_revision_before
+        )
+        if no_progress:
+            cycle_record["status"] = "no_progress"
+            state["defender"]["no_progress"] = True
+            state["message"] = "Auto Fix Loop stopped because the remaining confirmed findings did not change."
+        state.setdefault("fix_cycles", []).append(cycle_record)
+        state["defender"]["cycle_history"] = state["fix_cycles"]
+        state["defender"]["remaining_findings"] = findings_after
         await _persist(state)
+        if no_progress:
+            break
 
     if state.get("status") == "stopped":
         return
@@ -205,6 +249,24 @@ async def _run_defender(project_id: str, owner_user_id: str, state: dict) -> Non
     state["defender"]["manual_review_required"] = remaining > 0
     state["message"] = "Defender complete." if remaining == 0 else "Defender completed with issues requiring manual review."
     await _persist(state)
+
+
+def _finding_signature(project: dict | None) -> list[tuple]:
+    if not project:
+        return []
+    findings = project.get("security_findings") or project.get("findings") or []
+    signature = []
+    for finding in findings:
+        signature.append(
+            (
+                finding.get("stable_id") or finding.get("id") or finding.get("rule_id") or finding.get("rule"),
+                finding.get("file") or finding.get("path"),
+                finding.get("line"),
+                finding.get("evidence"),
+                finding.get("severity"),
+            )
+        )
+    return sorted(signature)
 
 
 async def _wait_for_fix_all(project_id: str, owner_user_id: str, fix_state: dict, state: dict) -> dict:
@@ -221,6 +283,11 @@ async def _wait_for_fix_all(project_id: str, owner_user_id: str, fix_state: dict
     if latest.get("status") != "completed":
         state["defender"]["status"] = "paused"
         state["defender"]["error"] = latest.get("error") or "Fix All did not complete safely."
+        raise RuntimeError(state["defender"]["error"])
+    report = latest.get("report") or {}
+    if report.get("status") == "completed_verification_failed":
+        state["defender"]["status"] = "paused"
+        state["defender"]["error"] = report.get("verification_note") or "Fix All completed without final verification."
         raise RuntimeError(state["defender"]["error"])
     return latest
 
@@ -253,15 +320,20 @@ async def _run_read_only_stage(state: dict, name: str, label: str, work):
 
 
 def _summarize_stage(name: str, result) -> dict:
+    def field(key: str, default=None):
+        if isinstance(result, dict):
+            return result.get(key, default)
+        return getattr(result, key, default)
+
     if name == "hacker":
         return {
-            "attack_surfaces": len(getattr(result, "attack_surfaces", []) or []),
-            "risk_paths": len(getattr(result, "risk_paths", []) or []),
-            "top_targets": len(getattr(result, "top_targets", []) or []),
+            "attack_surfaces": len(field("attack_surfaces", []) or []),
+            "risk_paths": len(field("risk_paths", []) or []),
+            "top_targets": len(field("top_targets", []) or []),
         }
     if name == "brutal":
-        score = getattr(result, "overall_score", None)
-        return {"overall_score": score, "verdict": getattr(result, "verdict", "")}
+        score = field("overall_score")
+        return {"overall_score": score, "verdict": field("verdict", "")}
     if name == "blast_radius":
         summary = result.get("summary", {}) if isinstance(result, dict) else {}
         components = result.get("components", []) if isinstance(result, dict) else []

@@ -69,10 +69,18 @@ _RATE_LIMIT_EXEMPT_PREFIXES = ("/api/analysis-jobs/",)
 _RATE_LIMIT_EXEMPT_SUFFIXES = ("/fix-all/status", "/automation/status", "/commit-guard/status")
 
 
+def _is_rate_limit_exempt_status_path(path: str) -> bool:
+    return (
+        path.startswith(_RATE_LIMIT_EXEMPT_PREFIXES)
+        or path.endswith(_RATE_LIMIT_EXEMPT_SUFFIXES)
+        or ("/pr-guard/" in path and path.endswith("/status"))
+    )
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = path.startswith(_RATE_LIMIT_EXEMPT_PREFIXES) or path.endswith(_RATE_LIMIT_EXEMPT_SUFFIXES)
+    exempt = _is_rate_limit_exempt_status_path(path)
     if path.startswith("/api/") and not exempt:
         client_ip = request.client.host if request.client else "unknown"
         if path in ("/api/auth/login", "/api/auth/signup"):
