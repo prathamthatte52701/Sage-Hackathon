@@ -1,8 +1,35 @@
+# Local environment and secrets
 .env
+.env.*
+!.env.example
+
+# Python local artifacts
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
 venv/
 .venv/
+
+# Node/build artifacts
 node_modules/
 dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+
+# Local/generated test artifacts
 .tmp_live_stress/
+CODE_MASTER_AI_TESTING_SUITE/

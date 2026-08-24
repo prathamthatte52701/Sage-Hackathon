@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 
 from db.mongo import (
     create_commit_guard_run,
+    get_owned_latest_commit_guard_run,
     get_owned_commit_guard_report,
     get_owned_project_metadata,
     update_commit_guard_run,
@@ -34,6 +35,7 @@ from services.git_history import (
     ChangedFile,
     CommitInfo,
     GitHistoryUnavailable,
+    MAX_CHANGED_PYTHON_FILES,
     fetch_snapshot,
     resolve_latest_commit,
 )
@@ -58,12 +60,66 @@ def is_commit_guard_running(project_id: str) -> bool:
     return bool(state and state["status"] == "running")
 
 
-def get_commit_guard_status(project_id: str) -> dict | None:
-    return _active_runs.get(project_id)
+def _public_state(state: dict) -> dict:
+    return {
+        "job_id": state.get("job_id"),
+        "project_id": state.get("project_id"),
+        "status": state.get("status"),
+        "stage": state.get("stage"),
+        "message": state.get("message", ""),
+        "head_sha": state.get("head_sha"),
+        "base_sha": state.get("base_sha"),
+        "report": state.get("report"),
+        "error": state.get("error"),
+    }
+
+
+async def _persist(state: dict) -> None:
+    run_id = state.get("run_id")
+    if not run_id:
+        return
+    try:
+        await update_commit_guard_run(run_id, state["owner_user_id"], _public_state(state))
+    except Exception as exc:
+        print(f"[commit-guard] persistence update failed project_id={state.get('project_id')}: {type(exc).__name__}: {exc}")
+
+
+async def _set_stage(state: dict, stage: str, message: str) -> None:
+    state["stage"] = stage
+    state["message"] = message
+    await _persist(state)
+
+
+async def get_commit_guard_status(project_id: str, owner_user_id: str) -> dict | None:
+    state = _active_runs.get(project_id)
+    if state and state.get("owner_user_id") == owner_user_id:
+        return _public_state(state)
+    try:
+        run = await get_owned_latest_commit_guard_run(project_id, owner_user_id)
+    except Exception as exc:
+        print(f"[commit-guard] persisted status lookup failed project_id={project_id}: {type(exc).__name__}: {exc}")
+        return None
+    if run is None:
+        return None
+    if run.get("status") == "running":
+        run["status"] = "failed"
+        run["stage"] = "failed"
+        run["error"] = "Commit Guard was interrupted because the server restarted. Start a new run to continue."
+    return {
+        "job_id": run.get("job_id"),
+        "project_id": run.get("project_id"),
+        "status": run.get("status"),
+        "stage": run.get("stage"),
+        "message": run.get("message", ""),
+        "head_sha": run.get("head_sha"),
+        "base_sha": run.get("base_sha"),
+        "report": run.get("report"),
+        "error": run.get("error"),
+    }
 
 
 def _changed_python_files(info: CommitInfo) -> list[ChangedFile]:
-    return [f for f in info.changed_files if f.path.endswith(".py") or f.path.endswith(".pyi")]
+    return [f for f in info.changed_files if f.path.endswith(".py") or f.path.endswith(".pyi")][:MAX_CHANGED_PYTHON_FILES]
 
 
 def _static_validity(head_snapshot: dict[str, str], changed_paths: list[str]) -> tuple[bool, list[str]]:
@@ -233,29 +289,45 @@ async def _generate_explanation(report: dict) -> tuple[str, str]:
 async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
     stage_start = time.monotonic()
     print(f"[stage] COMMIT_GUARD_START project_id={project_id}")
+    state.setdefault("project_id", project_id)
+    state.setdefault("owner_user_id", owner_user_id)
+    state.setdefault("status", "running")
+    state.setdefault("stage", "queued")
+    state.setdefault("message", "Commit Guard queued.")
+    state.setdefault("report", None)
+    state.setdefault("error", None)
     try:
+        await _set_stage(state, "resolving_commit", "Resolving the latest Git commit.")
         project = await get_owned_project_metadata(project_id, owner_user_id)
         if project is None:
             state["status"] = "failed"
+            state["stage"] = "failed"
             state["error"] = "Project not found."
+            await _persist(state)
             return
 
         owner = project.get("github_owner")
         repo = project.get("github_repo")
         if not owner or not repo:
             state["status"] = "failed"
+            state["stage"] = "failed"
             state["error"] = (
                 "Git history unavailable. Commit Guard requires a repository imported "
                 "from GitHub or another source with verifiable commit history."
             )
+            await _persist(state)
             return
 
         try:
             info = await resolve_latest_commit(owner, repo)
         except GitHistoryUnavailable as exc:
             state["status"] = "failed"
+            state["stage"] = "failed"
             state["error"] = str(exc)
+            await _persist(state)
             return
+        state["head_sha"] = info.head_sha
+        state["base_sha"] = info.base_sha
 
         # Cache: an identical (base_sha, head_sha) comparison for this
         # project never needs to redo Defender/blast/Groq work.
@@ -263,17 +335,39 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
         if cached is not None:
             state["report"] = cached["report"]
             state["status"] = "completed"
+            state["stage"] = "complete"
+            state["message"] = "Commit Guard loaded from cache."
+            await _persist(state)
             print(f"[stage] COMMIT_GUARD_COMPLETE project_id={project_id} cache_hit=true duration_ms={round((time.monotonic() - stage_start) * 1000)}")
             return
+
+        if not state.get("run_id"):
+            try:
+                run_id = await create_commit_guard_run(
+                    project_id,
+                    owner_user_id,
+                    info.base_sha,
+                    info.head_sha,
+                    None,
+                    state=_public_state(state),
+                )
+                state["run_id"] = run_id
+                state["job_id"] = run_id
+            except Exception as exc:
+                print(f"[commit-guard] persistence unavailable, continuing in-memory only: {type(exc).__name__}: {exc}")
+        await _persist(state)
 
         python_files = _changed_python_files(info)
         if not python_files:
             state["report"] = _docs_only_result(info)
             state["status"] = "completed"
-            await create_commit_guard_run(project_id, owner_user_id, info.base_sha, info.head_sha, state["report"])
+            state["stage"] = "complete"
+            state["message"] = "Commit Guard completed with no analyzable Python source changes."
+            await _persist(state)
             print(f"[stage] COMMIT_GUARD_COMPLETE project_id={project_id} docs_only=true duration_ms={round((time.monotonic() - stage_start) * 1000)}")
             return
 
+        await _set_stage(state, "building_diff", "Building the BASE to HEAD Python diff.")
         changed_paths = [f.path for f in python_files]
         renamed_paths = {f.path: f.previous_path for f in python_files if f.status == "renamed" and f.previous_path}
         base_paths = [f.previous_path or f.path for f in python_files if f.status != "added"]
@@ -281,11 +375,14 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
         head_snapshot = await fetch_snapshot(owner, repo, changed_paths, info.head_sha)
         base_snapshot = await fetch_snapshot(owner, repo, base_paths, info.base_sha)
 
+        await _set_stage(state, "comparing_security", "Comparing Defender findings before and after the commit.")
         security_delta = await compute_security_delta(base_snapshot, head_snapshot, renamed_paths)
+        await _set_stage(state, "mapping_impact", "Mapping deterministic blast radius impact.")
         blast_delta = await compute_blast_delta(base_snapshot, head_snapshot, changed_paths)
         sensitive_areas = detect_sensitive_areas(head_snapshot, changed_paths)
         validity_ok, broken_files = _static_validity(head_snapshot, changed_paths)
 
+        await _set_stage(state, "calculating_risk", "Calculating deterministic commit risk.")
         verdict, risk_score = _compute_verdict(
             security_delta["new"], security_delta["resolved"], blast_delta["summary"], sensitive_areas, validity_ok
         )
@@ -303,6 +400,7 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
             verdict=verdict, risk_score=risk_score, summary=summary, ai_explanation="", ai_error="",
         )
 
+        await _set_stage(state, "generating_explanation", "Generating explanation without changing verdict.")
         explanation, ai_error = await _generate_explanation(report)
         report["ai_explanation"] = explanation
         report["ai_error"] = ai_error
@@ -311,14 +409,18 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
 
         state["report"] = report
         state["status"] = "completed"
-        await create_commit_guard_run(project_id, owner_user_id, info.base_sha, info.head_sha, report)
+        state["stage"] = "complete"
+        state["message"] = "Commit Guard complete."
+        await _persist(state)
         print(
             f"[stage] COMMIT_GUARD_COMPLETE project_id={project_id} verdict={verdict} risk_score={risk_score} "
             f"new_findings={len(security_delta['new'])} duration_ms={round((time.monotonic() - stage_start) * 1000)}"
         )
     except Exception as exc:
         state["status"] = "failed"
+        state["stage"] = "failed"
         state["error"] = f"Commit Guard failed: {type(exc).__name__}"
+        await _persist(state)
         print(f"[commit-guard] unhandled error project_id={project_id}: {exc}")
     finally:
         async with _guard:
@@ -340,7 +442,11 @@ async def start_commit_guard(project_id: str, owner_user_id: str) -> dict:
         _job_counter += 1
         state = {
             "job_id": f"commitguard-{project_id}-{_job_counter}",
+            "project_id": project_id,
+            "owner_user_id": owner_user_id,
             "status": "running",
+            "stage": "queued",
+            "message": "Commit Guard queued.",
             "report": None,
             "error": None,
         }

@@ -527,17 +527,29 @@ async def get_user_by_id(user_id: str):
 # never a repeated Defender/blast/Groq run. Project isolation is enforced
 # the same way every other owned-document lookup in this file is: the
 # query always includes owner_user_id.
-async def create_commit_guard_run(project_id: str, owner_user_id: str, base_sha: str | None, head_sha: str, report: dict) -> str:
+async def create_commit_guard_run(
+    project_id: str,
+    owner_user_id: str,
+    base_sha: str | None,
+    head_sha: str,
+    report: dict | None,
+    *,
+    state: dict | None = None,
+) -> str:
     database = _require_db()
+    doc = {
+        "project_id": project_id,
+        "owner_user_id": owner_user_id,
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "report": copy.deepcopy(report),
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if state:
+        doc.update(copy.deepcopy(state))
     result = await database.commit_guard_runs.insert_one(
-        {
-            "project_id": project_id,
-            "owner_user_id": owner_user_id,
-            "base_sha": base_sha,
-            "head_sha": head_sha,
-            "report": report,
-            "created_at": datetime.now(timezone.utc),
-        }
+        doc
     )
     return str(result.inserted_id)
 
@@ -545,10 +557,29 @@ async def create_commit_guard_run(project_id: str, owner_user_id: str, base_sha:
 async def get_owned_commit_guard_report(project_id: str, owner_user_id: str, base_sha: str | None, head_sha: str):
     database = _require_db()
     doc = await database.commit_guard_runs.find_one(
-        {"project_id": project_id, "owner_user_id": owner_user_id, "base_sha": base_sha, "head_sha": head_sha}
+        {
+            "project_id": project_id,
+            "owner_user_id": owner_user_id,
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "status": "completed",
+            "report": {"$ne": None},
+        }
     )
     if doc:
         doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def get_owned_latest_commit_guard_run(project_id: str, owner_user_id: str):
+    database = _require_db()
+    doc = await database.commit_guard_runs.find_one(
+        {"project_id": project_id, "owner_user_id": owner_user_id},
+        sort=[("updated_at", -1), ("created_at", -1)],
+    )
+    if doc:
+        doc["_id"] = str(doc["_id"])
+        doc["job_id"] = str(doc.get("job_id") or doc["_id"])
     return doc
 
 
@@ -560,8 +591,9 @@ async def update_commit_guard_run(run_id: str, owner_user_id: str, updates: dict
         object_id = ObjectId(run_id)
     except InvalidId:
         return
+    payload = {**copy.deepcopy(updates), "updated_at": datetime.now(timezone.utc)}
     await _require_db().commit_guard_runs.update_one(
-        {"_id": object_id, "owner_user_id": owner_user_id}, {"$set": updates}
+        {"_id": object_id, "owner_user_id": owner_user_id}, {"$set": payload}
     )
 
 

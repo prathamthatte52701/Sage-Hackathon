@@ -1139,7 +1139,7 @@ async def commit_guard_status_endpoint(project_id: str, current_user: dict = Dep
     project = await get_owned_project_metadata(project_id, current_user["_id"])
     if project is None:
         return JSONResponse(status_code=404, content={"error": "Project not found"})
-    state = get_commit_guard_status(project_id)
+    state = await get_commit_guard_status(project_id, current_user["_id"])
     if state is None:
         return JSONResponse(status_code=404, content={"error": "No Commit Guard run found for this project"})
     return state

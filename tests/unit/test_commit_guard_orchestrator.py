@@ -2,12 +2,14 @@ import copy
 
 import pytest
 
+import services.git_history as git_history_module
 import services.commit_guard as commit_guard_module
 from services.commit_guard import (
     _build_report_shape,
     _compute_verdict,
     _docs_only_result,
     _run,
+    get_commit_guard_status,
     _static_validity,
     is_commit_guard_running,
     start_commit_guard,
@@ -38,6 +40,7 @@ class _FakeDB:
     def __init__(self):
         self.projects: dict[str, dict] = {}
         self.reports: dict[tuple, dict] = {}
+        self.latest_runs: dict[tuple, dict] = {}
         self.create_calls = 0
 
     async def get_owned_project_metadata(self, project_id, owner_user_id):
@@ -46,16 +49,38 @@ class _FakeDB:
             return None
         return dict(doc)
 
-    async def create_commit_guard_run(self, project_id, owner_user_id, base_sha, head_sha, report):
+    async def create_commit_guard_run(self, project_id, owner_user_id, base_sha, head_sha, report, *, state=None):
         self.create_calls += 1
-        self.reports[(project_id, base_sha, head_sha)] = {"report": report}
-        return "run-1"
+        run_id = f"run-{self.create_calls}"
+        doc = {
+            "job_id": run_id,
+            "project_id": project_id,
+            "owner_user_id": owner_user_id,
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "status": (state or {}).get("status") or "completed",
+            "stage": (state or {}).get("stage"),
+            "message": (state or {}).get("message", ""),
+            "report": report,
+            "error": (state or {}).get("error"),
+        }
+        self.latest_runs[(project_id, owner_user_id)] = doc
+        if report is not None and doc["status"] == "completed":
+            self.reports[(project_id, base_sha, head_sha)] = {"report": report}
+        return run_id
 
     async def get_owned_commit_guard_report(self, project_id, owner_user_id, base_sha, head_sha):
         return self.reports.get((project_id, base_sha, head_sha))
 
     async def update_commit_guard_run(self, run_id, owner_user_id, updates):
-        pass
+        for key, doc in self.latest_runs.items():
+            if doc.get("job_id") == run_id and key[1] == owner_user_id:
+                doc.update(updates)
+                if doc.get("report") is not None and doc.get("status") == "completed":
+                    self.reports[(doc["project_id"], doc.get("base_sha"), doc.get("head_sha"))] = {"report": doc["report"]}
+
+    async def get_owned_latest_commit_guard_run(self, project_id, owner_user_id):
+        return self.latest_runs.get((project_id, owner_user_id))
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +98,7 @@ def _install(monkeypatch, project=None):
     monkeypatch.setattr(commit_guard_module, "create_commit_guard_run", db.create_commit_guard_run)
     monkeypatch.setattr(commit_guard_module, "get_owned_commit_guard_report", db.get_owned_commit_guard_report)
     monkeypatch.setattr(commit_guard_module, "update_commit_guard_run", db.update_commit_guard_run)
+    monkeypatch.setattr(commit_guard_module, "get_owned_latest_commit_guard_run", db.get_owned_latest_commit_guard_run)
     return db
 
 
@@ -153,6 +179,70 @@ def test_docs_only_result_is_pass_with_no_ai_call():
     assert report["risk_score"] == 0
     assert report["security_delta"]["new"] == []
     assert "No analyzable Python source changes" in report["summary"]
+
+
+def test_report_preserves_initial_commit_metadata():
+    info = _info(base_sha=None, comparison_type="initial", parent_count=0, comparison_parent=None)
+    report = _docs_only_result(info)
+
+    assert report["comparison_type"] == "initial"
+    assert report["base_sha"] is None
+    assert report["comparison_parent"] is None
+
+
+def test_report_preserves_merge_commit_first_parent_metadata():
+    info = _info(merge_commit=True, parent_count=2, base_sha="first-parent", comparison_parent="first-parent")
+    report = _docs_only_result(info)
+
+    assert report["merge_commit"] is True
+    assert report["parent_count"] == 2
+    assert report["comparison_parent"] == "first-parent"
+
+
+def test_report_preserves_mixed_changed_file_git_truth():
+    info = _info(changed_files=[
+        ChangedFile(path="app.py", status="modified", additions=3, deletions=1),
+        ChangedFile(path="README.md", status="modified", additions=2, deletions=0),
+    ])
+    report = _build_report_shape(
+        info=info,
+        security_delta={"base_findings": [], "head_findings": [], "new": [], "resolved": [], "persisting": []},
+        blast_delta={"components": [], "summary": {"overall_before": 0, "overall_after": 0, "overall_delta": 0, "affected_routes_before": 0, "affected_routes_after": 0}},
+        sensitive_areas=[],
+        validity_ok=True,
+        broken_files=[],
+        verdict="PASS",
+        risk_score=0,
+        summary="ok",
+        ai_explanation="",
+        ai_error="",
+    )
+
+    assert [f["path"] for f in report["changed_files"]] == ["app.py", "README.md"]
+
+
+@pytest.mark.asyncio
+async def test_git_history_preserves_non_python_files_for_diff_truth(monkeypatch):
+    async def fake_get_json(client, url, **params):
+        return {
+            "sha": "head123",
+            "parents": [{"sha": "base456"}],
+            "commit": {
+                "message": "update app and docs",
+                "author": {"name": "dev", "date": "2026-08-23T00:00:00Z"},
+            },
+            "files": [
+                {"filename": "app.py", "status": "modified", "additions": 3, "deletions": 1, "patch": "@@ python"},
+                {"filename": "README.md", "status": "modified", "additions": 2, "deletions": 0, "patch": "@@ docs"},
+            ],
+        }
+
+    monkeypatch.setattr(git_history_module, "_get_json", fake_get_json)
+
+    info = await git_history_module.resolve_commit("acme", "widgets", "head123")
+
+    assert [file.path for file in info.changed_files] == ["app.py", "README.md"]
+    assert info.truncated is False
 
 
 @pytest.mark.asyncio
@@ -252,6 +342,49 @@ async def test_identical_commit_pair_is_served_from_cache_without_rerunning_anal
     assert state2["status"] == "completed"
     assert security_calls == [1]  # NOT called a second time -- served from cache
     assert db.create_calls == 1   # NOT persisted a second time
+
+
+@pytest.mark.asyncio
+async def test_status_recovers_latest_completed_report_from_persistence(monkeypatch):
+    db = _install(monkeypatch, _project())
+    db.latest_runs[("proj-1", OWNER)] = {
+        "job_id": "run-1",
+        "project_id": "proj-1",
+        "status": "completed",
+        "stage": "complete",
+        "message": "Commit Guard complete.",
+        "head_sha": "head123",
+        "base_sha": "base456",
+        "report": {"verdict": "PASS"},
+        "error": None,
+    }
+
+    state = await get_commit_guard_status("proj-1", OWNER)
+
+    assert state["status"] == "completed"
+    assert state["report"] == {"verdict": "PASS"}
+
+
+@pytest.mark.asyncio
+async def test_status_marks_interrupted_persisted_run_failed(monkeypatch):
+    db = _install(monkeypatch, _project())
+    db.latest_runs[("proj-1", OWNER)] = {
+        "job_id": "run-1",
+        "project_id": "proj-1",
+        "status": "running",
+        "stage": "mapping_impact",
+        "message": "Mapping deterministic blast radius impact.",
+        "head_sha": "head123",
+        "base_sha": "base456",
+        "report": None,
+        "error": None,
+    }
+
+    state = await get_commit_guard_status("proj-1", OWNER)
+
+    assert state["status"] == "failed"
+    assert state["stage"] == "failed"
+    assert "interrupted" in state["error"].lower()
 
 
 # ---------------------------------------------------------------- concurrency

@@ -136,7 +136,6 @@ async def resolve_commit(owner: str, repo: str, head_sha: str, *, client: httpx.
         files_raw = data.get("files") or []
         python_files = [f for f in files_raw if _is_python_path(f.get("filename", "")) or _is_python_path(f.get("previous_filename", ""))]
         truncated = len(python_files) > MAX_CHANGED_PYTHON_FILES
-        python_files = python_files[:MAX_CHANGED_PYTHON_FILES]
 
         changed_files = [
             ChangedFile(
@@ -147,7 +146,7 @@ async def resolve_commit(owner: str, repo: str, head_sha: str, *, client: httpx.
                 deletions=f.get("deletions", 0),
                 patch=f.get("patch", "") or "",
             )
-            for f in python_files
+            for f in files_raw
         ]
 
         commit_meta = data.get("commit", {})

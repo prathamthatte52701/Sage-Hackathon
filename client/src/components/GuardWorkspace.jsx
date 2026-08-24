@@ -40,6 +40,35 @@ function Metric({ label, value }) {
   );
 }
 
+function shortSha(value) {
+  return value ? String(value).slice(0, 7) : "empty";
+}
+
+function ChangedFiles({ files = [] }) {
+  if (!files.length) return null;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-mono uppercase tracking-wider text-[#7C8CFF]">Changed Files</h3>
+      <div className="space-y-2">
+        {files.slice(0, 12).map((file, index) => (
+          <div key={`${file.path}-${index}`} className="rounded-lg border border-[#232936] bg-[#090B10] p-3 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className="font-mono uppercase text-[#F4C95D]">{file.status || "modified"}</span>
+                <span className="ml-2 font-semibold text-[#F4F7FB] break-all">
+                  {file.previous_path ? `${file.previous_path} -> ${file.path}` : file.path}
+                </span>
+              </div>
+              <span className="font-mono text-[#687386]">+{file.additions || 0} / -{file.deletions || 0}</span>
+            </div>
+            {file.patch && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-[#9AA4B2]">{file.patch}</pre>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FindingList({ title, items = [] }) {
   if (!items.length) return null;
   return (
@@ -60,6 +89,55 @@ function FindingList({ title, items = [] }) {
   );
 }
 
+function ImpactDetails({ report }) {
+  const summary = report.blast_delta?.summary || {};
+  const components = report.blast_delta?.components || [];
+  const tags = report.sensitive_areas || [];
+  if (!components.length && !tags.length) return null;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {components.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-xs font-mono uppercase tracking-wider text-[#7C8CFF]">Impact</h3>
+          <div className="rounded-lg border border-[#232936] bg-[#090B10] p-3 text-xs text-[#C8D0DA]">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="font-mono uppercase text-[#687386]">Routes Before</div>
+                <div className="mt-1 text-base font-bold text-[#F4F7FB]">{summary.affected_routes_before ?? 0}</div>
+              </div>
+              <div>
+                <div className="font-mono uppercase text-[#687386]">Routes After</div>
+                <div className="mt-1 text-base font-bold text-[#F4F7FB]">{summary.affected_routes_after ?? 0}</div>
+              </div>
+            </div>
+            <div className="mt-3 space-y-2">
+              {components.slice(0, 6).map((component) => (
+                <div key={component.path} className="flex items-center justify-between gap-3 border-t border-[#232936] pt-2">
+                  <span className="break-all text-[#F4F7FB]">{component.path}</span>
+                  <span className="font-mono text-[#9AA4B2]">{component.before_score} {"->"} {component.after_score}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {tags.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-xs font-mono uppercase tracking-wider text-[#7C8CFF]">Sensitive Areas</h3>
+          <div className="flex flex-wrap gap-2 rounded-lg border border-[#232936] bg-[#090B10] p-3">
+            {tags.map((tag) => (
+              <span key={tag} className="rounded-md border border-[#F4C95D]/30 bg-[#F4C95D]/10 px-2 py-1 text-[11px] font-mono uppercase text-[#F4C95D]">
+                {tag.replaceAll("_", " ")}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportView({ report, mode }) {
   if (!report) return null;
   const securityDelta = report.security_delta || {};
@@ -68,6 +146,8 @@ function ReportView({ report, mode }) {
   const changedCount = Array.isArray(changedFiles) ? changedFiles.length : changedFiles;
   const qualityDirection = report.quality_delta?.direction || "N/A";
   const sensitiveCount = report.sensitive_areas?.length || 0;
+  const isCommit = mode === "commit";
+  const docsOnly = isCommit && report.risk_score === 0 && !securityDelta.new?.length && !securityDelta.resolved?.length && !report.blast_delta?.components?.length;
 
   return (
     <div className="cm-card border-[#232936] bg-[#10131A] p-5 space-y-5">
@@ -80,7 +160,19 @@ function ReportView({ report, mode }) {
             <span className="text-xs font-mono text-[#9AA4B2]">Risk {report.risk_score ?? "N/A"}/100</span>
             {report.stale && <span className="text-xs font-mono text-[#F4C95D]">STALE</span>}
           </div>
-          <h2 className="text-lg font-extrabold text-[#F4F7FB]">{mode === "pr" ? `PR #${report.pr?.number || ""}` : "Latest Commit"}</h2>
+          <h2 className="text-lg font-extrabold text-[#F4F7FB]">
+            {mode === "pr" ? `PR #${report.pr?.number || ""}` : report.commit_message || "Latest Commit"}
+          </h2>
+          {isCommit && (
+            <div className="flex flex-wrap gap-2 text-[11px] font-mono text-[#687386]">
+              <span>HEAD {shortSha(report.head_sha)}</span>
+              <span>BASE {shortSha(report.base_sha)}</span>
+              {report.comparison_type === "initial" && <span>INITIAL COMMIT</span>}
+              {report.merge_commit && <span>MERGE COMMIT - FIRST PARENT</span>}
+              {report.truncated && <span>PYTHON ANALYSIS BOUNDED</span>}
+              {docsOnly && <span>NO PYTHON SOURCE CHANGED</span>}
+            </div>
+          )}
           <p className="text-sm text-[#9AA4B2]">{report.summary || "Guard analysis completed."}</p>
         </div>
       </div>
@@ -92,6 +184,8 @@ function ReportView({ report, mode }) {
         <Metric label="Blast Delta" value={blastSummary.overall_delta ?? 0} />
         <Metric label={mode === "pr" ? "Quality" : "Sensitive"} value={mode === "pr" ? qualityDirection : sensitiveCount} />
       </div>
+
+      {isCommit && <ChangedFiles files={report.changed_files || []} />}
 
       {(report.ai_explanation || report.ai_error) && (
         <div className="rounded-lg border border-[#232936] bg-[#090B10] p-4 text-sm">
@@ -116,8 +210,11 @@ function ReportView({ report, mode }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <FindingList title="New Findings" items={securityDelta.new || []} />
+        <FindingList title="Resolved Findings" items={securityDelta.resolved || []} />
         <FindingList title="Persisting Findings" items={securityDelta.persisting || []} />
       </div>
+
+      {isCommit && <ImpactDetails report={report} />}
     </div>
   );
 }
@@ -195,7 +292,7 @@ export default function GuardWorkspace({ mode, project }) {
   }
 
   const report = status?.report;
-  const statusLabel = status?.message || (status?.status ? `${config.title} ${status.status}.` : config.subtitle);
+  const statusLabel = status?.error || status?.message || (status?.status ? `${config.title} ${status.status}.` : config.subtitle);
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
@@ -237,7 +334,7 @@ export default function GuardWorkspace({ mode, project }) {
           <div className="rounded-lg border border-[#232936] bg-[#090B10] p-3 flex items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2 text-[#9AA4B2]">
               {error ? <AlertTriangle className="w-4 h-4 text-[#F4C95D]" /> : statusIcon(status?.status)}
-              <span>{error || status?.stage || status?.status || "ready"}</span>
+              <span>{error || status?.error || status?.stage || status?.status || "ready"}</span>
             </div>
             {status?.job_id && <span className="font-mono text-[#687386] truncate max-w-[220px]">{status.job_id}</span>}
           </div>
