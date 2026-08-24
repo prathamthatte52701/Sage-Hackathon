@@ -15,6 +15,7 @@ import time
 
 from db.mongo import (
     create_pr_guard_run,
+    get_owned_latest_pr_guard_run,
     get_owned_pr_guard_cached_report,
     get_owned_pr_guard_run,
     get_owned_project_metadata,
@@ -25,6 +26,7 @@ from services.commit_guard_security import compute_security_delta
 from services.git_history import (
     ChangedFile,
     GitHistoryUnavailable,
+    MAX_CHANGED_PYTHON_FILES,
     PullRequestInfo,
     fetch_snapshot,
     resolve_pull_request,
@@ -87,7 +89,28 @@ async def _set_stage(state: dict, stage: str, message: str = "") -> None:
 
 
 def _changed_python_files(info: PullRequestInfo) -> list[ChangedFile]:
-    return [f for f in info.changed_files if f.path.endswith(".py") or f.path.endswith(".pyi")]
+    return [f for f in info.changed_files if f.path.endswith(".py") or f.path.endswith(".pyi")][:MAX_CHANGED_PYTHON_FILES]
+
+
+def _rename_head_paths(snapshot: dict[str, str], renamed_paths: dict[str, str]) -> dict[str, str]:
+    if not renamed_paths:
+        return snapshot
+    renamed = dict(snapshot)
+    for new_path, old_path in renamed_paths.items():
+        if old_path in renamed and new_path not in renamed:
+            renamed[new_path] = renamed.pop(old_path)
+    return renamed
+
+
+async def _mark_stale_if_needed(report: dict, owner: str, repo: str, pr_number: int, analyzed_head: str) -> None:
+    try:
+        current_head = await resolve_pull_request_head_sha(owner, repo, pr_number)
+    except GitHistoryUnavailable:
+        return
+    if current_head and current_head != analyzed_head:
+        report["stale"] = True
+        report["current_head_sha"] = current_head
+        report["summary"] = f"STALE - PR changed during analysis. This report is for {analyzed_head[:7]}, current HEAD is {current_head[:7]}."
 
 
 def _static_validity(head_snapshot: dict[str, str], changed_paths: list[str]) -> tuple[bool, list[str]]:
@@ -445,7 +468,9 @@ async def _run(project_id: str, owner_user_id: str, pr_number: int, state: dict)
 
         cached = await get_owned_pr_guard_cached_report(project_id, owner_user_id, pr_number, info.merge_base_sha, info.head_sha)
         if cached is not None:
-            state["report"] = cached["report"]
+            report = cached["report"]
+            await _mark_stale_if_needed(report, owner, repo, pr_number, info.head_sha)
+            state["report"] = report
             state["status"] = "complete"
             state["stage"] = "complete"
             await _persist(state)
@@ -477,6 +502,7 @@ async def _run(project_id: str, owner_user_id: str, pr_number: int, state: dict)
                 ai_explanation="",
                 ai_error="",
             )
+            await _mark_stale_if_needed(report, owner, repo, pr_number, info.head_sha)
             state["report"] = report
             state["status"] = "complete"
             state["stage"] = "complete"
@@ -489,9 +515,10 @@ async def _run(project_id: str, owner_user_id: str, pr_number: int, state: dict)
 
         await _set_stage(state, "mapping_changes", "Mapping changed Python components.")
         change_map = _change_map(info, head_snapshot, changed_paths)
+        comparable_base_snapshot = _rename_head_paths(base_snapshot, renamed_paths)
 
         await _set_stage(state, "mapping_impact", "Expanding evidence-backed blast radius.")
-        blast_delta = await compute_blast_delta(base_snapshot, head_snapshot, changed_paths)
+        blast_delta = await compute_blast_delta(comparable_base_snapshot, head_snapshot, changed_paths)
         sensitive_areas = detect_sensitive_areas(head_snapshot, changed_paths)
 
         await _set_stage(state, "analyzing_base", "Running Defender on merge-base snapshot.")
@@ -499,7 +526,7 @@ async def _run(project_id: str, owner_user_id: str, pr_number: int, state: dict)
         security_delta = await compute_security_delta(base_snapshot, head_snapshot, renamed_paths)
 
         await _set_stage(state, "evaluating_quality", "Calculating deterministic quality delta.")
-        quality_delta = _compute_quality_delta(base_snapshot, head_snapshot, changed_paths)
+        quality_delta = _compute_quality_delta(comparable_base_snapshot, head_snapshot, changed_paths)
         validity_ok, broken_files = _static_validity(head_snapshot, changed_paths)
 
         await _set_stage(state, "calculating_risk", "Calculating deterministic PR risk score.")
@@ -538,11 +565,7 @@ async def _run(project_id: str, owner_user_id: str, pr_number: int, state: dict)
         report["ai_explanation"] = explanation
         report["ai_error"] = ai_error
 
-        current_head = await resolve_pull_request_head_sha(owner, repo, pr_number)
-        if current_head and current_head != info.head_sha:
-            report["stale"] = True
-            report["current_head_sha"] = current_head
-            report["summary"] = f"STALE - PR changed during analysis. This report is for {info.head_sha[:7]}, current HEAD is {current_head[:7]}."
+        await _mark_stale_if_needed(report, owner, repo, pr_number, info.head_sha)
 
         state["report"] = report
         state["status"] = "complete"
@@ -600,12 +623,21 @@ async def start_pr_guard(project_id: str, owner_user_id: str, pr_number: int) ->
     return _public_state(state)
 
 
-async def get_pr_guard_status(project_id: str, owner_user_id: str, run_id: str) -> dict | None:
+async def get_pr_guard_status(project_id: str, owner_user_id: str, run_id: str | None = None, pr_number: int | None = None) -> dict | None:
+    if run_id is None and pr_number is not None:
+        active_id = _active_by_project_pr.get((project_id, pr_number))
+        if active_id:
+            run_id = active_id
     state = _active_runs.get(run_id)
     if state and state.get("project_id") == project_id and state.get("owner_user_id") == owner_user_id:
         return _public_state(state)
     try:
-        run = await get_owned_pr_guard_run(project_id, owner_user_id, run_id)
+        if run_id is not None:
+            run = await get_owned_pr_guard_run(project_id, owner_user_id, run_id)
+        elif pr_number is not None:
+            run = await get_owned_latest_pr_guard_run(project_id, owner_user_id, pr_number)
+        else:
+            run = None
     except Exception as exc:
         print(f"[pr-guard] persisted status lookup failed project_id={project_id}: {type(exc).__name__}: {exc}")
         return None
@@ -615,4 +647,20 @@ async def get_pr_guard_status(project_id: str, owner_user_id: str, run_id: str) 
         run["status"] = "failed"
         run["stage"] = "failed"
         run["error"] = "PR Guard was interrupted because the server restarted. Start a new run to continue."
+    report = run.get("report") if isinstance(run.get("report"), dict) else None
+    pr_number = run.get("pull_request_number")
+    if run.get("status") == "complete" and report and pr_number:
+        try:
+            project = await get_owned_project_metadata(project_id, owner_user_id)
+            owner = (project or {}).get("github_owner")
+            repo = (project or {}).get("github_repo")
+            if owner and repo:
+                current_head = await resolve_pull_request_head_sha(owner, repo, int(pr_number))
+                analyzed_head = report.get("head_sha") or run.get("head_sha")
+                if current_head and analyzed_head and current_head != analyzed_head:
+                    report["stale"] = True
+                    report["current_head_sha"] = current_head
+                    report["summary"] = f"STALE - PR changed after analysis. This report is for {str(analyzed_head)[:7]}, current HEAD is {current_head[:7]}."
+        except Exception as exc:
+            print(f"[pr-guard] stale check skipped project_id={project_id}: {type(exc).__name__}: {exc}")
     return run

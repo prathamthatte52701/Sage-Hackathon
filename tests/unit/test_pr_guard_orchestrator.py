@@ -1,13 +1,16 @@
 import pytest
 
+import services.git_history as git_history_module
 import services.pr_guard as pr_guard_module
-from services.git_history import ChangedFile, GitHistoryUnavailable, PullRequestInfo
+from services.git_history import ChangedFile, GitHistoryUnavailable, PullRequestInfo, MAX_CHANGED_PYTHON_FILES
 from services.groq_client import GroqUnavailableError
 from services.pr_guard import _compute_verdict, _run, get_pr_guard_status, start_pr_guard
 
 
 OWNER = "demo-user"
 PROJECT_ID = "proj-1"
+SAFE = "def add(a, b):\n    return a + b\n"
+SECRET = "API_KEY = 'abcdef12345'\n"
 
 
 def _pr_info(**overrides) -> PullRequestInfo:
@@ -63,6 +66,16 @@ class _FakeDB:
     async def get_owned_pr_guard_cached_report(self, project_id, owner_user_id, pr_number, merge_base_sha, head_sha):
         return self.cached
 
+    async def get_owned_latest_pr_guard_run(self, project_id, owner_user_id, pr_number):
+        for run in reversed(list(self.updates.values())):
+            if (
+                run.get("project_id") == project_id
+                and run.get("owner_user_id") == owner_user_id
+                and run.get("pull_request_number") == pr_number
+            ):
+                return run
+        return None
+
 
 @pytest.fixture(autouse=True)
 def _reset_active_runs():
@@ -80,6 +93,7 @@ def _install_db(monkeypatch, project=None):
     monkeypatch.setattr(pr_guard_module, "update_pr_guard_run", db.update_pr_guard_run)
     monkeypatch.setattr(pr_guard_module, "get_owned_pr_guard_run", db.get_owned_pr_guard_run)
     monkeypatch.setattr(pr_guard_module, "get_owned_pr_guard_cached_report", db.get_owned_pr_guard_cached_report)
+    monkeypatch.setattr(pr_guard_module, "get_owned_latest_pr_guard_run", db.get_owned_latest_pr_guard_run)
     return db
 
 
@@ -143,8 +157,12 @@ async def test_cached_pr_report_skips_reanalysis(monkeypatch):
     async def fail_security(*args, **kwargs):
         raise AssertionError("cached PR report must not recompute security delta")
 
+    async def same_head(owner, repo, number):
+        return "head456"
+
     monkeypatch.setattr(pr_guard_module, "resolve_pull_request", fake_resolve)
     monkeypatch.setattr(pr_guard_module, "compute_security_delta", fail_security)
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request_head_sha", same_head)
 
     state = {"run_id": "run-1", "job_id": "run-1", "project_id": PROJECT_ID, "owner_user_id": OWNER, "pull_request_number": 7, "status": "queued", "stage": "queued", "report": None, "error": None}
     await _run(PROJECT_ID, OWNER, 7, state)
@@ -195,6 +213,66 @@ async def test_stale_pr_head_is_marked_after_analysis(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_temporary_vulnerability_fixed_before_final_head_is_not_new(monkeypatch):
+    _install_db(monkeypatch)
+
+    async def fake_resolve(owner, repo, number):
+        return _pr_info(commit_count=2)
+
+    async def fake_fetch(owner, repo, paths, ref):
+        return {"app.py": SAFE}
+
+    async def fake_blast_delta(base, head, changed_paths):
+        return {"components": [], "summary": {"overall_before": 0, "overall_after": 0, "overall_delta": 0, "affected_routes_before": 0, "affected_routes_after": 0}}
+
+    async def no_groq_keys(*args, **kwargs):
+        raise GroqUnavailableError("no keys")
+
+    async def same_head(owner, repo, number):
+        return "head456"
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request", fake_resolve)
+    monkeypatch.setattr(pr_guard_module, "fetch_snapshot", fake_fetch)
+    monkeypatch.setattr(pr_guard_module, "compute_blast_delta", fake_blast_delta)
+    monkeypatch.setattr(pr_guard_module, "detect_sensitive_areas", lambda head, paths: [])
+    monkeypatch.setattr(pr_guard_module, "call_groq", no_groq_keys)
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request_head_sha", same_head)
+
+    state = {"run_id": "run-1", "job_id": "run-1", "project_id": PROJECT_ID, "owner_user_id": OWNER, "pull_request_number": 7, "status": "queued", "stage": "queued", "report": None, "error": None}
+    await _run(PROJECT_ID, OWNER, 7, state)
+
+    assert state["status"] == "complete"
+    assert state["report"]["security_delta"]["new"] == []
+    assert state["report"]["verdict"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_completed_status_marks_report_stale_when_pr_head_advanced(monkeypatch):
+    db = _install_db(monkeypatch)
+    db.updates["run-1"] = {
+        "run_id": "run-1",
+        "project_id": PROJECT_ID,
+        "owner_user_id": OWNER,
+        "pull_request_number": 7,
+        "status": "complete",
+        "stage": "complete",
+        "head_sha": "oldhead111",
+        "report": {"head_sha": "oldhead111", "stale": False, "summary": "complete"},
+    }
+
+    async def fake_head_sha(owner, repo, number):
+        return "newhead222"
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request_head_sha", fake_head_sha)
+
+    state = await get_pr_guard_status(PROJECT_ID, OWNER, "run-1")
+
+    assert state["status"] == "complete"
+    assert state["report"]["stale"] is True
+    assert state["report"]["current_head_sha"] == "newhead222"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_start_returns_same_running_pr_job(monkeypatch):
     _install_db(monkeypatch)
 
@@ -221,3 +299,220 @@ async def test_status_recovers_interrupted_persisted_run(monkeypatch):
     assert state["status"] == "failed"
     assert state["stage"] == "failed"
     assert "interrupted" in state["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_docs_only_pr_still_marks_stale_head(monkeypatch):
+    _install_db(monkeypatch)
+    info = _pr_info(changed_files=[ChangedFile(path="README.md", status="modified")])
+
+    async def fake_resolve(owner, repo, number):
+        return info
+
+    async def fake_head(owner, repo, number):
+        return "new-head"
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request", fake_resolve)
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request_head_sha", fake_head)
+
+    state = {"run_id": "run-1", "job_id": "run-1", "project_id": PROJECT_ID, "owner_user_id": OWNER, "pull_request_number": 7, "status": "queued", "stage": "queued", "report": None, "error": None}
+    await _run(PROJECT_ID, OWNER, 7, state)
+
+    assert state["status"] == "complete"
+    assert state["report"]["stale"] is True
+    assert state["report"]["current_head_sha"] == "new-head"
+
+
+@pytest.mark.asyncio
+async def test_cached_pr_report_is_marked_stale_when_head_advanced(monkeypatch):
+    db = _install_db(monkeypatch)
+    db.cached = {"report": {"verdict": "PASS", "cached": True, "stale": False}}
+
+    async def fake_resolve(owner, repo, number):
+        return _pr_info()
+
+    async def fake_head(owner, repo, number):
+        return "new-head"
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request", fake_resolve)
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request_head_sha", fake_head)
+
+    state = {"run_id": "run-1", "job_id": "run-1", "project_id": PROJECT_ID, "owner_user_id": OWNER, "pull_request_number": 7, "status": "queued", "stage": "queued", "report": None, "error": None}
+    await _run(PROJECT_ID, OWNER, 7, state)
+
+    assert state["status"] == "complete"
+    assert state["report"]["stale"] is True
+    assert state["report"]["current_head_sha"] == "new-head"
+
+
+@pytest.mark.asyncio
+async def test_new_vulnerability_in_final_pr_head_blocks(monkeypatch):
+    _install_db(monkeypatch)
+
+    async def fake_resolve(owner, repo, number):
+        return _pr_info(changed_files=[ChangedFile(path="app.py", status="modified")])
+
+    async def fake_fetch(owner, repo, paths, ref):
+        return {"app.py": SECRET if ref == "head456" else SAFE}
+
+    async def fake_blast_delta(base, head, changed_paths):
+        return {"components": [], "summary": {"overall_before": 0, "overall_after": 0, "overall_delta": 0, "affected_routes_before": 0, "affected_routes_after": 0}}
+
+    async def no_groq_keys(*args, **kwargs):
+        raise GroqUnavailableError("no keys")
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request", fake_resolve)
+    monkeypatch.setattr(pr_guard_module, "fetch_snapshot", fake_fetch)
+    monkeypatch.setattr(pr_guard_module, "compute_blast_delta", fake_blast_delta)
+    monkeypatch.setattr(pr_guard_module, "detect_sensitive_areas", lambda head, paths: [])
+    monkeypatch.setattr(pr_guard_module, "call_groq", no_groq_keys)
+    async def same_head(owner, repo, number):
+        return "head456"
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request_head_sha", same_head)
+
+    state = {"run_id": "run-1", "job_id": "run-1", "project_id": PROJECT_ID, "owner_user_id": OWNER, "pull_request_number": 7, "status": "queued", "stage": "queued", "report": None, "error": None}
+    await _run(PROJECT_ID, OWNER, 7, state)
+
+    assert state["status"] == "complete"
+    assert len(state["report"]["security_delta"]["new"]) == 1
+    assert state["report"]["verdict"] == "BLOCK"
+
+
+@pytest.mark.asyncio
+async def test_status_recovers_latest_pr_run_by_number(monkeypatch):
+    db = _install_db(monkeypatch)
+    db.updates["run-1"] = {
+        "run_id": "run-1",
+        "project_id": PROJECT_ID,
+        "owner_user_id": OWNER,
+        "pull_request_number": 7,
+        "status": "complete",
+        "stage": "complete",
+        "report": {"verdict": "PASS"},
+    }
+
+    state = await get_pr_guard_status(PROJECT_ID, OWNER, pr_number=7)
+
+    assert state["status"] == "complete"
+    assert state["report"]["verdict"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_quality_delta_normalizes_renamed_paths(monkeypatch):
+    _install_db(monkeypatch)
+
+    async def fake_resolve(owner, repo, number):
+        return _pr_info(changed_files=[ChangedFile(path="new_name.py", previous_path="old_name.py", status="renamed")])
+
+    async def fake_fetch(owner, repo, paths, ref):
+        return {"new_name.py": SAFE} if ref == "head456" else {"old_name.py": SAFE}
+
+    async def fake_security_delta(base, head, renamed=None):
+        return {"base_findings": [], "head_findings": [], "new": [], "resolved": [], "persisting": []}
+
+    async def fake_blast_delta(base, head, changed_paths):
+        assert "new_name.py" in base
+        assert "old_name.py" not in base
+        return {"components": [], "summary": {"overall_before": 0, "overall_after": 0, "overall_delta": 0, "affected_routes_before": 0, "affected_routes_after": 0}}
+
+    async def no_groq_keys(*args, **kwargs):
+        raise GroqUnavailableError("no keys")
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request", fake_resolve)
+    monkeypatch.setattr(pr_guard_module, "fetch_snapshot", fake_fetch)
+    monkeypatch.setattr(pr_guard_module, "compute_security_delta", fake_security_delta)
+    monkeypatch.setattr(pr_guard_module, "compute_blast_delta", fake_blast_delta)
+    monkeypatch.setattr(pr_guard_module, "detect_sensitive_areas", lambda head, paths: [])
+    monkeypatch.setattr(pr_guard_module, "call_groq", no_groq_keys)
+    async def same_head(owner, repo, number):
+        return "head456"
+
+    monkeypatch.setattr(pr_guard_module, "resolve_pull_request_head_sha", same_head)
+
+    state = {"run_id": "run-1", "job_id": "run-1", "project_id": PROJECT_ID, "owner_user_id": OWNER, "pull_request_number": 7, "status": "queued", "stage": "queued", "report": None, "error": None}
+    await _run(PROJECT_ID, OWNER, 7, state)
+
+    assert state["status"] == "complete"
+    assert state["report"]["quality_delta"]["direction"] == "UNCHANGED"
+
+
+@pytest.mark.asyncio
+async def test_resolve_pull_request_pages_until_python_cap_after_non_python_files(monkeypatch):
+    docs = [{"filename": f"docs/{index}.md", "status": "modified"} for index in range(100)]
+
+    async def fake_get_json(client, url, **params):
+        if url.endswith("/pulls/7"):
+            return {
+                "number": 7,
+                "title": "Large mixed PR",
+                "state": "open",
+                "merged": False,
+                "user": {"login": "dev"},
+                "base": {"ref": "main", "sha": "base123", "repo": {"full_name": "acme/widgets"}},
+                "head": {"ref": "feature", "label": "dev:feature", "sha": "head456"},
+                "commits": 2,
+                "changed_files": 101,
+                "additions": 11,
+                "deletions": 1,
+            }
+        if "/compare/" in url:
+            return {"merge_base_commit": {"sha": "merge789"}}
+        if url.endswith("/pulls/7/files"):
+            if params.get("page") == 1:
+                return docs
+            if params.get("page") == 2:
+                return [{"filename": "app.py", "status": "modified", "additions": 1, "deletions": 1}]
+            return []
+        raise AssertionError(url)
+
+    monkeypatch.setattr(git_history_module, "_get_json", fake_get_json)
+
+    info = await git_history_module.resolve_pull_request("acme", "widgets", 7)
+
+    assert info.changed_file_count == 101
+    assert info.truncated is False
+    assert info.changed_files[-1].path == "app.py"
+
+
+@pytest.mark.asyncio
+async def test_resolve_pull_request_preserves_all_changed_file_metadata_while_bounding_python(monkeypatch):
+    python_count = MAX_CHANGED_PYTHON_FILES + 5
+    file_batch = [
+        {"filename": f"pkg/file_{index}.py", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@"}
+        for index in range(python_count)
+    ] + [
+        {"filename": "README.md", "status": "modified", "additions": 2, "deletions": 1, "patch": ""},
+    ]
+
+    async def fake_get_json(client, url, **params):
+        if url.endswith("/pulls/7"):
+            return {
+                "number": 7,
+                "title": "Large PR",
+                "body": "",
+                "state": "open",
+                "merged": False,
+                "user": {"login": "dev"},
+                "base": {"ref": "main", "sha": "base123", "repo": {"full_name": "acme/widgets"}},
+                "head": {"ref": "feature", "label": "dev:feature", "sha": "head456"},
+                "commits": 3,
+                "changed_files": len(file_batch),
+                "additions": 99,
+                "deletions": 3,
+            }
+        if "/compare/" in url:
+            return {"merge_base_commit": {"sha": "merge789"}}
+        if url.endswith("/pulls/7/files"):
+            page = int(params.get("page", 1))
+            start = (page - 1) * 100
+            return file_batch[start:start + 100]
+        raise AssertionError(f"unexpected GitHub URL {url}")
+
+    monkeypatch.setattr(git_history_module, "_get_json", fake_get_json)
+
+    info = await git_history_module.resolve_pull_request("acme", "widgets", 7)
+
+    assert len(info.changed_files) == len(file_batch)
+    assert info.changed_files[-1].path == "README.md"
+    assert info.truncated is True

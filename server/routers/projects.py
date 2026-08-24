@@ -1178,6 +1178,21 @@ async def pr_guard_status_endpoint(project_id: str, run_id: str, current_user: d
     return state
 
 
+@router.get("/projects/{project_id}/pr-guard/status")
+async def latest_pr_guard_status_endpoint(
+    project_id: str,
+    pull_request_number: int,
+    current_user: dict = Depends(get_request_user),
+):
+    project = await get_owned_project_metadata(project_id, current_user["_id"])
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "Project not found"})
+    state = await get_pr_guard_status(project_id, current_user["_id"], pr_number=pull_request_number)
+    if state is None:
+        return JSONResponse(status_code=404, content={"error": "No PR Guard run found for this project"})
+    return state
+
+
 _REANALYZE_ERROR_RESPONSE = {"error": "Could not reanalyze this project, please try again"}
 
 _DERIVED_FIELDS = (

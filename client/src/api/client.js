@@ -346,9 +346,14 @@ export async function startPrGuard(projectId, pullRequestNumber) {
   }
 }
 
-export async function getPrGuardStatus(projectId, runId) {
+export async function getPrGuardStatus(projectId, runId, pullRequestNumber) {
   try {
-    const res = await api.get(`/api/projects/${projectId}/pr-guard/${runId}/status`, { timeout: 30000 });
+    const res = runId
+      ? await api.get(`/api/projects/${projectId}/pr-guard/${runId}/status`, { timeout: 30000 })
+      : await api.get(`/api/projects/${projectId}/pr-guard/status`, {
+          params: { pull_request_number: Number(pullRequestNumber) },
+          timeout: 30000,
+        });
     return res.data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not load PR Guard status."));

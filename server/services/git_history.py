@@ -197,24 +197,24 @@ async def resolve_pull_request(owner: str, repo: str, number: int) -> PullReques
         merge_base_sha = ((compare.get("merge_base_commit") or {}).get("sha")) or base_sha
 
         files: list[ChangedFile] = []
+        python_file_count = 0
         page = 1
-        while len(files) < MAX_CHANGED_PYTHON_FILES:
+        while True:
             batch = await _get_json(client, f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}/files", per_page=100, page=page)
             if not batch:
                 break
             for item in batch:
-                if len(files) >= MAX_CHANGED_PYTHON_FILES:
-                    break
-                files.append(
-                    ChangedFile(
-                        path=item.get("filename", ""),
-                        status={"added": "added", "removed": "removed", "modified": "modified", "renamed": "renamed"}.get(item.get("status"), "modified"),
-                        previous_path=item.get("previous_filename"),
-                        additions=item.get("additions", 0),
-                        deletions=item.get("deletions", 0),
-                        patch=item.get("patch", "") or "",
-                    )
+                changed = ChangedFile(
+                    path=item.get("filename", ""),
+                    status={"added": "added", "removed": "removed", "modified": "modified", "renamed": "renamed"}.get(item.get("status"), "modified"),
+                    previous_path=item.get("previous_filename"),
+                    additions=item.get("additions", 0),
+                    deletions=item.get("deletions", 0),
+                    patch=item.get("patch", "") or "",
                 )
+                files.append(changed)
+                if _is_python_path(changed.path) or _is_python_path(changed.previous_path or ""):
+                    python_file_count += 1
             if len(batch) < 100:
                 break
             page += 1
@@ -237,7 +237,7 @@ async def resolve_pull_request(owner: str, repo: str, number: int) -> PullReques
             additions=int(pr.get("additions") or 0),
             deletions=int(pr.get("deletions") or 0),
             changed_files=files,
-            truncated=changed_file_count > len(files),
+            truncated=python_file_count > MAX_CHANGED_PYTHON_FILES,
         )
 
 

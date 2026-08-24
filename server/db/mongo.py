@@ -643,6 +643,19 @@ async def get_owned_pr_guard_run(project_id: str, owner_user_id: str, run_id: st
     return doc
 
 
+async def get_owned_latest_pr_guard_run(project_id: str, owner_user_id: str, pull_request_number: int):
+    database = _require_db()
+    doc = await database.pr_guard_runs.find_one(
+        {"project_id": project_id, "owner_user_id": owner_user_id, "pull_request_number": pull_request_number},
+        sort=[("updated_at", -1), ("started_at", -1)],
+    )
+    if doc:
+        doc["_id"] = str(doc["_id"])
+        doc["run_id"] = str(doc["_id"])
+        doc["job_id"] = str(doc["_id"])
+    return doc
+
+
 async def get_owned_pr_guard_cached_report(
     project_id: str,
     owner_user_id: str,

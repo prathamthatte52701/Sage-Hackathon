@@ -17,6 +17,7 @@ import {
 } from "../api/client";
 
 const TERMINAL = new Set(["completed", "complete", "failed", "cancelled"]);
+const PR_GUARD_STATE_KEY = "code_master_ai_pr_guard_state";
 
 function verdictTone(verdict) {
   if (verdict === "PASS") return "text-[#36D399] border-[#36D399]/35 bg-[#36D399]/10";
@@ -64,6 +65,26 @@ function ChangedFiles({ files = [] }) {
             {file.patch && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-[#9AA4B2]">{file.patch}</pre>}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function PrHeaderMeta({ report }) {
+  const pr = report.pr || {};
+  return (
+    <div className="space-y-1">
+      {pr.title && <div className="text-sm font-semibold text-[#F4F7FB]">{pr.title}</div>}
+      <div className="flex flex-wrap gap-2 text-[11px] font-mono text-[#687386]">
+        {pr.state && <span>{String(pr.state).toUpperCase()}</span>}
+        {pr.base_branch && pr.head_branch && <span>{pr.base_branch} {"<-"} {pr.head_branch}</span>}
+        {pr.author && <span>@{pr.author}</span>}
+        <span>{pr.commit_count || 0} commits</span>
+        <span>{pr.changed_file_count || 0} files</span>
+        <span>+{pr.additions || 0} / -{pr.deletions || 0}</span>
+        <span>BASE {shortSha(report.merge_base || report.comparison_base)}</span>
+        <span>HEAD {shortSha(report.head_sha || report.comparison_head)}</span>
+        {report.truncated && <span>PYTHON ANALYSIS BOUNDED</span>}
       </div>
     </div>
   );
@@ -138,6 +159,32 @@ function ImpactDetails({ report }) {
   );
 }
 
+function QualityDeltaDetails({ quality }) {
+  const dimensions = quality?.dimensions || {};
+  const entries = Object.entries(dimensions);
+  if (!entries.length) return null;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-mono uppercase tracking-wider text-[#7C8CFF]">Quality Delta</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        {entries.map(([name, item]) => (
+          <div key={name} className="rounded-lg border border-[#232936] bg-[#090B10] p-3">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-[#687386]">
+              {name.replaceAll("_", " ")}
+            </div>
+            <div className="mt-1 flex items-baseline justify-between gap-3">
+              <span className="font-mono text-sm text-[#F4F7FB]">{item.before} {"->"} {item.after}</span>
+              <span className={`text-[10px] font-mono ${item.direction === "DEGRADED" ? "text-[#FF5D73]" : item.direction === "IMPROVED" ? "text-[#36D399]" : "text-[#9AA4B2]"}`}>
+                {item.direction}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ReportView({ report, mode }) {
   if (!report) return null;
   const securityDelta = report.security_delta || {};
@@ -163,6 +210,7 @@ function ReportView({ report, mode }) {
           <h2 className="text-lg font-extrabold text-[#F4F7FB]">
             {mode === "pr" ? `PR #${report.pr?.number || ""}` : report.commit_message || "Latest Commit"}
           </h2>
+          {!isCommit && <PrHeaderMeta report={report} />}
           {isCommit && (
             <div className="flex flex-wrap gap-2 text-[11px] font-mono text-[#687386]">
               <span>HEAD {shortSha(report.head_sha)}</span>
@@ -177,6 +225,12 @@ function ReportView({ report, mode }) {
         </div>
       </div>
 
+      {report.stale && (
+        <div className="rounded-lg border border-[#F4C95D]/35 bg-[#F4C95D]/10 p-3 text-xs text-[#F4C95D]">
+          A newer PR version is available. This report analyzed HEAD {shortSha(report.head_sha || report.comparison_head)}; current HEAD is {shortSha(report.current_head_sha)}.
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Metric label="Changed" value={changedCount} />
         <Metric label="New Findings" value={securityDelta.new?.length || 0} />
@@ -185,7 +239,7 @@ function ReportView({ report, mode }) {
         <Metric label={mode === "pr" ? "Quality" : "Sensitive"} value={mode === "pr" ? qualityDirection : sensitiveCount} />
       </div>
 
-      {isCommit && <ChangedFiles files={report.changed_files || []} />}
+      <ChangedFiles files={report.changed_files || []} />
 
       {(report.ai_explanation || report.ai_error) && (
         <div className="rounded-lg border border-[#232936] bg-[#090B10] p-4 text-sm">
@@ -201,12 +255,20 @@ function ReportView({ report, mode }) {
           <div className="space-y-2">
             {report.hacker_review.hypotheses.slice(0, 4).map((item, index) => (
               <div key={`${item.title || "hypothesis"}-${index}`} className="text-xs text-[#C8D0DA]">
-                <span className="font-semibold text-[#F4F7FB]">{item.title || "Hypothesis"}:</span> {item.rationale || item.description}
+                {typeof item === "string" ? (
+                  item
+                ) : (
+                  <>
+                    <span className="font-semibold text-[#F4F7FB]">{item.title || "Hypothesis"}:</span> {item.rationale || item.description}
+                  </>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {!isCommit && <QualityDeltaDetails quality={report.quality_delta} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <FindingList title="New Findings" items={securityDelta.new || []} />
@@ -214,7 +276,7 @@ function ReportView({ report, mode }) {
         <FindingList title="Persisting Findings" items={securityDelta.persisting || []} />
       </div>
 
-      {isCommit && <ImpactDetails report={report} />}
+      <ImpactDetails report={report} />
     </div>
   );
 }
@@ -225,6 +287,7 @@ export default function GuardWorkspace({ mode, project }) {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const storageKey = mode === "pr" && projectId ? `${PR_GUARD_STATE_KEY}:${projectId}` : "";
 
   const config = useMemo(() => {
     if (mode === "pr") {
@@ -264,6 +327,21 @@ export default function GuardWorkspace({ mode, project }) {
     };
   }, [config.title, mode, projectId, status]);
 
+  useEffect(() => {
+    if (mode !== "pr" || !projectId || status) return;
+    let saved = null;
+    try {
+      saved = JSON.parse(window.localStorage.getItem(storageKey) || "null");
+    } catch {
+      saved = null;
+    }
+    if (!saved?.pull_request_number) return;
+    setPrNumber(String(saved.pull_request_number));
+    getPrGuardStatus(projectId, saved.run_id || null, saved.pull_request_number)
+      .then(setStatus)
+      .catch(() => {});
+  }, [mode, projectId, status, storageKey]);
+
   const start = async () => {
     if (!projectId || busy) return;
     if (mode === "pr" && !Number.parseInt(prNumber, 10)) {
@@ -275,6 +353,12 @@ export default function GuardWorkspace({ mode, project }) {
     try {
       const data = mode === "pr" ? await startPrGuard(projectId, prNumber) : await startCommitGuard(projectId);
       setStatus(data);
+      if (mode === "pr") {
+        window.localStorage.setItem(
+          storageKey,
+          JSON.stringify({ run_id: data.run_id || data.job_id, pull_request_number: Number(prNumber) })
+        );
+      }
     } catch (err) {
       setError(err.message || `Could not start ${config.title}.`);
     } finally {
