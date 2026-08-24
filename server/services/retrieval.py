@@ -14,6 +14,8 @@ import os
 import re
 from pathlib import PurePosixPath
 
+from services.security_findings import authoritative_security_findings
+
 _STOPWORDS = {
     "the", "is", "at", "which", "on", "a", "an", "and", "or", "of", "to", "in",
     "for", "this", "that", "does", "do", "how", "what", "where", "when", "why",
@@ -145,7 +147,7 @@ def _tokens(text: str) -> set[str]:
 
 def _rank_by_finding_severity(project: dict, top_k: int) -> list[dict]:
     severity_by_file: dict[str, int] = {}
-    for f in project.get("findings", []):
+    for f in authoritative_security_findings(project):
         path = f.get("file")
         if path:
             severity_by_file[path] = severity_by_file.get(path, 0) + _SEVERITY_WEIGHT.get(f.get("severity"), 0)

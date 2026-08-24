@@ -74,6 +74,20 @@ def test_jwt_secret_literal_fallback_is_a_hardcoded_secret_finding():
     assert findings[0]["rule"] == "jwt_insecure_secret_fallback"
 
 
+def test_empty_auth_environment_fallbacks_are_not_hardcoded_secret_findings():
+    getenv_code = "import os\nJWT_SECRET = os.getenv('JWT_SECRET', '')"
+    environ_get_code = "import os\nAPP_TOKEN = os.environ.get('APP_TOKEN', '')"
+
+    assert to_closed_world_findings(run_rules("repository/app.py", "python", getenv_code)) == []
+    assert to_closed_world_findings(run_rules("repository/app.py", "python", environ_get_code)) == []
+
+
+def test_placeholder_auth_environment_fallback_is_not_hardcoded_secret_finding():
+    code = "import os\nAPP_TOKEN = os.getenv('APP_TOKEN', 'changeme')"
+
+    assert to_closed_world_findings(run_rules("repository/app.py", "python", code)) == []
+
+
 def test_non_auth_environment_default_and_comments_are_silent():
     code = "import os\nDATABASE_URL = os.getenv('DATABASE_URL', 'postgres://localhost/app')\n# jwt.decode(token, options={'verify_signature': False})"
 

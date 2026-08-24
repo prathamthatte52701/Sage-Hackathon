@@ -101,6 +101,32 @@ def test_reliability_and_privacy_findings_affect_their_mapped_dimension():
     assert score["categories"]["security"]["finding_count"] == 1
 
 
+def test_score_uses_security_findings_over_stale_legacy_findings():
+    project = {
+        "files": [{"path": "app.py", "language": "python", "content": "print('ok')\n"}],
+        "security_findings": [],
+        "findings": [
+            {
+                "file": "app.py",
+                "line": 1,
+                "rule": "dangerous_eval",
+                "severity": "critical",
+                "category": "security",
+                "message": "stale legacy finding",
+            }
+        ],
+        "tests": [],
+        "configs": [],
+        "deploymentFiles": [],
+        "apiEndpoints": [],
+    }
+
+    score = compute_score(project)
+
+    assert score["categories"]["security"]["finding_count"] == 0
+    assert score["categories"]["security"]["score"] == 100
+
+
 def test_finding_count_reported_per_dimension():
     project = {
         "files": [{"path": "app.js", "language": "javascript", "content": "eval(x)"}],

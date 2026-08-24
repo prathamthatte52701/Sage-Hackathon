@@ -29,6 +29,7 @@ from services.context_expansion import build_finding_context
 from services.reasoning_engine import answer_project_question, confirm_and_explain_finding, generate_fix
 from services.patching import PatchError, apply_exact_replacement, apply_structured_patch, build_patch_metadata, make_unified_diff, safe_archive_path
 from services.retrieval import retrieve_relevant_files, retrieve_semantic_project_context
+from services.security_findings import authoritative_security_findings
 from services.security_rules import to_closed_world_findings
 from services.scoring import FINDING_CATEGORY_MAP, RULE_TO_STANDARD, compute_score
 from services.standards import get_standard_by_id, get_standards_for
@@ -625,6 +626,13 @@ def _resolve_finding(findings: list[dict], finding_index: int, finding_id: str =
     return None, None
 
 
+def _set_authoritative_findings_update(project: dict, findings: list[dict]) -> dict:
+    updates = {"security_findings": findings}
+    if isinstance(project.get("findings"), list):
+        updates["findings"] = findings
+    return updates
+
+
 async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
     """Canonical analysis pipeline used by both initial analysis and reanalysis."""
     stage_start = time.monotonic()
@@ -651,7 +659,7 @@ async def _run_project_analysis(project_id: str, owner_user_id: str) -> dict:
     _assign_finding_ids(analyzed.get("findings", []))
     # Phase 1 closed-world gate: additive, computed from the full (mixed
     # deterministic + AI-quality) findings list. Only findings whose rule
-    # maps to one of the 12 locked SEC-* families with a real file/line
+    # maps to one of the active V1 SEC-* families with a real file/line
     # survive -- nothing AI-produced can pass (see services/security_rules.py).
     # `findings` itself is untouched so existing scoring/UI keep working;
     # later phases switch the primary product surface to this field.
@@ -799,7 +807,7 @@ async def reason_about_finding(
         if project is None:
             return JSONResponse(status_code=404, content={"error": "Project not found"})
 
-        findings = project.get("findings", [])
+        findings = authoritative_security_findings(project)
         finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
         if finding is None:
             return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
@@ -853,7 +861,11 @@ async def reason_about_finding(
             }
             if not await update_owned_finding(project_id, current_user["_id"], finding["finding_id"], finding_updates):
                 findings[finding_index].update(finding_updates)
-                await update_owned_project(project_id, current_user["_id"], {"findings": findings})
+                await update_owned_project(
+                    project_id,
+                    current_user["_id"],
+                    _set_authoritative_findings_update(project, findings),
+                )
         except Exception as exc:
             print(f"[projects] failed to persist finding reasoning: {exc}")
 
@@ -947,7 +959,7 @@ async def transform_finding(
         if is_fix_all_running(project_id):
             return JSONResponse(status_code=409, content={"error": "Fix All is currently running for this project. Wait for it to finish before making manual changes."})
 
-        findings = project.get("findings", [])
+        findings = authoritative_security_findings(project)
         finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
         if finding is None:
             return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
@@ -995,7 +1007,11 @@ async def transform_finding(
                 project_id, current_user["_id"], finding["finding_id"], {"transform": result.model_dump()}
             ):
                 findings[finding_index]["transform"] = result.model_dump()
-                await update_owned_project(project_id, current_user["_id"], {"findings": findings})
+                await update_owned_project(
+                    project_id,
+                    current_user["_id"],
+                    _set_authoritative_findings_update(project, findings),
+                )
         except Exception as exc:
             print(f"[projects] failed to persist finding transform: {exc}")
 
@@ -1303,7 +1319,7 @@ async def apply_project_fix(
         #     return JSONResponse(status_code=409, content={"error": "Automation is currently running for this project. Wait for it to finish before applying manual fixes."})
         if is_fix_all_running(project_id):
             return JSONResponse(status_code=409, content={"error": "Fix All is currently running for this project. Wait for it to finish before making manual changes."})
-        findings = project.get("findings", [])
+        findings = authoritative_security_findings(project)
         finding_index, finding = _resolve_finding(findings, payload.finding_index, payload.finding_id)
         if finding is None:
             return JSONResponse(status_code=400, content={"error": "Invalid finding index"})
@@ -1326,7 +1342,11 @@ async def apply_project_fix(
             )
         except PatchError as exc:
             finding["fix_state"] = "Conflict"
-            await update_owned_project(project_id, current_user["_id"], {"findings": findings})
+            await update_owned_project(
+                project_id,
+                current_user["_id"],
+                _set_authoritative_findings_update(project, findings),
+            )
             print(
                 f"[projects] apply fix rejected project_id={project_id} "
                 f"finding_id={finding.get('finding_id')} reason={exc.reason}"
@@ -1360,6 +1380,7 @@ async def apply_project_fix(
             current_user["_id"],
             {
                 "files": project["files"],
+                "security_findings": findings,
                 "findings": findings,
                 "patches": project.get("patches", []),
                 "source_revision": int(project.get("source_revision", 1)) + 1,

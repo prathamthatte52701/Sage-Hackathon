@@ -25,8 +25,8 @@ from services.security_rules import (
 
 # ---------------------------------------------------------------- registry
 
-def test_registry_has_exactly_12_locked_rules():
-    assert len(SUPPORTED_SECURITY_RULES) == 12
+def test_registry_has_exactly_11_active_v1_rules():
+    assert len(SUPPORTED_SECURITY_RULES) == 11
 
 
 def test_registry_contains_exact_locked_rule_ids():
@@ -34,7 +34,7 @@ def test_registry_contains_exact_locked_rule_ids():
         "SEC-HARDCODED-SECRET", "SEC-SQL-INJECTION", "SEC-NOSQL-INJECTION",
         "SEC-COMMAND-INJECTION", "SEC-SSRF", "SEC-PATH-TRAVERSAL-FILE",
         "SEC-UNSAFE-DESERIALIZATION", "SEC-EVAL-EXEC", "SEC-TLS-CORS-MISCONFIG",
-        "SEC-WEAK-CRYPTO-RANDOM", "SEC-AUTH-SESSION", "SEC-DEPENDENCY-RISK",
+        "SEC-WEAK-CRYPTO-RANDOM", "SEC-AUTH-SESSION",
     }
     assert set(SUPPORTED_SECURITY_RULES.keys()) == expected
 
@@ -72,7 +72,7 @@ def test_every_mapped_detector_rule_targets_a_locked_canonical_id():
 
 def test_generic_non_security_detector_rules_are_not_mapped():
     # These are real detector rule ids (services/analyzers/rules.py) that
-    # exist today but are NOT one of the 12 locked families.
+    # exist today but are NOT one of the 11 active V1 families.
     excluded = {
         "empty_exception_handler", "todo_marker", "debug_config_enabled",
         "sensitive_logging", "blocking_call_in_async", "unsafe_redirect",
@@ -116,11 +116,40 @@ def test_python_taint_sql_injection_passes_the_locked_sql_gate():
     assert gated[0]["deterministic_evidence"] is True
 
 
-def test_all_12_families_have_at_least_one_mapped_detector():
+def test_all_active_v1_families_have_at_least_one_mapped_detector():
     mapped_canonicals = set(DETECTOR_RULE_TO_CANONICAL.values())
-    # SEC-DEPENDENCY-RISK is intentionally not detector-mapped -- it comes
-    # from manifest parsing (Phase 3.12), a separate, non-regex pipeline.
-    assert mapped_canonicals == set(SUPPORTED_SECURITY_RULES) - {"SEC-DEPENDENCY-RISK"}
+    assert mapped_canonicals == set(SUPPORTED_SECURITY_RULES)
+
+
+def test_dependency_risk_is_not_claimed_as_active_v1_without_detector_path():
+    assert "SEC-DEPENDENCY-RISK" not in SUPPORTED_SECURITY_RULES
+    assert "dependency_risk" not in DETECTOR_RULE_TO_CANONICAL
+
+
+def test_python_taint_command_and_ssrf_rules_pass_canonical_gate():
+    findings = [
+        {
+            "file": "app.py",
+            "line": 3,
+            "rule": "command_injection",
+            "severity": "critical",
+            "evidence_type": "ast_source_sink",
+            "evidence": "subprocess.run(cmd, shell=True)",
+        },
+        {
+            "file": "app.py",
+            "line": 8,
+            "rule": "ssrf",
+            "severity": "high",
+            "evidence_type": "ast_source_sink",
+            "evidence": "requests.get(url)",
+        },
+    ]
+
+    gated = to_closed_world_findings(findings)
+
+    assert [finding["rule_id"] for finding in gated] == ["SEC-COMMAND-INJECTION", "SEC-SSRF"]
+    assert all(finding["evidence_type"] == "ast_source_sink" for finding in gated)
 
 
 def test_gate_does_not_mutate_input_list():

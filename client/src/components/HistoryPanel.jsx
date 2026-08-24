@@ -42,7 +42,7 @@ export default function HistoryPanel({ history = [] }) {
       ) : (
         <div className="space-y-3">
           {items.map((item, idx) => {
-            const findings = item.issues || item.findings || [];
+            const findings = item.issues || item.security_findings || item.findings || [];
             const counts = countBySeverity(findings);
             const total = counts.critical + counts.high + counts.medium + counts.low;
             const title = item.project_name || item.language || item.repo_name || "Review";

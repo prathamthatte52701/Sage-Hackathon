@@ -1,7 +1,7 @@
 """Phase 1: closed-world security rule registry.
 
-CODE MASTER AI is a closed-world security reviewer supporting EXACTLY these 12 locked
-rule families. This is permanent product scope -- no coding agent, LLM, RAG
+CODE MASTER AI is a closed-world security reviewer supporting EXACTLY these 11 active V1
+rule families. This is permanent product scope -- no model, LLM, RAG
 document, or frontend component may introduce a 13th category.
 
 No finding -- from any source (deterministic detector, AI explanation
@@ -23,7 +23,6 @@ SUPPORTED_SECURITY_RULES = {
     "SEC-TLS-CORS-MISCONFIG": {"title": "TLS/CORS misconfiguration", "cwe": "CWE-295"},
     "SEC-WEAK-CRYPTO-RANDOM": {"title": "Weak cryptography / insecure randomness", "cwe": "CWE-330"},
     "SEC-AUTH-SESSION": {"title": "Authentication/session security", "cwe": "CWE-287"},
-    "SEC-DEPENDENCY-RISK": {"title": "Dependency risk", "cwe": "CWE-1104"},
 }
 
 # Findings whose evidence is a single concrete pattern match (a literal
@@ -49,15 +48,17 @@ def is_supported_security_rule(rule_id) -> bool:
 # unsafe_redirect, xss_unsafe_html_sink, react_dangerous_html,
 # unsafe_tempfile, mongoose_money_number_no_validation,
 # js_numeric_coercion_default, js_date_slice_without_validation,
-# js_zero_baseline_fallback, js_unknown_type_default.
+# js_zero_baseline_fallback, js_unknown_type_default, dependency_risk.
 DETECTOR_RULE_TO_CANONICAL = {
     "hardcoded_secret": "SEC-HARDCODED-SECRET",
     "sql_concat": "SEC-SQL-INJECTION",
     "sql_injection": "SEC-SQL-INJECTION",
     "nosql_untrusted_filter": "SEC-NOSQL-INJECTION",
+    "command_injection": "SEC-COMMAND-INJECTION",
     "subprocess_shell_true": "SEC-COMMAND-INJECTION",
     "os_system_call": "SEC-COMMAND-INJECTION",
     "spawn_shell_true": "SEC-COMMAND-INJECTION",
+    "ssrf": "SEC-SSRF",
     "ssrf_untrusted_url": "SEC-SSRF",
     "path_traversal_file": "SEC-PATH-TRAVERSAL-FILE",
     "unsafe_archive_extract": "SEC-PATH-TRAVERSAL-FILE",
@@ -118,7 +119,10 @@ def to_closed_world_findings(findings: list) -> list[dict]:
         gated = dict(as_dict)
         gated["rule_id"] = canonical
         gated["deterministic_evidence"] = True
-        gated["evidence_type"] = "literal_secret" if canonical in _LITERAL_EVIDENCE_RULES else "ast_call"
+        if canonical in _LITERAL_EVIDENCE_RULES:
+            gated["evidence_type"] = "literal_secret"
+        elif gated.get("evidence_type") != "ast_source_sink":
+            gated["evidence_type"] = "ast_call"
         gated["cwe"] = SUPPORTED_SECURITY_RULES[canonical]["cwe"]
         kept.append(gated)
     return kept

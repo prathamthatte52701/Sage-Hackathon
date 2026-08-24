@@ -1,10 +1,39 @@
 from services.analyzer import analyze_project
+from services.analyzer import analyze_project
 from services.analyzers.rules import RULE_METADATA, run_rules
+from services.security_rules import to_closed_world_findings
 
 
 def test_hardcoded_secret_true_positive():
     findings = run_rules("app.py", "python", "API_KEY = 'abcdef12345'\n")
     assert any(f["rule"] == "hardcoded_secret" for f in findings)
+
+
+def _analyze_security_rules(code: str) -> list[str]:
+    project = {
+        "files": [{"path": "app.py", "language": "python", "content": code}],
+    }
+    analyzed = analyze_project(project)
+    gated = to_closed_world_findings(analyzed["findings"])
+    return [finding["rule_id"] for finding in gated]
+
+
+def test_taint_command_injection_survives_dedup_and_closed_world_gate():
+    code = "cmd = request.args['cmd']\nsubprocess.run(cmd, shell=True)\n"
+
+    assert _analyze_security_rules(code) == ["SEC-COMMAND-INJECTION"]
+
+
+def test_taint_ssrf_survives_dedup_and_closed_world_gate():
+    code = "url = request.args['url']\nrequests.get(url)\n"
+
+    assert _analyze_security_rules(code) == ["SEC-SSRF"]
+
+
+def test_overlapping_command_detector_and_taint_result_dedupes_to_one_canonical_finding():
+    code = "cmd = request.args['cmd']\nsubprocess.run(cmd, shell=True)\n"
+
+    assert _analyze_security_rules(code).count("SEC-COMMAND-INJECTION") == 1
 
 
 def test_hardcoded_secret_ignores_comment_and_fake_example():

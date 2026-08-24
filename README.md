@@ -16,7 +16,7 @@ Current product capabilities include Python repository analysis, deterministic s
 
 ## The Product Contract
 
-CODE MASTER AI is moving to a closed-world security model. Its long-term review boundary is intentionally limited to these twelve rule families:
+CODE MASTER AI uses a closed-world security model. V1 actively certifies eleven deterministic rule families; dependency-risk scanning remains planned until a real manifest advisory detector is wired into the same gate.
 
 | # | Canonical family | Examples of evidence CODE MASTER AI must require |
 | --- | --- | --- |
@@ -31,7 +31,6 @@ CODE MASTER AI is moving to a closed-world security model. Its long-term review 
 | 09 | TLS and CORS misconfiguration | Concrete insecure transport or credentialed CORS configuration |
 | 10 | Weak crypto or randomness | Weak primitive in a security-sensitive use case |
 | 11 | Auth and session security | Deterministically provable session or ownership defect |
-| 12 | Dependency risk | Manifest evidence matched to authoritative dependency metadata |
 
 AI, RAG, and the frontend do **not** get to invent findings. Their role is to enrich deterministic, evidence-backed results with explanation, standards guidance, and safe remediation proposals.
 
@@ -43,7 +42,7 @@ AI, RAG, and the frontend do **not** get to invent findings. Their role is to en
 - Apply a patch when the target is missing, ambiguous, stale, overlapping, or malformed.
 - Pretend a missing source file or validation result is available.
 
-The 12-rule contract is the product direction and certification boundary. Only test-backed detector behavior should be treated as implemented or certified.
+Only test-backed detector behavior should be treated as implemented or certified. Dependency risk is part of the product direction, but it is not an active V1 finding family.
 
 ---
 
@@ -508,7 +507,7 @@ The test suite covers the core contracts behind the product: deterministic analy
 
 CODE MASTER AI is an evidence-first security workspace, not a replacement for a full secure-development program or expert review. Static analysis has language and semantic limits; some high-confidence remediation still needs human review. AI features can enrich a verified finding, but they are not an authority for discovering or proving one.
 
-The closed-world twelve-rule model is intentionally phase-gated. Do not represent a rule family as certified until its positive, negative, adversarial, determinism, and regression gates are all green.
+The closed-world model is intentionally phase-gated. Do not represent a rule family as certified until its positive, negative, adversarial, determinism, and regression gates are all green.
 
 ---
 

@@ -1,4 +1,4 @@
-"""Phase 6 (P0): mechanical source grounding for AI-generated findings.
+"""Phase 6 (P0): mechanical source grounding for model-generated findings.
 
 An AI candidate finding must not be accepted merely because its JSON schema
 validated. Before a finding reaches the user, verify -- mechanically, not by

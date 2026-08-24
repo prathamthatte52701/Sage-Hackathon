@@ -10,6 +10,7 @@ import CodeViewer from "./CodeViewer";
 import EvidencePanel from "./EvidencePanel";
 import FixAllModal from "./FixAllModal";
 import { getProjectFile } from "../api/client";
+import { getSecurityFindings } from "../utils/securityFindings";
 
 export default function FindingExplorer({
   project,
@@ -21,7 +22,7 @@ export default function FindingExplorer({
   reasoning,
   onFixAllComplete,
 }) {
-  const findings = project?.findings ?? [];
+  const findings = getSecurityFindings(project);
   const files = project?.files ?? [];
   const [showFixAll, setShowFixAll] = useState(false);
 

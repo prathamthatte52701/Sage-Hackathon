@@ -231,6 +231,60 @@ async def test_project_apply_fix_returns_sanitized_patch_reason(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_project_apply_fix_uses_security_findings_over_stale_legacy_findings(monkeypatch):
+    project = {
+        "_id": "p1",
+        "session_id": "s1",
+        "project": {"name": "demo"},
+        "files": [{"path": "src/app.py", "language": "python", "content": "API_KEY = 'real-secret-value-123'\n"}],
+        "security_findings": [
+            {
+                "finding_id": "real",
+                "file": "src/app.py",
+                "line": 1,
+                "rule": "hardcoded_secret",
+                "transform": {
+                    "original_snippet": "API_KEY = 'real-secret-value-123'",
+                    "proposed_fix": "API_KEY = os.environ['API_KEY']",
+                },
+            }
+        ],
+        "findings": [
+            {
+                "finding_id": "stale",
+                "file": "src/app.py",
+                "line": 1,
+                "rule": "dangerous_eval",
+                "transform": {
+                    "original_snippet": "eval(user_input)",
+                    "proposed_fix": "safe_parse(user_input)",
+                },
+            }
+        ],
+    }
+    saved = {}
+
+    async def fake_get_owned_project(_id, _owner_user_id):
+        return project
+
+    async def fake_update_owned_project(_id, _owner_user_id, updates, **_kwargs):
+        saved.update(updates)
+        return True
+
+    monkeypatch.setattr(projects, "get_owned_project", fake_get_owned_project)
+    monkeypatch.setattr(projects, "update_owned_project", fake_update_owned_project)
+
+    result = await projects.apply_project_fix(
+        "p1", ApplyProjectFixRequest(finding_id="real"), current_user={"_id": "test-user"}
+    )
+
+    assert result["status"] == "applied"
+    assert saved["security_findings"][0]["fix_state"] == "Applied"
+    assert saved["findings"][0]["finding_id"] == "real"
+    assert saved["files"][0]["content"] == "API_KEY = os.environ['API_KEY']\n"
+
+
+@pytest.mark.asyncio
 async def test_download_fixed_zip_preserves_paths_and_content(monkeypatch):
     project = {
         "project": {"name": "demo"},

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import useSessionId from "./hooks/useSessionId";
 import { useAuth } from "./context/AuthContext";
 import AuthScreen from "./components/AuthScreen";
@@ -26,6 +26,7 @@ import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
 import CodeEditor from "./components/CodeEditor";
 import { buildPostFixResult, getAuthoritativeScore } from "./utils/postFixResult";
+import { getSecurityFindings } from "./utils/securityFindings";
 import {
   reviewCode,
   generatePasteFix,
@@ -48,6 +49,7 @@ const ACTIVE_PROJECT_KEY = "code_master_ai_active_project_id";
 export default function App() {
   const sessionId = useSessionId();
   const { user, loading: authLoading, enabled: authEnabled } = useAuth();
+  const projectRequestRef = useRef(0);
 
   // Navigation State: "overview" | "findings" | "paste_review" | "projects" | "chat" | "architecture" | "history"
   const [activeTab, setActiveTab] = useState("projects");
@@ -90,6 +92,15 @@ export default function App() {
   // History Log State
   const [historyItems, setHistoryItems] = useState([]);
 
+  const beginProjectRequest = useCallback(() => {
+    projectRequestRef.current += 1;
+    return projectRequestRef.current;
+  }, []);
+
+  const isCurrentProjectRequest = useCallback((requestId) => {
+    return projectRequestRef.current === requestId;
+  }, []);
+
   // Fetch History Logs
   const refreshHistory = useCallback(async () => {
     try {
@@ -112,13 +123,17 @@ export default function App() {
 
   const refreshActiveProject = useCallback(async (projectId) => {
     if (!projectId) return;
+    const requestId = beginProjectRequest();
     const fresh = await getProject(projectId);
+    if (!isCurrentProjectRequest(requestId)) return;
     let scored = null;
     try {
       scored = await scoreProject(projectId);
     } catch {
       scored = null;
     }
+    if (!isCurrentProjectRequest(requestId)) return;
+    const securityFindings = getSecurityFindings(fresh);
     setProjectBundle((prev) => ({
       ...prev,
       id: projectId,
@@ -126,10 +141,11 @@ export default function App() {
       name: fresh.project?.name || fresh.name || prev?.name || "Imported Project",
       project: fresh.project || fresh,
       files: fresh.files || [],
-      findings: fresh.findings || [],
+      security_findings: securityFindings,
+      findings: securityFindings,
       score: scored || prev?.score || null,
     }));
-  }, []);
+  }, [beginProjectRequest, isCurrentProjectRequest]);
 
   useEffect(() => {
     const projectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
@@ -163,26 +179,32 @@ export default function App() {
 
     setScanError(null);
     setScanStage("reading");
+    const requestId = beginProjectRequest();
 
     try {
       localStorage.setItem(ACTIVE_PROJECT_KEY, projId);
+      setSelectedFinding(null);
       setProjectBundle({
         id: projId,
         project_id: projId,
         name: uploadData.name || uploadData.repo_name || "Imported Project",
         project: uploadData.project?.project || uploadData.project || {},
         files: uploadData.project?.files || [],
+        security_findings: [],
         findings: [],
         score: null,
       });
 
       setScanStage("analyzing");
       const analyzed = await analyzeProject(projId);
+      if (!isCurrentProjectRequest(requestId)) return;
+      const analyzedSecurityFindings = getSecurityFindings(analyzed);
       setProjectBundle((prev) => ({
         ...prev,
         project: analyzed.project || analyzed,
         files: analyzed.files || prev.files,
-        findings: analyzed.findings || [],
+        security_findings: analyzedSecurityFindings,
+        findings: analyzedSecurityFindings,
       }));
       setScanStage("scoring");
       let scored = null;
@@ -192,12 +214,14 @@ export default function App() {
         scored = null;
       }
       if (scored) {
+        if (!isCurrentProjectRequest(requestId)) return;
         setProjectBundle((prev) => ({
           ...prev,
           score: scored,
         }));
       }
       setScanStage("done");
+      if (!isCurrentProjectRequest(requestId)) return;
       setActiveTab("overview");
       refreshHistory();
       setToast({
@@ -206,6 +230,7 @@ export default function App() {
         message: "Project analysis finished. Review the overview and findings.",
       });
     } catch (err) {
+      if (!isCurrentProjectRequest(requestId)) return;
       setScanError(err.message || "Project analysis failed.");
       setScanStage(null);
       setToast({
@@ -226,6 +251,7 @@ export default function App() {
 
   const confirmNewProject = () => {
     localStorage.removeItem(ACTIVE_PROJECT_KEY);
+    beginProjectRequest();
     setProjectBundle(null);
     setSelectedFinding(null);
     // V2_AUTOMATION_DISABLED:
@@ -235,6 +261,8 @@ export default function App() {
     // setAutomationMinimized(false);
     setReanalysisResult(null);
     setActiveFixData(null);
+    setApplyingFix(false);
+    setReanalyzing(false);
     setScanStage(null);
     setScanError(null);
     setNewProjectConfirmOpen(false);
@@ -252,16 +280,21 @@ export default function App() {
   // Reanalyze Active Project
   const handleReanalyzeProject = async () => {
     if (!projectBundle?.project_id || reanalyzing) return;
+    const requestId = beginProjectRequest();
     setReanalyzing(true);
     try {
       const analyzed = await analyzeProject(projectBundle.project_id);
+      if (!isCurrentProjectRequest(requestId)) return;
       const scored = await scoreProject(projectBundle.project_id);
+      if (!isCurrentProjectRequest(requestId)) return;
 
+      const analyzedSecurityFindings = getSecurityFindings(analyzed);
       setProjectBundle((prev) => ({
         ...prev,
         project: analyzed.project || analyzed,
         files: analyzed.files || prev.files,
-        findings: analyzed.findings || [],
+        security_findings: analyzedSecurityFindings,
+        findings: analyzedSecurityFindings,
         score: scored,
       }));
 
@@ -271,13 +304,14 @@ export default function App() {
         message: "Updated project health score and static findings.",
       });
     } catch (err) {
+      if (!isCurrentProjectRequest(requestId)) return;
       setToast({
         type: "error",
         title: "Reanalysis Failed",
         message: err.message || "Could not reanalyze the project.",
       });
     } finally {
-      setReanalyzing(false);
+      if (isCurrentProjectRequest(requestId)) setReanalyzing(false);
     }
   };
 
@@ -286,17 +320,23 @@ export default function App() {
   // local state, without triggering a second full analyze pass.
   const handleFixAllComplete = async () => {
     if (!projectBundle?.project_id) return;
+    const requestId = beginProjectRequest();
     try {
       const fresh = await getProject(projectBundle.project_id);
+      if (!isCurrentProjectRequest(requestId)) return;
       const scored = await scoreProject(projectBundle.project_id);
+      if (!isCurrentProjectRequest(requestId)) return;
+      const freshSecurityFindings = getSecurityFindings(fresh);
       setProjectBundle((prev) => ({
         ...prev,
         project: fresh.project || fresh,
         files: fresh.files || prev.files,
-        findings: fresh.findings || [],
+        security_findings: freshSecurityFindings,
+        findings: freshSecurityFindings,
         score: scored,
       }));
     } catch (err) {
+      if (!isCurrentProjectRequest(requestId)) return;
       setToast({
         type: "error",
         title: "Refresh Failed",
@@ -326,6 +366,7 @@ export default function App() {
         validation: data.validation,
       });
     } catch (err) {
+      if (!isCurrentProjectRequest(requestId)) return;
       setToast({
         type: "error",
         title: "Fix Generation Failed",
@@ -348,27 +389,33 @@ export default function App() {
       return;
     }
     setApplyingFix(true);
+    const requestId = beginProjectRequest();
     const beforeScore = getAuthoritativeScore(projectBundle.score);
-    const beforeFindings = [...(projectBundle.findings || [])];
+    const beforeFindings = [...getSecurityFindings(projectBundle)];
     try {
       // Step 1: Apply the validated patch to stored source.
       await applyProjectFix(
         projectBundle.project_id,
         activeFixData.finding
       );
+      if (!isCurrentProjectRequest(requestId)) return;
 
       // Step 2: Reanalyze the current stored source and refresh its score.
       let newAnalyzed;
       let newScored;
       try {
         newAnalyzed = await reanalyzeProject(projectBundle.project_id);
+        if (!isCurrentProjectRequest(requestId)) return;
         newScored = await scoreProject(projectBundle.project_id);
+        if (!isCurrentProjectRequest(requestId)) return;
       } catch (verificationErr) {
         let fresh = null;
         let scored = null;
         try {
           fresh = await getProject(projectBundle.project_id);
+          if (!isCurrentProjectRequest(requestId)) return;
           scored = await scoreProject(projectBundle.project_id);
+          if (!isCurrentProjectRequest(requestId)) return;
         } catch {
           // The source mutation already succeeded. Keep the popup honest even
           // if the verification refresh also fails.
@@ -377,7 +424,7 @@ export default function App() {
           beforeScore,
           afterScore: getAuthoritativeScore(scored),
           beforeFindings,
-          afterFindings: fresh?.findings || [],
+          afterFindings: getSecurityFindings(fresh),
           verificationStatus: "incomplete",
           error: verificationErr.message || "Fix applied, but reanalysis could not verify the result.",
         }));
@@ -386,7 +433,8 @@ export default function App() {
             ...prev,
             project: fresh?.project || fresh || prev.project,
             files: fresh?.files || prev.files,
-            findings: fresh?.findings || prev.findings || [],
+            security_findings: fresh ? getSecurityFindings(fresh) : getSecurityFindings(prev),
+            findings: fresh ? getSecurityFindings(fresh) : getSecurityFindings(prev),
             score: scored || prev.score,
           }));
         }
@@ -400,7 +448,7 @@ export default function App() {
         return;
       }
 
-      const afterFindings = newAnalyzed.findings || [];
+      const afterFindings = getSecurityFindings(newAnalyzed);
       setReanalysisResult(buildPostFixResult({
         beforeScore,
         afterScore: getAuthoritativeScore(newScored),
@@ -413,7 +461,8 @@ export default function App() {
         ...prev,
         project: newAnalyzed.project || newAnalyzed,
         files: newAnalyzed.files || prev.files,
-        findings: newAnalyzed.findings || [],
+        security_findings: afterFindings,
+        findings: afterFindings,
         score: newScored,
       }));
 
@@ -431,7 +480,7 @@ export default function App() {
         message: err.message || "Could not apply fix safely.",
       });
     } finally {
-      setApplyingFix(false);
+      if (isCurrentProjectRequest(requestId)) setApplyingFix(false);
     }
   };
 
@@ -488,7 +537,7 @@ export default function App() {
           setMobileSidebarOpen(false);
         }}
         project={projectBundle}
-        hasFindings={Boolean(projectBundle?.findings?.length)}
+        hasFindings={Boolean(getSecurityFindings(projectBundle).length)}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
@@ -516,7 +565,7 @@ export default function App() {
                   setSelectedFinding(finding);
                   setActiveTab("findings");
                 }}
-                onSelectCategory={(category) => {
+                onSelectCategory={(_category) => {
                   setActiveTab("findings");
                 }}
               />

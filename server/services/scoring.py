@@ -10,6 +10,7 @@ from the weighted overall score rather than silently counted as 100.
 """
 
 from services.standards import get_standard_by_id
+from services.security_findings import authoritative_security_findings
 
 # maps analyzer.py rule ids -> standards.py standard ids, so every deduction
 # can cite the real external source it's grounded in.
@@ -124,7 +125,7 @@ def _category(score: int, weight: float, deductions: list[dict], status: str, fi
 
 
 def compute_score(project: dict) -> dict:
-    findings = project.get("findings", [])
+    findings = authoritative_security_findings(project)
     files = project.get("files", [])
     tests = project.get("tests", [])
     configs = project.get("configs", [])

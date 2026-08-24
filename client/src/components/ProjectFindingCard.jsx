@@ -291,7 +291,7 @@ export default function ProjectFindingCard({ finding, files, language, projectId
                 </div>
 
                 <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-300">
-                  ⚠ AI-generated suggestion — review before applying, not guaranteed correct.
+                  Model suggestion - review before applying, not guaranteed correct.
                 </p>
 
                 <div>

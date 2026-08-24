@@ -1121,7 +1121,7 @@ KNOWLEDGE_RECORDS.extend(
             production_impact="Reduces the blast radius of a provider-side breach and keeps the app aligned with data-minimization expectations for third-party processors.",
             standards=[{"name": "General", "reference": "Data minimization principle (GDPR Art. 5(1)(c) analog)"}],
             source_urls=[],
-            content="Applies specifically to outbound calls to external AI/LLM providers (OpenAI, Groq, Anthropic, etc.), not general third-party APIs.",
+            content="Applies specifically to outbound calls to external model providers, not general third-party APIs.",
         ),
         KnowledgeRecord(
             rule_id="AI-GEN-002",
@@ -1171,7 +1171,7 @@ KNOWLEDGE_RECORDS.extend(
             language=["any"],
             framework=["any"],
             severity="medium",
-            description="A cached or derived value (e.g. an AI-generated insight, a computed summary) that is written once and read thereafter needs a defined way to become stale and be regenerated when its inputs change.",
+            description="A cached or derived value (e.g. a model-generated insight, a computed summary) that is written once and read thereafter needs a defined way to become stale and be regenerated when its inputs change.",
             why_it_matters="Without an invalidation path, the cache silently serves outdated results forever once the underlying data changes, and the only way to notice is a user reporting stale numbers.",
             bad_patterns=["a cache/derived-result store with findOne-then-return-if-present logic and no TTL, version, or explicit invalidation trigger tied to the source data changing"],
             good_patterns=["a TTL, a version/hash of the source inputs stored alongside the cached value, or an explicit invalidation call at every write path that changes the source data"],

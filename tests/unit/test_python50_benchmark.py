@@ -5,16 +5,16 @@ SAGE_PYTHON_50_BENCHMARK_SUITE). Each has an app.py plus an
 EXPECTED_FINDINGS.json oracle -- the oracle is EVALUATION-ONLY and is
 never passed to the detector as source.
 
-CODE MASTER AI is closed-world: it supports exactly 12 security families. The
+CODE MASTER AI is closed-world: V1 supports exactly 11 active security families. The
 benchmark's 50 fixtures deliberately span a WIDER set of themes than
 that (reliability, performance, data-integrity, LLM-boundary, etc), so
 this suite measures two separate things:
 
   IN-SCOPE RECALL  -- of the fixtures whose oracle theme maps to one of
-                      the 12 locked families, how many does the detector
+                      the active V1 families, how many does the detector
                       catch? A miss here is a real false negative.
 
-  OUT-OF-SCOPE     -- fixtures whose theme is outside the 12 families
+  OUT-OF-SCOPE     -- fixtures whose theme is outside the active V1 families
   SILENCE             MUST produce no closed-world security finding.
                       Reporting one would be a closed-world violation
                       (worse than a miss, per the GOD spec's "prefer NO
@@ -32,7 +32,7 @@ from services.security_rules import to_closed_world_findings
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "python50"
 
 # Oracle theme -> the locked canonical family CODE MASTER AI should report for it.
-# Only themes that genuinely belong to one of the 12 families appear here;
+# Only themes that genuinely belong to one of the active V1 families appear here;
 # everything else is deliberately out of scope for the closed-world product.
 THEME_TO_CANONICAL = {
     "hardcoded_secret": "SEC-HARDCODED-SECRET",
@@ -84,18 +84,18 @@ def _security_findings(code: str):
 
 def test_fixture_corpus_is_present_and_substantial():
     assert len(FIXTURES) == 50, f"expected 50 benchmark fixtures, found {len(FIXTURES)}"
-    assert IN_SCOPE, "expected at least some fixtures mapping to the 12 locked families"
+    assert IN_SCOPE, "expected at least some fixtures mapping to the active V1 families"
 
 
 @pytest.mark.parametrize("fixture", OUT_OF_SCOPE, ids=lambda f: f["name"])
 def test_out_of_scope_fixtures_produce_no_closed_world_finding(fixture):
     """Closed-world silence: a fixture whose only real issue is outside the
-    12 locked families must not produce a security finding. This is the
+    active V1 families must not produce a security finding. This is the
     strictest closed-world guarantee -- reporting here would mean CODE MASTER AI
     invented a security family for a non-security (or unsupported) issue."""
     findings = _security_findings(fixture["code"])
     assert findings == [], (
-        f"{fixture['name']} (themes={fixture['themes']}) is out of the 12-family scope "
+        f"{fixture['name']} (themes={fixture['themes']}) is out of the active V1 scope "
         f"but produced {[f['rule_id'] for f in findings]}"
     )
 

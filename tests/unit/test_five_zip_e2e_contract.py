@@ -13,7 +13,11 @@ from services.security_rules import SUPPORTED_SECURITY_RULES
 
 
 USER = {"_id": "demo-user", "email": "demo@example.com"}
-SUITE_ROOT = Path(r"C:\Users\Pratham\Downloads\SAGE_PYTHON_50_BENCHMARK_SUITE\sage_python_50_suite")
+SUITE_ROOT_CANDIDATES = [
+    Path(__file__).resolve().parents[2] / "SAGE_PYTHON_50_BENCHMARK_SUITE" / "sage_python_50_suite",
+    Path(r"C:\Users\Pratham\Downloads\SAGE_PYTHON_50_BENCHMARK_SUITE\sage_python_50_suite"),
+]
+SUITE_ROOT = next((path for path in SUITE_ROOT_CANDIDATES if (path / "inner_zips").is_dir()), SUITE_ROOT_CANDIDATES[0])
 ZIP_DIR = SUITE_ROOT / "inner_zips"
 FIRST_FIVE = [
     "py_001_hardcoded_secret.zip",

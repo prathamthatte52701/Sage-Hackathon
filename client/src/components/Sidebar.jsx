@@ -19,6 +19,7 @@ import {
   GitPullRequest,
 } from "lucide-react";
 import { getAuthoritativeScore } from "../utils/postFixResult";
+import { getSecurityFindings } from "../utils/securityFindings";
 
 export default function Sidebar({
   activeTab,
@@ -31,6 +32,7 @@ export default function Sidebar({
   const [collapsed, setCollapsed] = useState(false);
   const hasProject = Boolean(project);
   const healthScore = getAuthoritativeScore(project?.score);
+  const securityFindings = getSecurityFindings(project);
 
   const navItems = [
     {
@@ -44,7 +46,7 @@ export default function Sidebar({
       id: "findings",
       label: "Findings",
       icon: ShieldAlert,
-      badge: project?.findings?.length || null,
+      badge: securityFindings.length || null,
       badgeColor: "text-[#FF5D73]",
       disabled: !hasFindings,
     },

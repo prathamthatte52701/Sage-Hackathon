@@ -7,6 +7,7 @@ import {
   BarChart3,
   Cpu,
 } from "lucide-react";
+import { getSecurityFindings } from "../utils/securityFindings";
 
 const CATEGORY_LABELS = {
   security: "Security",
@@ -35,7 +36,7 @@ function getCategoryColor(score) {
 export default function ProjectOverview({ project, score, onSelectFinding, onSelectCategory }) {
   const meta = project?.project || {};
   const files = project?.files ?? [];
-  const findings = project?.findings ?? [];
+  const findings = getSecurityFindings(project);
   const overall = typeof score?.overall_score === "number" ? score.overall_score : 0;
   const rating = getScoreRating(overall);
 

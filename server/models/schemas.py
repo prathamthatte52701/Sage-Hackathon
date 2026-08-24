@@ -39,7 +39,7 @@ class ReviewResponse(BaseModel):
     knowledge_retrieval: dict = {}
     language_detection: dict = {}
     # Phase 1 closed-world gate output (services/security_rules.py): only
-    # deterministic findings whose rule maps to one of the 12 locked
+    # deterministic findings whose rule maps to one of the active V1
     # SEC-* families and carry a real file/line survive here. Additive --
     # existing `issues`/`ai_quality_review` fields are untouched so the
     # current UI doesn't break; later phases will switch primary UI to

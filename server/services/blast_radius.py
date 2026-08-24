@@ -17,6 +17,7 @@ from services.analyzer import is_test_file
 from services.groq_client import GroqUnavailableError, call_groq
 from services.project_review import GLOBAL_AI_SEMAPHORE
 from services.reasoning_engine import _extract_json
+from services.security_findings import authoritative_security_findings
 from services.structural.python_ast import analyze_python_source
 
 MAX_PYTHON_FILES = 180
@@ -186,7 +187,7 @@ def _find_sensitive_sinks(content: str) -> list[str]:
 
 def _confirmed_findings(project: dict, path: str) -> list[dict]:
     findings = []
-    for finding in project.get("findings") or project.get("security_findings") or []:
+    for finding in authoritative_security_findings(project):
         if _norm_path(finding.get("file") or finding.get("path") or "") == path:
             findings.append(
                 {

@@ -1,3 +1,5 @@
+import { getSecurityFindings } from "./securityFindings";
+
 const PYTHON_SOURCE_RE = /\.(py|pyi)$/i;
 const DOC_OR_FIXTURE_RE = /(^|\/)(readme[^/]*|expected_result[^/]*|coverage|docs?|generated|cache|__pycache__)(\/|$)/i;
 const EXCLUDED_SUFFIX_RE = /\.(md|json|png|jpe?g|gif|svg|lock|log|pyc)$/i;
@@ -92,7 +94,7 @@ export function buildArchitectureGraph(project) {
   const files = (project?.files || [])
     .filter(isArchitectureSourceFile)
     .map((file) => ({ ...file, path: normalizePath(file.path || file.filename || file.name || "") }));
-  const findings = project?.findings || [];
+  const findings = getSecurityFindings(project);
   const moduleToPath = new Map(files.map((file) => [moduleNameForPath(file.path), file.path]));
 
   const nodes = files.map((file) => {

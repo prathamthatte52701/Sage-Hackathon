@@ -301,7 +301,11 @@ async def update_owned_project(
 
 
 async def update_owned_finding(project_id: str, owner_user_id: str, finding_id: str, updates: dict) -> bool:
-    """Atomically update one persisted finding without replacing its siblings."""
+    """Atomically update one persisted security finding without replacing siblings.
+
+    `security_findings` is the authoritative V1 array. Legacy `findings` is
+    mirrored only for older consumers and historical project documents.
+    """
     from bson import ObjectId
     from bson.errors import InvalidId
 
@@ -311,12 +315,18 @@ async def update_owned_finding(project_id: str, owner_user_id: str, finding_id: 
         return False
     if not finding_id:
         return False
-    fields = {f"findings.$.{key}": value for key, value in updates.items()}
-    result = await _require_db().projects.update_one(
-        {"_id": object_id, "owner_user_id": owner_user_id, "findings.finding_id": finding_id},
-        {"$set": fields},
+    database = _require_db()
+    security_fields = {f"security_findings.$.{key}": value for key, value in updates.items()}
+    security_result = await database.projects.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id, "security_findings.finding_id": finding_id},
+        {"$set": security_fields},
     )
-    return bool(result.matched_count)
+    legacy_fields = {f"findings.$.{key}": value for key, value in updates.items()}
+    legacy_result = await database.projects.update_one(
+        {"_id": object_id, "owner_user_id": owner_user_id, "findings.finding_id": finding_id},
+        {"$set": legacy_fields},
+    )
+    return bool(security_result.matched_count or legacy_result.matched_count)
 
 
 async def create_analysis_job(project_id: str, owner_user_id: str) -> str:

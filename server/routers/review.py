@@ -262,7 +262,7 @@ def detect_language(code: str, selected_language: str) -> dict:
 # instead of a fixed validation/numeric/date bias.
 _SIGNAL_PATTERNS: list[tuple[str, str, re.Pattern]] = [
     ("llm_ai_provider", "external AI/LLM trust boundary, prompt injection, third-party data privacy, data minimization",
-     re.compile(r"\b(openai|groq|anthropic|chat/completions|chat\.completions|llm)\b", re.I)),
+     re.compile(r"\b(openai|groq|chat/completions|chat\.completions|llm)\b", re.I)),
     ("outbound_http", "external service reliability, outbound timeouts, malformed response handling",
      re.compile(r"\bfetch\s*\(|\baxios\.|\brequests\.(get|post|put|delete)\(|\bhttpx\.")),
     ("json_parsing", "malformed/untrusted response handling",

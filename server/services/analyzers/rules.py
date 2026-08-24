@@ -1333,7 +1333,13 @@ def _python_auth_session_findings(content: str, path: str) -> list[dict]:
             )
             if (is_os_getenv or is_environ_get) and len(node.args) >= 2:
                 env_name, fallback = _constant_string(node.args[0]), _constant_string(node.args[1])
-                if env_name and fallback is not None and _AUTH_SECRET_ENV_NAME.search(env_name):
+                if (
+                    env_name
+                    and fallback is not None
+                    and fallback.strip()
+                    and not _is_weak_placeholder_secret_value(fallback)
+                    and _AUTH_SECRET_ENV_NAME.search(env_name)
+                ):
                     findings.append(_ast_finding(
                         path, content, node, "jwt_insecure_secret_fallback",
                         "Authentication secret environment variable has a literal fallback",
