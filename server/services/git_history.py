@@ -237,7 +237,7 @@ async def resolve_pull_request(owner: str, repo: str, number: int) -> PullReques
             additions=int(pr.get("additions") or 0),
             deletions=int(pr.get("deletions") or 0),
             changed_files=files,
-            truncated=python_file_count > MAX_CHANGED_PYTHON_FILES,
+            truncated=changed_file_count > len(files) or python_file_count > MAX_CHANGED_PYTHON_FILES,
         )
 
 
