@@ -6,14 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import AUTH_ENABLED, CORS_ORIGINS, JWT_SECRET, MONGO_URL
+from config import AUTH_ENABLED, CORS_ORIGINS, SESSION_SECRET, MONGO_URL
 from routers import auth, explain, projects, review
 from services.rate_limit import check_rate_limit
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if AUTH_ENABLED and not JWT_SECRET:
-        raise RuntimeError("JWT_SECRET is not set. Configure it in the environment before starting the server.")
+    if AUTH_ENABLED and not SESSION_SECRET:
+        raise RuntimeError(
+            "SESSION_SECRET (or JWT_SECRET fallback) is not set. "
+            "Configure it in the environment before starting the server with authentication enabled."
+        )
     if MONGO_URL:
         from db.mongo import ensure_indexes
 
@@ -90,7 +93,15 @@ async def rate_limit_middleware(request: Request, call_next):
     exempt = _is_rate_limit_exempt_status_path(path)
     if path.startswith("/api/") and not exempt:
         client_ip = request.client.host if request.client else "unknown"
-        if path in ("/api/auth/login", "/api/auth/signup"):
+        # Credential/account-mutation endpoints get a tight bucket to blunt
+        # enumeration and credential stuffing. All share one bucket per IP so
+        # an attacker hammering any of them is throttled globally.
+        if path in (
+            "/api/auth/login",
+            "/api/auth/signup",
+            "/api/auth/verify-email",
+            "/api/auth/resend-verification",
+        ):
             allowed = check_rate_limit(f"auth:{client_ip}", _AUTH_MAX_REQUESTS, _AUTH_WINDOW_SECONDS)
         else:
             allowed = check_rate_limit(client_ip)
@@ -98,6 +109,27 @@ async def rate_limit_middleware(request: Request, call_next):
             return JSONResponse(
                 status_code=429, content={"error": "Too many requests, please slow down"}
             )
+    return await call_next(request)
+
+
+# Basic CSRF/origin defence for cookie-authenticated, state-changing requests.
+# The session cookie is SameSite=Lax (blocks cross-site script/iframe POSTs),
+# and this middleware additionally rejects cross-origin mutations whose Origin
+# is not an explicitly allowed CORS origin. Same-origin (no Origin header) and
+# non-mutating requests are unaffected, so the legitimate SPA is never blocked.
+@app.middleware("http")
+async def csrf_origin_middleware(request: Request, call_next):
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+    origin = request.headers.get("origin")
+    if not origin:
+        # Non-browser / same-origin request without an Origin header.
+        return await call_next(request)
+    from urllib.parse import urlparse
+
+    allowed_hosts = {urlparse(o).netloc for o in CORS_ORIGINS}
+    if urlparse(origin).netloc not in allowed_hosts:
+        return JSONResponse(status_code=403, content={"error": "Cross-origin request blocked"})
     return await call_next(request)
 
 

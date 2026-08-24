@@ -496,21 +496,34 @@ async def get_owned_automation_run(project_id: str, owner_user_id: str):
     return doc
 
 
-async def create_user(email: str, password_hash: str) -> str:
-    """Raises pymongo.errors.DuplicateKeyError if the unique email index rejects it."""
+async def create_user(
+    email: str,
+    email_normalized: str,
+    password_hash: str,
+    role: str = "user",
+    status: str = "active",
+) -> str:
+    """Create a user. Raises DuplicateKeyError if the unique normalized-email
+    index rejects it (defence against duplicate accounts at the DB level)."""
     database = _require_db()
+    now = datetime.now(timezone.utc)
     doc = {
         "email": email,
+        "email_normalized": email_normalized,
         "password_hash": password_hash,
-        "created_at": datetime.now(timezone.utc),
+        "email_verified": False,
+        "role": role,
+        "status": status,
+        "created_at": now,
+        "updated_at": now,
     }
     result = await database.users.insert_one(doc)
     return str(result.inserted_id)
 
 
-async def get_user_by_email(email: str):
+async def get_user_by_email(email_normalized: str):
     database = _require_db()
-    doc = await database.users.find_one({"email": email})
+    doc = await database.users.find_one({"email_normalized": email_normalized})
     if doc:
         doc["_id"] = str(doc["_id"])
     return doc
@@ -529,6 +542,115 @@ async def get_user_by_id(user_id: str):
     if doc:
         doc["_id"] = str(doc["_id"])
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Server-side opaque sessions. Only the HMAC digest of the raw token is stored;
+# the raw token lives solely in the HttpOnly cookie.
+# ---------------------------------------------------------------------------
+
+
+async def create_session_record(token_hash: str, user_id: str, expires_at, metadata: dict | None = None) -> str:
+    database = _require_db()
+    now = datetime.now(timezone.utc)
+    doc = {
+        "token_hash": token_hash,
+        "user_id": user_id,
+        "created_at": now,
+        "last_seen_at": now,
+        "expires_at": expires_at,
+        "revoked_at": None,
+        "metadata": metadata or {},
+    }
+    result = await database.sessions.insert_one(doc)
+    return str(result.inserted_id)
+
+
+async def get_session(token_hash: str):
+    database = _require_db()
+    doc = await database.sessions.find_one({"token_hash": token_hash})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def revoke_session_by_token_hash(token_hash: str) -> None:
+    database = _require_db()
+    await database.sessions.update_one(
+        {"token_hash": token_hash},
+        {"$set": {"revoked_at": datetime.now(timezone.utc)}},
+    )
+
+
+async def revoke_session(session_id: str) -> None:
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(session_id)
+    except InvalidId:
+        return
+    await database.sessions.update_one(
+        {"_id": object_id},
+        {"$set": {"revoked_at": datetime.now(timezone.utc)}},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Email verification tokens. Only the HMAC digest is stored; raw token is not.
+# ---------------------------------------------------------------------------
+
+
+async def create_email_verification(user_id: str, token_hash: str, expires_at) -> str:
+    database = _require_db()
+    doc = {
+        "user_id": user_id,
+        "token_hash": token_hash,
+        "created_at": datetime.now(timezone.utc),
+        "expires_at": expires_at,
+        "used_at": None,
+    }
+    result = await database.email_verification.insert_one(doc)
+    return str(result.inserted_id)
+
+
+async def get_email_verification(token_hash: str):
+    database = _require_db()
+    doc = await database.email_verification.find_one({"token_hash": token_hash})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def mark_verification_used(verification_id: str) -> None:
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(verification_id)
+    except InvalidId:
+        return
+    await database.email_verification.update_one(
+        {"_id": object_id},
+        {"$set": {"used_at": datetime.now(timezone.utc)}},
+    )
+
+
+async def mark_email_verified(user_id: str) -> None:
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(user_id)
+    except InvalidId:
+        return
+    await database.users.update_one(
+        {"_id": object_id},
+        {"$set": {"email_verified": True, "updated_at": datetime.now(timezone.utc)}},
+    )
 
 
 # Commit Guard reports are keyed by (project_id, base_sha, head_sha) --
@@ -694,7 +816,25 @@ async def ensure_indexes() -> None:
     """Called once at app startup. Safe to call repeatedly (create_index is
     idempotent on an unchanged spec)."""
     database = _require_db()
-    await database.users.create_index("email", unique=True)
+    # Phase 1 auth indexes. email_normalized is the authoritative unique key so
+    # that "User@Example.com" and "user@example.com" cannot become two accounts.
+    # partialFilterExpression keeps the index from failing on legacy docs that
+    # predate this field; every account created by the new code sets it, so
+    # uniqueness is enforced for all real users.
+    await database.users.create_index(
+        "email_normalized",
+        unique=True,
+        partialFilterExpression={"email_normalized": {"$exists": True}},
+    )
+    await database.sessions.create_index("token_hash", unique=True)
+    await database.sessions.create_index("user_id")
+    # TTL index cleans up expired sessions/verification tokens automatically,
+    # but the application ALWAYS re-checks expiry itself -- TTL is convenience,
+    # never the sole expiry control.
+    await database.sessions.create_index("expires_at", expireAfterSeconds=0)
+    await database.email_verification.create_index("token_hash", unique=True)
+    await database.email_verification.create_index("user_id")
+    await database.email_verification.create_index("expires_at", expireAfterSeconds=0)
     await database.projects.create_index("owner_user_id")
     await database.analysis_jobs.create_index([("owner_user_id", 1), ("project_id", 1), ("status", 1)])
     await database.fix_all_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])

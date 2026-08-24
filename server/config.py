@@ -23,6 +23,17 @@ DEMO_USER_ID = os.getenv("DEMO_USER_ID", "demo-user").strip() or "demo-user"
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60") or "60")
+
+# Phase 1 authentication foundation uses server-side opaque sessions. The raw
+# session/verification token is never stored; only an HMAC-SHA256 digest bound
+# to SESSION_SECRET is persisted. SESSION_SECRET falls back to JWT_SECRET so an
+# existing deployment that already generated a strong JWT_SECRET keeps working,
+# but a dedicated SESSION_SECRET is preferred.
+SESSION_SECRET = os.getenv("SESSION_SECRET", "") or JWT_SECRET
+# How long an issued session stays valid before the server rejects it.
+SESSION_EXPIRE_MINUTES = int(os.getenv("SESSION_EXPIRE_MINUTES", "60") or "60")
+# How long an email-verification token stays valid.
+VERIFICATION_TOKEN_MINUTES = int(os.getenv("VERIFICATION_TOKEN_MINUTES", "1440") or "1440")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() != "false"
 
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]

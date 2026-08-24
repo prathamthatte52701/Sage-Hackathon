@@ -51,11 +51,11 @@ export default function AuthScreen() {
         <input
           type="password"
           required
-          minLength={8}
+          minLength={12}
           autoComplete={mode === "login" ? "current-password" : "new-password"}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          placeholder="Password"
+          placeholder="Password (at least 12 characters)"
           className="sage-input w-full"
         />
 

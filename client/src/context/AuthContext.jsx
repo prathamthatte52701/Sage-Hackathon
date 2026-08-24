@@ -1,8 +1,15 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import api, { getMe, login as apiLogin, logout as apiLogout, signup as apiSignup } from "../api/client";
+import api, {
+  getMe,
+  login as apiLogin,
+  logout as apiLogout,
+  resendVerification as apiResendVerification,
+  signup as apiSignup,
+  verifyEmail as apiVerifyEmail,
+} from "../api/client";
 
 const AuthContext = createContext(null);
-const demoUser = { id: "demo-user", email: "demo@sage.local", demo_mode: true };
+const demoUser = { id: "demo-user", email: "demo@sage.local", email_verified: true, demo_mode: true };
 
 export function AuthProvider({ children, enabled = import.meta.env.VITE_AUTH_ENABLED === "true" }) {
   const [user, setUser] = useState(null);
@@ -53,8 +60,33 @@ export function AuthProvider({ children, enabled = import.meta.env.VITE_AUTH_ENA
     setUser(null);
   }
 
+  // Refresh the current user record (e.g. after email verification completes).
+  async function refresh() {
+    if (!enabled) return demoUser;
+    try {
+      const refreshed = await getMe();
+      setUser(refreshed);
+      return refreshed;
+    } catch {
+      setUser(null);
+      return null;
+    }
+  }
+
+  async function verifyEmail(token) {
+    const result = await apiVerifyEmail(token);
+    await refresh();
+    return result;
+  }
+
+  async function resendVerification() {
+    return apiResendVerification();
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, enabled }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, signup, logout, refresh, verifyEmail, resendVerification, enabled }}
+    >
       {children}
     </AuthContext.Provider>
   );

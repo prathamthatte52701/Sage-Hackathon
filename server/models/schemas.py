@@ -259,7 +259,19 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=200)
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(..., min_length=8, max_length=512)
+
+
+class ResendVerificationRequest(BaseModel):
+    pass
+
+
 class UserOut(BaseModel):
     id: str
     email: str
+    email_verified: bool = False
+    role: str = "user"
+    status: str = "active"
     created_at: str = ""
+    updated_at: str = ""

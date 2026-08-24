@@ -56,6 +56,22 @@ export async function getMe() {
   return (await api.get("/api/auth/me")).data;
 }
 
+export async function verifyEmail(token) {
+  try {
+    return (await api.post("/api/auth/verify-email", { token })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not verify your email."));
+  }
+}
+
+export async function resendVerification() {
+  try {
+    return (await api.post("/api/auth/resend-verification", {})).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not resend the verification email."));
+  }
+}
+
 export async function reviewCode(code, language, sessionId) {
   try {
     const res = await api.post("/api/review", { code, language, session_id: sessionId });

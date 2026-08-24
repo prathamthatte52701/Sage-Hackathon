@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import useSessionId from "./hooks/useSessionId";
 import { useAuth } from "./context/AuthContext";
 import AuthScreen from "./components/AuthScreen";
+import EmailVerificationNotice from "./components/EmailVerificationNotice";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import LandingHero from "./components/LandingHero";
@@ -525,6 +526,9 @@ export default function App() {
 
   if (authEnabled && authLoading) return null;
   if (authEnabled && !user) return <AuthScreen />;
+  if (authEnabled && user && !user.demo_mode && user.email_verified === false) {
+    return <EmailVerificationNotice />;
+  }
 
   return (
     <div className="flex min-h-screen bg-[#090B10] text-[#F4F7FB] font-sans antialiased relative">
