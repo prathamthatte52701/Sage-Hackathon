@@ -123,6 +123,39 @@ def test_weighted_score_is_backend_calculated_and_clamped():
 
 
 @pytest.mark.asyncio
+async def test_model_scores_and_blockers_cannot_force_brutal_verdict():
+    _context, included, snapshot, _metadata = await build_audit_context(PROJECT)
+    raw = {
+        "summary": "The model claims this is catastrophic.",
+        "category_scores": {
+            "security": 0,
+            "architecture": 0,
+            "reliability": 0,
+            "maintainability": 0,
+            "code_quality": 0,
+            "production_readiness": 0,
+        },
+        "code_review_rejections": [
+            {
+                "title": "Hallucinated blocker",
+                "severity": "critical",
+                "category": "security",
+                "reason": "The cited file does not exist.",
+                "evidence": [{"file": "invented.py", "line": 1}],
+            }
+        ],
+        "production_blockers": ["The model says to block production."],
+    }
+
+    report = build_brutal_audit_report(raw, PROJECT, included, snapshot)
+
+    assert report.overall_score > 0
+    assert report.verdict != "NOT READY"
+    assert report.production_blockers == []
+    assert report.code_review_rejections[0].verified is False
+
+
+@pytest.mark.asyncio
 async def test_report_drops_hallucinated_evidence_and_derives_verdict():
     _context, included, snapshot, _metadata = await build_audit_context(PROJECT)
     raw = {
@@ -166,9 +199,9 @@ async def test_report_drops_hallucinated_evidence_and_derives_verdict():
     report = build_brutal_audit_report(raw, PROJECT, included, snapshot)
 
     assert isinstance(report, BrutalAuditReport)
-    assert report.overall_score == 4.5
+    assert report.overall_score != 4.5
     assert report.verdict == "NOT READY"
-    assert report.category_analysis[0].score == 4.5
+    assert report.category_analysis[0].score == report.category_scores["security"]
     rejection = report.code_review_rejections[0]
     assert rejection.verified is True
     assert [e.file for e in rejection.evidence] == ["server/main.py", "server/main.py"]
@@ -177,7 +210,7 @@ async def test_report_drops_hallucinated_evidence_and_derives_verdict():
     assert rejection.evidence[1].line is None
     assert rejection.evidence[1].function == ""
     assert rejection.evidence[1].route == ""
-    assert report.weakest_areas[0].category == "production_readiness"
+    assert report.weakest_areas[0].category == "security"
 
 
 def test_verdict_thresholds_remain_strict():

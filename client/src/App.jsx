@@ -100,6 +100,10 @@ export default function App() {
     refreshHistory();
   }, [refreshHistory]);
 
+  useEffect(() => {
+    setSelectedFinding(null);
+  }, [projectBundle?.project_id]);
+
   const refreshActiveProject = useCallback(async (projectId) => {
     if (!projectId) return;
     const fresh = await getProject(projectId);

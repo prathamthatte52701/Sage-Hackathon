@@ -1300,7 +1300,14 @@ async def apply_project_fix(
         except PatchError as exc:
             finding["fix_state"] = "Conflict"
             await update_owned_project(project_id, current_user["_id"], {"findings": findings})
-            return JSONResponse(status_code=409, content={"error": str(exc)})
+            print(
+                f"[projects] apply fix rejected project_id={project_id} "
+                f"finding_id={finding.get('finding_id')} reason={exc.reason}"
+            )
+            return JSONResponse(
+                status_code=409,
+                content={**_APPLY_ERROR_RESPONSE, "apply_failure_reason": exc.reason},
+            )
 
         file_entry["content"] = applied.patched
         finding["fix_state"] = "Applied"
@@ -1519,22 +1526,16 @@ async def chat_about_project(project_id: str, payload: ChatRequest, current_user
         semantic_context = await retrieve_semantic_project_context(project, payload.question, top_k=2)
 
         result = await answer_project_question(payload.question, retrieved, knowledge, semantic_context)
+        if knowledge or semantic_context:
+            print(
+                f"[projects] chat retrieval project_id={project_id} "
+                f"knowledge_records={len((knowledge or {}).get('records', []))} "
+                f"semantic_projects={len(semantic_context)}"
+            )
 
         return {
             **result,
             "retrieved_files": [f["path"] for f in retrieved],
-            "knowledge_retrieval": (
-                {
-                    "mode": knowledge.get("mode"),
-                    "available": knowledge.get("available"),
-                    "record_count": len(knowledge.get("records", [])),
-                }
-                if knowledge
-                else None
-            ),
-            "semantic_project_context": [
-                {"name": p.get("name"), "similarity": round(p.get("similarity", 0), 3)} for p in semantic_context
-            ],
         }
     except Exception as exc:
         print(f"[projects] unhandled error: {exc}")

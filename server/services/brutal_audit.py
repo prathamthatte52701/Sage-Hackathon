@@ -438,6 +438,35 @@ def calculate_overall_score(category_scores: dict) -> float:
     return round(sum(_clamp_score(category_scores.get(category)) * weight for category, weight in WEIGHTS.items()), 1)
 
 
+def _derive_backend_category_scores(snapshot: BrutalAuditSnapshot, criticisms: list[BrutalAuditCriticism]) -> dict:
+    scores = {category: 8.8 for category in AUDIT_CATEGORIES}
+    penalty_by_severity = {"critical": 5.0, "high": 4.8, "medium": 1.0, "low": 0.4}
+
+    for criticism in criticisms:
+        if not criticism.verified:
+            continue
+        penalty = penalty_by_severity.get(criticism.severity, 0.4)
+        category = criticism.category if criticism.category in AUDIT_CATEGORIES else "code_quality"
+        scores[category] -= penalty
+        if criticism.severity in {"critical", "high"}:
+            scores["production_readiness"] -= penalty * 0.65
+
+    if snapshot.large_files:
+        scores["maintainability"] -= min(1.2, snapshot.large_files * 0.4)
+    if snapshot.large_functions:
+        scores["code_quality"] -= min(1.5, snapshot.large_functions * 0.3)
+        scores["maintainability"] -= min(1.0, snapshot.large_functions * 0.2)
+    if snapshot.database_interaction_areas and not snapshot.authentication_components:
+        scores["security"] -= 0.8
+    if snapshot.external_integrations:
+        scores["reliability"] -= min(0.8, snapshot.external_integrations * 0.2)
+    if snapshot.privileged_operations and not snapshot.authentication_components:
+        scores["security"] -= 1.0
+        scores["production_readiness"] -= 0.6
+
+    return {category: _clamp_score(score) for category, score in scores.items()}
+
+
 def derive_verdict(overall_score: float, criticisms: list[BrutalAuditCriticism], blockers: list[str]) -> str:
     critical_count = sum(1 for c in criticisms if c.severity == "critical")
     high_count = sum(1 for c in criticisms if c.severity == "high")
@@ -539,10 +568,6 @@ def build_brutal_audit_report(raw: dict, project: dict, included_files: list[str
     line_counts = _line_counts(project)
     catalog = _evidence_catalog(project, included_files)
 
-    raw_scores = data.get("category_scores") if isinstance(data.get("category_scores"), dict) else {}
-    scores = {category: _clamp_score(raw_scores.get(category)) for category in AUDIT_CATEGORIES}
-    overall_score = calculate_overall_score(scores)
-
     criticisms = [
         c
         for c in (_coerce_criticism(item, valid_files, line_counts, catalog) for item in (data.get("code_review_rejections") or [])[:10])
@@ -550,8 +575,15 @@ def build_brutal_audit_report(raw: dict, project: dict, included_files: list[str
     ]
     criticisms.sort(key=lambda item: SEVERITY_RANK.get(item.severity, 0), reverse=True)
 
-    blockers = _string_list(data.get("production_blockers"), 5)
-    verdict = derive_verdict(overall_score, criticisms, blockers)
+    scores = _derive_backend_category_scores(snapshot, criticisms)
+    overall_score = calculate_overall_score(scores)
+    verified_criticisms = [c for c in criticisms if c.verified]
+    blockers = [
+        c.title
+        for c in verified_criticisms
+        if c.severity == "critical"
+    ][:5]
+    verdict = derive_verdict(overall_score, verified_criticisms, blockers)
     weakest = [
         BrutalAuditAreaScore(category=category, score=score)
         for category, score in sorted(scores.items(), key=lambda item: item[1])[:3]

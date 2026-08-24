@@ -190,6 +190,47 @@ async def test_project_apply_fix_patches_only_target_file(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_project_apply_fix_returns_sanitized_patch_reason(monkeypatch):
+    project = {
+        "_id": "p1",
+        "session_id": "s1",
+        "project": {"name": "demo"},
+        "files": [{"path": "src/a.js", "language": "javascript", "content": "const safe = true;\n"}],
+        "findings": [
+            {
+                "finding_id": "f1",
+                "file": "src/a.js",
+                "line": 1,
+                "rule": "demo_rule",
+                "transform": {
+                    "original_snippet": "const missing = true;",
+                    "proposed_fix": "const missing = false;",
+                },
+            }
+        ],
+    }
+    saved = {}
+
+    async def fake_get_owned_project(_id, _owner_user_id):
+        return project
+
+    async def fake_update_owned_project(_id, _owner_user_id, updates, **_kwargs):
+        saved.update(updates)
+
+    monkeypatch.setattr(projects, "get_owned_project", fake_get_owned_project)
+    monkeypatch.setattr(projects, "update_owned_project", fake_update_owned_project)
+
+    response = await projects.apply_project_fix(
+        "p1", ApplyProjectFixRequest(finding_id="f1"), current_user={"_id": "test-user"}
+    )
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 409
+    assert response.body == b'{"error":"Could not apply this fix safely","apply_failure_reason":"target_not_found"}'
+    assert saved["findings"][0]["fix_state"] == "Conflict"
+
+
+@pytest.mark.asyncio
 async def test_download_fixed_zip_preserves_paths_and_content(monkeypatch):
     project = {
         "project": {"name": "demo"},

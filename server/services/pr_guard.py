@@ -585,6 +585,7 @@ async def _run(project_id: str, owner_user_id: str, pr_number: int, state: dict)
             key = (project_id, pr_number)
             if _active_by_project_pr.get(key) == state.get("run_id"):
                 _active_by_project_pr.pop(key, None)
+            _active_runs.pop(state.get("run_id"), None)
 
 
 async def start_pr_guard(project_id: str, owner_user_id: str, pr_number: int) -> dict:

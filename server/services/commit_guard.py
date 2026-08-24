@@ -428,6 +428,7 @@ async def _run(project_id: str, owner_user_id: str, state: dict) -> None:
                 if state["status"] == "running":
                     state["status"] = "failed"
                     state["error"] = state.get("error") or "Commit Guard ended unexpectedly."
+                _active_runs.pop(project_id, None)
 
 
 async def start_commit_guard(project_id: str, owner_user_id: str) -> dict:

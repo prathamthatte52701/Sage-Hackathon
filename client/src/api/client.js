@@ -177,7 +177,7 @@ function findingReference(finding) {
 
 export async function getProjectFile(projectId, filePath) {
   try {
-    return (await api.get(`/api/projects/${projectId}/files/${filePath}`)).data;
+    return (await api.get(`/api/projects/${projectId}/files/${encodeURIComponent(filePath)}`)).data;
   } catch (err) {
     throw new Error(toFriendlyMessage(err, "Could not load this project file."));
   }
