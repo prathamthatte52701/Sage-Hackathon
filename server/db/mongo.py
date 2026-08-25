@@ -710,6 +710,106 @@ async def mark_email_verified(user_id: str) -> None:
     )
 
 
+async def update_user_email(user_id: str, new_email_normalized: str) -> bool:
+    """Update user's email and mark as unverified. Returns True if updated."""
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(user_id)
+    except InvalidId:
+        return False
+    result = await database.users.update_one(
+        {"_id": object_id},
+        {"$set": {
+            "email": new_email_normalized,
+            "email_normalized": new_email_normalized,
+            "email_verified": False,
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+    return result.modified_count > 0
+
+
+# ---------------------------------------------------------------------------
+# Password reset tokens. Only the HMAC digest is stored; raw token is not.
+# ---------------------------------------------------------------------------
+
+
+async def create_password_reset(user_id: str, token_hash: str, expires_at) -> str:
+    database = _require_db()
+    # Invalidate any existing unused reset tokens for this user
+    await database.password_resets.update_many(
+        {"user_id": user_id, "used_at": None},
+        {"$set": {"used_at": datetime.now(timezone.utc)}},
+    )
+    doc = {
+        "user_id": user_id,
+        "token_hash": token_hash,
+        "created_at": datetime.now(timezone.utc),
+        "expires_at": expires_at,
+        "used_at": None,
+    }
+    result = await database.password_resets.insert_one(doc)
+    return str(result.inserted_id)
+
+
+async def get_password_reset(token_hash: str):
+    database = _require_db()
+    doc = await database.password_resets.find_one({"token_hash": token_hash})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def mark_password_reset_used(reset_id: str) -> None:
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(reset_id)
+    except InvalidId:
+        return
+    await database.password_resets.update_one(
+        {"_id": object_id},
+        {"$set": {"used_at": datetime.now(timezone.utc)}},
+    )
+
+
+async def update_user_password(user_id: str, password_hash: str) -> bool:
+    """Update user's password hash and revoke all sessions. Returns True if updated."""
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    database = _require_db()
+    try:
+        object_id = ObjectId(user_id)
+    except InvalidId:
+        return False
+    result = await database.users.update_one(
+        {"_id": object_id},
+        {"$set": {"password_hash": password_hash, "updated_at": datetime.now(timezone.utc)}},
+    )
+    if result.modified_count > 0:
+        # Revoke all sessions for security
+        now = datetime.now(timezone.utc)
+        await database.sessions.update_many(
+            {"user_id": user_id, "revoked_at": None},
+            {"$set": {"revoked_at": now}},
+        )
+    return result.modified_count > 0
+
+
+async def ensure_password_reset_indexes() -> None:
+    """Create indexes for password reset collection."""
+    database = _require_db()
+    await database.password_resets.create_index("token_hash", unique=True)
+    await database.password_resets.create_index("user_id")
+    await database.password_resets.create_index("expires_at", expireAfterSeconds=0)
+
+
 # Commit Guard reports are keyed by (project_id, base_sha, head_sha) --
 # immutable once written (a given commit pair's comparison never changes),
 # so this is a genuine cache: an identical request is a document lookup,
@@ -892,6 +992,10 @@ async def ensure_indexes() -> None:
     await database.email_verification.create_index("token_hash", unique=True)
     await database.email_verification.create_index("user_id")
     await database.email_verification.create_index("expires_at", expireAfterSeconds=0)
+    # Password reset indexes
+    await database.password_resets.create_index("token_hash", unique=True)
+    await database.password_resets.create_index("user_id")
+    await database.password_resets.create_index("expires_at", expireAfterSeconds=0)
     await database.projects.create_index("owner_user_id")
     await database.analysis_jobs.create_index([("owner_user_id", 1), ("project_id", 1), ("status", 1)])
     await database.fix_all_runs.create_index([("owner_user_id", 1), ("project_id", 1), ("started_at", -1)])

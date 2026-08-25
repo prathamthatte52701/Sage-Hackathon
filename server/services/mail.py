@@ -27,6 +27,16 @@ async def send_verification_email(email: str, token: str) -> None:
     return None
 
 
+async def send_password_reset_email(email: str, token: str) -> None:
+    """Deliver a password reset link containing ``token`` to ``email``.
+
+    No-op by default. The raw ``token`` is intentionally never logged or echoed.
+    A real deployment should send it only inside a one-time link such as
+    ``/reset-password?token=...`` and keep it server-side otherwise.
+    """
+    return None
+
+
 # TEST-ONLY hook: tests replace this callable to capture the raw token without
 # a real mail server. Production never reads this.
 capture_hook: Callable[[str, str], Awaitable[None]] | None = None
@@ -37,3 +47,10 @@ async def dispatch_verification_email(email: str, token: str) -> None:
         await capture_hook(email, token)
         return
     await send_verification_email(email, token)
+
+
+async def dispatch_password_reset_email(email: str, token: str) -> None:
+    if capture_hook is not None:
+        await capture_hook(email, token)
+        return
+    await send_password_reset_email(email, token)

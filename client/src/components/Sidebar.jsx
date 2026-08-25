@@ -18,6 +18,7 @@ import {
   GitCommit,
   GitPullRequest,
   Monitor,
+  User,
 } from "lucide-react";
 import { getAuthoritativeScore } from "../utils/postFixResult";
 import { getSecurityFindings } from "../utils/securityFindings";
@@ -112,6 +113,11 @@ export default function Sidebar({
       id: "sessions",
       label: "Sessions",
       icon: Monitor,
+    },
+    {
+      id: "profile",
+      label: "Profile",
+      icon: User,
     },
   ];
 

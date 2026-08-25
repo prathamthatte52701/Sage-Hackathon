@@ -96,6 +96,30 @@ export async function logoutAll() {
   }
 }
 
+export async function forgotPassword(email) {
+  try {
+    return (await api.post("/api/auth/forgot-password", { email })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not process request. Please try again."));
+  }
+}
+
+export async function resetPassword(token, password) {
+  try {
+    return (await api.post("/api/auth/reset-password", { token, password })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not reset password. Please try again."));
+  }
+}
+
+export async function changePassword(currentPassword, newPassword) {
+  try {
+    return (await api.post("/api/auth/change-password", { current_password: currentPassword, new_password: newPassword })).data;
+  } catch (err) {
+    throw new Error(toFriendlyMessage(err, "Could not change password. Please try again."));
+  }
+}
+
 export async function reviewCode(code, language, sessionId) {
   try {
     const res = await api.post("/api/review", { code, language, session_id: sessionId });

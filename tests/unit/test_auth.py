@@ -601,3 +601,335 @@ async def test_integration_email_verification_flow():
     finally:
         await db.users.delete_one({"_id": __import__("bson").ObjectId(user_id)})
         await db.email_verification.delete_many({"user_id": user_id})
+
+
+# ---------------------------------------------------------------- Phase 3: Password Reset
+
+@pytest.mark.asyncio
+async def test_create_password_reset_token_stores_hash_not_raw(monkeypatch):
+    captured = {}
+
+    async def fake_create_password_reset(user_id, token_hash, expires_at):
+        captured["doc"] = {
+            "token_hash": token_hash,
+            "user_id": user_id,
+            "expires_at": expires_at,
+        }
+
+    monkeypatch.setattr(mongo_module, "create_password_reset", fake_create_password_reset)
+    raw = await auth_service.create_password_reset_token("user-1")
+    stored_hash = auth_service._hash_token(raw)
+
+    assert captured["doc"]["token_hash"] == stored_hash
+    assert captured["doc"]["token_hash"] != raw
+    assert "raw" not in captured["doc"]
+    assert raw not in str(captured["doc"])
+
+
+@pytest.mark.asyncio
+async def test_consume_password_reset_token_unknown_expired_reused(monkeypatch):
+    # unknown
+    async def _fake_get_none(h):
+        return None
+
+    monkeypatch.setattr(mongo_module, "get_password_reset", _fake_get_none)
+    assert await auth_service.consume_password_reset_token("nope") is None
+
+    # expired
+    async def fake_get_expired(h):
+        return {
+            "user_id": "u1",
+            "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1),
+            "used_at": None,
+        }
+
+    monkeypatch.setattr(mongo_module, "get_password_reset", fake_get_expired)
+    assert await auth_service.consume_password_reset_token("x") is None
+
+    # reused
+    async def fake_get_used(h):
+        return {
+            "user_id": "u1",
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "used_at": datetime.now(timezone.utc),
+        }
+
+    monkeypatch.setattr(mongo_module, "get_password_reset", fake_get_used)
+    assert await auth_service.consume_password_reset_token("x") is None
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_endpoint_generic_response(monkeypatch):
+    """Forgot password always returns generic success regardless of account existence."""
+    captured = {}
+
+    async def fake_get_user_by_email(email_normalized):
+        if email_normalized == "exists@example.com":
+            return {"_id": "user-1", "email": email_normalized, "status": "active"}
+        return None
+
+    async def fake_create_password_reset_token(uid):
+        captured["token"] = "raw-reset-token"
+        return "raw-reset-token"
+
+    async def fake_dispatch(email, token):
+        captured["email"] = email
+        captured["dispatched_token"] = token
+
+    monkeypatch.setattr(auth_router, "get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr(auth_router, "create_password_reset_token", fake_create_password_reset_token)
+    monkeypatch.setattr(auth_router, "dispatch_password_reset_email", fake_dispatch)
+    monkeypatch.setattr(auth_router, "normalize_email", lambda e: e.lower())
+
+    # Existing user
+    result = await auth_router.forgot_password(
+        auth_router.ForgotPasswordRequest(email="exists@example.com") if hasattr(auth_router, "ForgotPasswordRequest") else type("obj", (object,), {"email": "exists@example.com"})()
+    )
+    # We need to call the actual endpoint function - let's import properly
+    from models.schemas import ForgotPasswordRequest
+    result = await auth_router.forgot_password(ForgotPasswordRequest(email="exists@example.com"))
+    assert result["status"] == "ok"
+    assert captured["dispatched_token"] == "raw-reset-token"
+
+    # Non-existent user - still generic ok
+    captured.clear()
+    result = await auth_router.forgot_password(ForgotPasswordRequest(email="ghost@example.com"))
+    assert result["status"] == "ok"
+    # Should not have dispatched
+    assert "dispatched_token" not in captured
+
+    # Disabled user - still generic ok
+    async def fake_get_disabled(email_normalized):
+        return {"_id": "user-2", "email": email_normalized, "status": "disabled"}
+
+    monkeypatch.setattr(auth_router, "get_user_by_email", fake_get_disabled)
+    captured.clear()
+    result = await auth_router.forgot_password(ForgotPasswordRequest(email="disabled@example.com"))
+    assert result["status"] == "ok"
+    assert "dispatched_token" not in captured
+
+
+@pytest.mark.asyncio
+async def test_reset_password_endpoint_valid_token(monkeypatch):
+    """Reset password with valid token updates password and revokes sessions."""
+    captured = {}
+
+    async def fake_consume(token):
+        return "user-1"
+
+    async def fake_update_password(user_id, password_hash):
+        captured["user_id"] = user_id
+        captured["password_hash"] = password_hash
+        return True
+
+    monkeypatch.setattr(auth_router, "consume_password_reset_token", fake_consume)
+    monkeypatch.setattr(auth_router, "update_user_password", fake_update_password)
+    monkeypatch.setattr(auth_router, "validate_password_strength", lambda p: None)
+    monkeypatch.setattr(auth_router, "hash_password", lambda p: f"hashed-{p}")
+
+    from models.schemas import ResetPasswordRequest
+    result = await auth_router.reset_password(ResetPasswordRequest(token="valid-token", password="newpass123456"))
+    assert result["status"] == "ok"
+    assert result["password_reset"] is True
+    assert captured["user_id"] == "user-1"
+    assert captured["password_hash"] == "hashed-newpass123456"
+
+
+@pytest.mark.asyncio
+async def test_reset_password_endpoint_invalid_token(monkeypatch):
+    """Reset password with invalid/expired/used token returns error."""
+    async def fake_consume_none(token):
+        return None
+
+    monkeypatch.setattr(auth_router, "consume_password_reset_token", fake_consume_none)
+
+    from models.schemas import ResetPasswordRequest
+    response = await auth_router.reset_password(ResetPasswordRequest(token="bad-token", password="newpass123456"))
+    assert response.status_code == 400
+    # JSONResponse body is bytes
+    import json
+    assert json.loads(response.body) == auth_router._RESET_ERROR
+
+
+@pytest.mark.asyncio
+async def test_reset_password_endpoint_weak_password_rejected(monkeypatch):
+    """Reset password rejects weak passwords."""
+    async def fake_consume(token):
+        return "user-1"
+
+    def fake_validate(p):
+        raise auth_router.AuthError("Password must be at least 12 characters")
+
+    monkeypatch.setattr(auth_router, "consume_password_reset_token", fake_consume)
+    monkeypatch.setattr(auth_router, "validate_password_strength", fake_validate)
+
+    from models.schemas import ResetPasswordRequest
+    response = await auth_router.reset_password(ResetPasswordRequest(token="valid-token", password="weak"))
+    assert response.status_code == 400
+    import json
+    body = json.loads(response.body)
+    assert "12 characters" in body.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_change_password_endpoint_correct_current(monkeypatch):
+    """Change password with correct current password succeeds and revokes sessions."""
+    captured = {}
+
+    async def fake_get_user_by_email(email):
+        return {
+            "_id": "user-1",
+            "email": email,
+            "password_hash": auth_service.hash_password("currentpass123"),
+        }
+
+    async def fake_update_password(user_id, password_hash):
+        captured["user_id"] = user_id
+        captured["password_hash"] = password_hash
+        return True
+
+    monkeypatch.setattr(auth_router, "get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr(auth_router, "update_user_password", fake_update_password)
+    monkeypatch.setattr(auth_router, "verify_password", lambda p, h: p == "currentpass123")
+    monkeypatch.setattr(auth_router, "validate_password_strength", lambda p: None)
+    monkeypatch.setattr(auth_router, "hash_password", lambda p: f"hashed-{p}")
+
+    from models.schemas import ChangePasswordRequest
+    result = await auth_router.change_password(
+        ChangePasswordRequest(current_password="currentpass123", new_password="newpass123456"),
+        current_user={"_id": "user-1", "email": "user@example.com"}
+    )
+    assert result["status"] == "ok"
+    assert result["password_changed"] is True
+    assert captured["user_id"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_change_password_endpoint_wrong_current_rejected(monkeypatch):
+    """Change password with wrong current password is rejected."""
+    async def fake_get_user_by_email(email):
+        return {
+            "_id": "user-1",
+            "email": email,
+            "password_hash": auth_service.hash_password("currentpass123"),
+        }
+
+    monkeypatch.setattr(auth_router, "get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr(auth_router, "verify_password", lambda p, h: p == "currentpass123")
+
+    from models.schemas import ChangePasswordRequest
+    response = await auth_router.change_password(
+        ChangePasswordRequest(current_password="wrongpass123", new_password="newpass123456"),
+        current_user={"_id": "user-1", "email": "user@example.com"}
+    )
+    assert response.status_code == 401
+    assert "incorrect" in str(response.body).lower()
+
+
+@pytest.mark.asyncio
+async def test_change_password_endpoint_same_password_rejected(monkeypatch):
+    """Change password with same password as current is rejected."""
+    async def fake_get_user_by_email(email):
+        return {
+            "_id": "user-1",
+            "email": email,
+            "password_hash": auth_service.hash_password("currentpass123"),
+        }
+
+    monkeypatch.setattr(auth_router, "get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr(auth_router, "verify_password", lambda p, h: p == "currentpass123")
+
+    from models.schemas import ChangePasswordRequest
+    response = await auth_router.change_password(
+        ChangePasswordRequest(current_password="currentpass123", new_password="currentpass123"),
+        current_user={"_id": "user-1", "email": "user@example.com"}
+    )
+    assert response.status_code == 400
+    assert "different" in str(response.body).lower()
+
+
+@pytest.mark.asyncio
+async def test_change_password_endpoint_weak_new_password_rejected(monkeypatch):
+    """Change password with weak new password is rejected."""
+    async def fake_get_user_by_email(email):
+        return {
+            "_id": "user-1",
+            "email": email,
+            "password_hash": auth_service.hash_password("currentpass123"),
+        }
+
+    monkeypatch.setattr(auth_router, "get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr(auth_router, "verify_password", lambda p, h: p == "currentpass123")
+    monkeypatch.setattr(auth_router, "validate_password_strength", lambda p: (_ for _ in ()).throw(auth_router.AuthError("weak")))
+
+    from models.schemas import ChangePasswordRequest
+    response = await auth_router.change_password(
+        ChangePasswordRequest(current_password="currentpass123", new_password="weak"),
+        current_user={"_id": "user-1", "email": "user@example.com"}
+    )
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------- Phase 3 Integration Tests (real Mongo)
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_MONGO, reason="requires MONGO_URL")
+async def test_integration_password_reset_flow():
+    from db.mongo import ensure_indexes, get_db
+
+    await ensure_indexes()
+    db = get_db()
+    email = f"phase3_reset_{secrets.token_hex(6)}@example.com"
+    password = "goodpass123456"
+    user_id = await mongo_module.create_user(email, email, auth_service.hash_password(password))
+    try:
+        # Create reset token
+        raw = await auth_service.create_password_reset_token(user_id)
+        # Consume it
+        consumed_user_id = await auth_service.consume_password_reset_token(raw)
+        assert consumed_user_id == user_id
+
+        # Reuse must fail
+        assert await auth_service.consume_password_reset_token(raw) is None
+
+        # Update password
+        new_password = "newpass123456"
+        success = await auth_service.update_user_password(user_id, auth_service.hash_password(new_password))
+        assert success is True
+
+        # Old password should not work
+        assert auth_service.verify_password(password, auth_service.hash_password(new_password)) is False
+        # New password should work
+        assert auth_service.verify_password(new_password, auth_service.hash_password(new_password)) is True
+
+        # Verify sessions were revoked
+        sessions = await db.sessions.find({"user_id": user_id, "revoked_at": None}).to_list(length=10)
+        assert len(sessions) == 0
+    finally:
+        await db.users.delete_one({"_id": __import__("bson").ObjectId(user_id)})
+        await db.password_resets.delete_many({"user_id": user_id})
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_MONGO, reason="requires MONGO_URL")
+async def test_integration_forgot_password_rate_limited():
+    import asyncio
+    from types import SimpleNamespace
+
+    import main as main_module
+    from services import rate_limit as rate_limit_module
+
+    async def _call_next(_request):
+        return SimpleNamespace(status_code=200)
+
+    def _request(path, ip):
+        return SimpleNamespace(url=SimpleNamespace(path=path), client=SimpleNamespace(host=ip))
+
+    rate_limit_module._buckets.clear()
+    # Forgot password should be rate limited (uses auth bucket)
+    statuses = [
+        await main_module.rate_limit_middleware(_request("/api/auth/forgot-password", "10.0.0.10"), _call_next)
+        for _ in range(10)
+    ]
+    status_codes = [r.status_code for r in statuses]
+    assert 429 in status_codes

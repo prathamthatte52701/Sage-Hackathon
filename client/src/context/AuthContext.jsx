@@ -9,6 +9,9 @@ import api, {
   getSessions,
   revokeSession,
   logoutAll,
+  forgotPassword,
+  resetPassword,
+  changePassword,
 } from "../api/client";
 
 const AuthContext = createContext(null);
@@ -103,6 +106,21 @@ export function AuthProvider({ children, enabled = import.meta.env.VITE_AUTH_ENA
     return result;
   }
 
+  async function requestPasswordReset(email) {
+    if (!enabled) return;
+    return forgotPassword(email);
+  }
+
+  async function resetUserPassword(token, password) {
+    if (!enabled) return;
+    return resetPassword(token, password);
+  }
+
+  async function updatePassword(currentPassword, newPassword) {
+    if (!enabled) return;
+    return changePassword(currentPassword, newPassword);
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -117,6 +135,9 @@ export function AuthProvider({ children, enabled = import.meta.env.VITE_AUTH_ENA
         fetchSessions,
         revokeSessionById,
         logoutAllDevices,
+        requestPasswordReset,
+        resetUserPassword,
+        updatePassword,
         enabled,
       }}
     >

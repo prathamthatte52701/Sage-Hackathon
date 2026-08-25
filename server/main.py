@@ -101,6 +101,8 @@ async def rate_limit_middleware(request: Request, call_next):
             "/api/auth/signup",
             "/api/auth/verify-email",
             "/api/auth/resend-verification",
+            "/api/auth/forgot-password",
+            "/api/auth/reset-password",
         ):
             allowed = check_rate_limit(f"auth:{client_ip}", _AUTH_MAX_REQUESTS, _AUTH_WINDOW_SECONDS)
         else:

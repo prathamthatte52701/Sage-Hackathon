@@ -13,11 +13,18 @@ from models.schemas import (
     SignupRequest,
     UserOut,
     VerifyEmailRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    ChangePasswordRequest,
+    ChangeEmailRequest,
 )
 from services.auth import (
     COOKIE_NAME,
     AuthError,
+    change_user_email,
     consume_verification_token,
+    consume_password_reset_token,
+    create_password_reset_token,
     create_session,
     create_verification_token,
     get_current_user,
@@ -27,16 +34,18 @@ from services.auth import (
     revoke_all_sessions_for_user,
     revoke_session,
     revoke_session_for_token,
+    update_user_password,
     validate_password_strength,
     verify_password,
 )
-from services.mail import dispatch_verification_email
+from services.mail import dispatch_verification_email, dispatch_password_reset_email
 
 router = APIRouter()
 
 _GENERIC_AUTH_ERROR = {"error": "Invalid email or password"}
 _SIGNUP_ERROR = {"error": "Could not create account, please try again"}
 _VERIFY_ERROR = {"error": "Invalid or expired verification link"}
+_RESET_ERROR = {"error": "Invalid or expired reset link"}
 
 
 def _user_out(user: dict) -> dict:
@@ -253,6 +262,110 @@ async def logout_all(
     count = await revoke_all_sessions_for_user(user_id)
     _clear_session_cookie(response)
     return {"status": "ok", "revoked_count": count}
+
+
+@router.post("/auth/forgot-password")
+async def forgot_password(payload: ForgotPasswordRequest):
+    """Issue a password reset token for the given email.
+
+    Always returns generic success to prevent email enumeration.
+    """
+    try:
+        email_normalized = normalize_email(payload.email)
+    except AuthError:
+        return {"status": "ok"}
+
+    user = await get_user_by_email(email_normalized)
+    if user is None or user.get("status") != "active":
+        # Generic response regardless of account existence
+        return {"status": "ok"}
+
+    # Issue reset token (invalidates any existing unused tokens)
+    try:
+        raw_token = await create_password_reset_token(user["_id"])
+        await dispatch_password_reset_email(email_normalized, raw_token)
+    except Exception:
+        # Dispatch failure must not reveal anything
+        print("[auth] password reset dispatch failed")
+
+    return {"status": "ok"}
+
+
+@router.post("/auth/reset-password")
+async def reset_password(payload: ResetPasswordRequest):
+    """Validate reset token and update password.
+
+    On success, all existing sessions are revoked.
+    """
+    try:
+        validate_password_strength(payload.password)
+    except AuthError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    user_id = await consume_password_reset_token(payload.token)
+    if user_id is None:
+        return JSONResponse(status_code=400, content=_RESET_ERROR)
+
+    success = await update_user_password(user_id, hash_password(payload.password))
+    if not success:
+        return JSONResponse(status_code=400, content=_RESET_ERROR)
+
+    return {"status": "ok", "password_reset": True}
+
+
+@router.post("/auth/change-password")
+async def change_password(
+    payload: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Change password for authenticated user.
+
+    Requires current password. On success, revokes other sessions.
+    """
+    user = await get_user_by_email(current_user["email"])
+    if not user or not verify_password(payload.current_password, user["password_hash"]):
+        return JSONResponse(status_code=401, content={"error": "Current password is incorrect"})
+
+    try:
+        validate_password_strength(payload.new_password)
+    except AuthError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    if payload.current_password == payload.new_password:
+        return JSONResponse(status_code=400, content={"error": "New password must be different from current password"})
+
+    success = await update_user_password(current_user["_id"], hash_password(payload.new_password))
+    if not success:
+        return JSONResponse(status_code=500, content={"error": "Could not update password"})
+
+    return {"status": "ok", "password_changed": True}
+
+
+@router.post("/auth/change-email")
+async def change_email(
+    payload: ChangeEmailRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Change email for authenticated user.
+
+    Requires current password. On success, marks new email as unverified
+    and sends verification email. Other sessions are NOT revoked (user stays logged in).
+    """
+    try:
+        new_email_normalized = normalize_email(payload.new_email)
+    except AuthError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    try:
+        validate_password_strength(payload.current_password)
+    except AuthError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    result = await change_user_email(current_user["_id"], payload.current_password, new_email_normalized)
+    if result.get("status") == "error":
+        return JSONResponse(status_code=400, content={"error": result["error"]})
+
+    return result
 
 
 @router.post("/auth/verify-email")

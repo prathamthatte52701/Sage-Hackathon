@@ -195,6 +195,52 @@ async def consume_verification_token(raw_token: str) -> Optional[str]:
     return user_id
 
 
+# Password reset token functions (Phase 3)
+RESET_TOKEN_MINUTES = 60
+
+
+async def create_password_reset_token(user_id: str) -> str:
+    """Issue a single-use, expiring password reset token (raw value).
+
+    Persists only the HMAC digest. The raw value is returned for delivery via
+    the mail abstraction and must never be logged or returned via API.
+    """
+    from db.mongo import create_password_reset
+
+    raw = generate_opaque_token()
+    token_hash = _hash_token(raw)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_MINUTES)
+    await create_password_reset(user_id, token_hash, expires_at)
+    return raw
+
+
+async def consume_password_reset_token(raw_token: str) -> Optional[str]:
+    """Validate and consume a raw password reset token.
+
+    Returns the user_id on success, or None if the token is unknown, expired,
+    or already used. The token is marked used atomically on success.
+    """
+    from db.mongo import (
+        get_password_reset,
+        mark_password_reset_used,
+    )
+
+    if not raw_token:
+        return None
+    token_hash = _hash_token(raw_token)
+    record = await get_password_reset(token_hash)
+    if record is None:
+        return None
+    if record.get("used_at") is not None:
+        return None
+    expires_at = _as_aware_utc(record.get("expires_at"))
+    if expires_at is None or expires_at <= datetime.now(timezone.utc):
+        return None
+    user_id = record.get("user_id")
+    await mark_password_reset_used(record["_id"])
+    return user_id
+
+
 def _unauthorized():
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
@@ -323,3 +369,49 @@ async def update_last_seen(session_token: str) -> None:
     from db.mongo import update_session_last_seen
 
     await update_session_last_seen(_hash_token(session_token))
+
+
+async def update_user_password(user_id: str, password_hash: str) -> bool:
+    """Update user's password and revoke all sessions. Returns True if updated."""
+    from db.mongo import update_user_password as mongo_update_password
+
+    return await mongo_update_password(user_id, password_hash)
+
+
+async def change_user_email(user_id: str, current_password: str, new_email_normalized: str) -> dict:
+    """
+    Change user's email address.
+    
+    Requires current password for authentication.
+    Marks new email as unverified and sends verification email.
+    Returns result dict with status and any error.
+    """
+    from db.mongo import get_user_by_email, get_user_by_id, update_user_email
+    from services.mail import dispatch_verification_email
+
+    # Verify current password
+    user = await get_user_by_id(user_id)
+    if not user:
+        return {"status": "error", "error": "User not found"}
+    
+    if not verify_password(current_password, user["password_hash"]):
+        return {"status": "error", "error": "Current password is incorrect"}
+
+    # Check if new email is already taken
+    existing = await get_user_by_email(new_email_normalized)
+    if existing and existing["_id"] != user_id:
+        return {"status": "error", "error": "Email already in use"}
+
+    # Update email and mark as unverified
+    success = await update_user_email(user_id, new_email_normalized)
+    if not success:
+        return {"status": "error", "error": "Could not update email"}
+
+    # Send verification email for new address
+    try:
+        raw_token = await create_verification_token(user_id)
+        await dispatch_verification_email(new_email_normalized, raw_token)
+    except Exception:
+        print("[auth] change email verification dispatch failed")
+
+    return {"status": "ok", "email_changed": True, "email_verified": False}

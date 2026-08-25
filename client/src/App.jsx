@@ -18,6 +18,7 @@ import HackerLens from "./components/HackerLens";
 import BrutalAudit from "./components/BrutalAudit";
 import BlastRadiusView from "./components/BlastRadiusView";
 import SessionManagement from "./components/SessionManagement";
+import ProfileSecurity from "./components/ProfileSecurity";
 // V2_AUTOMATION_DISABLED:
 // Automation is intentionally excluded from CODE MASTER AI V1.
 // Preserve this code for the V2 automation workflow.
@@ -754,6 +755,11 @@ export default function App() {
           {/* View: Session Management */}
           {activeTab === "sessions" && (
             <SessionManagement />
+          )}
+
+          {/* View: Profile Security */}
+          {activeTab === "profile" && (
+            <ProfileSecurity />
           )}
         </main>
       </div>

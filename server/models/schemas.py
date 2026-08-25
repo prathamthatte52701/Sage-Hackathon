@@ -267,6 +267,25 @@ class ResendVerificationRequest(BaseModel):
     pass
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=8, max_length=512)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=200)
+    new_password: str = Field(..., min_length=1, max_length=200)
+
+
+class ChangeEmailRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=200)
+    new_email: str = Field(..., min_length=3, max_length=254)
+
+
 class UserOut(BaseModel):
     id: str
     email: str
