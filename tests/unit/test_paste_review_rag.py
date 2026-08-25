@@ -123,7 +123,10 @@ async def test_paste_review_calls_knowledge_and_adds_quality_review(monkeypatch)
     deterministic_rules = {issue.issue for issue in response.deterministic_findings}
     assert deterministic_rules
     assert all(issue.category != "security" for issue in response.deterministic_findings)
-    assert response.ai_quality_review == []
+    # AI quality review now works and returns findings
+    assert response.ai_quality_review != []
+    assert len(response.ai_quality_review) >= 1
+    assert any("coerced to zero" in issue.issue for issue in response.ai_quality_review)
     assert any(issue.issue.startswith("Invalid numeric") for issue in response.issues)
     returned_ids = {
         record["rule_id"]

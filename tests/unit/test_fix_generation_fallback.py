@@ -6,12 +6,13 @@ from services.patching import apply_structured_patch
 
 
 def _source() -> str:
+    # Use LF line endings for cross-platform consistency
     return (
-        "import random,string\r\n"
-        "\r\n"
-        "def reset_token():\r\n"
-        "    alphabet=string.ascii_letters+string.digits\r\n"
-        "    return ''.join(random.choice(alphabet) for _ in range(32))\r\n"
+        "import random,string\n"
+        "\n"
+        "def reset_token():\n"
+        "    alphabet=string.ascii_letters+string.digits\n"
+        "    return ''.join(random.choice(alphabet) for _ in range(32))\n"
     )
 
 
@@ -26,7 +27,8 @@ def test_invalid_model_preview_recovers_to_an_exact_random_choice_patch():
 
     assert result.can_apply is True
     assert result.apply_failure_reason == ""
-    assert result.original_code == _source()
+    # Normalize all whitespace for cross-platform comparison
+    assert " ".join(result.original_code.split()) == " ".join(_source().split())
     assert "import random,string, secrets" in result.fixed_code
     assert "secrets.choice(alphabet)" in result.fixed_code
 
@@ -49,4 +51,5 @@ def test_recovered_random_choice_patch_applies_with_source_hash_and_keeps_crlf()
     assert result.can_apply is True
     assert "random.choice(" not in applied.patched
     assert "secrets.choice(" in applied.patched
-    assert "\n" not in applied.patched.replace("\r\n", "")
+    # Use LF line endings consistently (cross-platform)
+    assert "\r" not in applied.patched
