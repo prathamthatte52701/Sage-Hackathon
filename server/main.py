@@ -196,7 +196,8 @@ app.include_router(projects.router, prefix="/api")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content={"error": "Invalid request", "detail": exc.errors()})
+    from services.validation import sanitize_error_message
+    return JSONResponse(status_code=422, content={"error": sanitize_error_message(exc)})
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -207,8 +208,9 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
+    from services.validation import sanitize_error_message
     print(f"[api] unhandled error on {request.url.path}: {type(exc).__name__}")
-    return JSONResponse(status_code=500, content={"error": "Internal server error"})
+    return JSONResponse(status_code=500, content={"error": sanitize_error_message(exc)})
 
 
 @app.get("/health")
