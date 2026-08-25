@@ -53,3 +53,7 @@ EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "")
 # separation gap -- this threshold trades some weak-but-real matches for
 # fewer irrelevant ones, and is intentionally overridable per deployment/KB size.
 KNOWLEDGE_MIN_SCORE = float(os.getenv("KNOWLEDGE_MIN_SCORE", "0.55"))
+
+# Request size limits (bytes)
+MAX_JSON_SIZE = int(os.getenv("MAX_JSON_SIZE", "1048576"))  # 1 MB default for JSON bodies
+MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", "314572800"))  # 300 MB default for uploads

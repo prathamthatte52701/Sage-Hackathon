@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import AUTH_ENABLED, CORS_ORIGINS, SESSION_SECRET, MONGO_URL
+from config import AUTH_ENABLED, CORS_ORIGINS, SESSION_SECRET, MONGO_URL, MAX_JSON_SIZE, MAX_UPLOAD_SIZE
 from routers import auth, explain, projects, review
 from services.rate_limit import check_rate_limit
 
@@ -111,6 +111,58 @@ async def rate_limit_middleware(request: Request, call_next):
             return JSONResponse(
                 status_code=429, content={"error": "Too many requests, please slow down"}
             )
+    return await call_next(request)
+
+
+# Request size limits - reject oversized bodies before expensive processing.
+# Limits vary by endpoint category to prevent DoS via oversized payloads.
+_SIZE_LIMITS: dict[str, int] = {
+    "/api/review": MAX_JSON_SIZE,
+    "/api/explain": MAX_JSON_SIZE,
+    "/api/auth": MAX_JSON_SIZE,
+    "/api/projects/upload": MAX_UPLOAD_SIZE,
+    "/api/projects/github": MAX_JSON_SIZE,
+    "/api/projects/": MAX_JSON_SIZE,
+    "/api/analysis-jobs/": MAX_JSON_SIZE,
+    "/api/fix-all": MAX_JSON_SIZE,
+    "/api/commit-guard": MAX_JSON_SIZE,
+    "/api/pr-guard": MAX_JSON_SIZE,
+}
+
+
+def _get_size_limit(path: str) -> int:
+    for prefix, limit in _SIZE_LIMITS.items():
+        if path.startswith(prefix):
+            return limit
+    return MAX_JSON_SIZE
+
+
+@app.middleware("http")
+async def request_size_limit_middleware(request: Request, call_next):
+    # Only enforce on POST/PUT/PATCH with a body
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return await call_next(request)
+
+    content_length = request.headers.get("content-length")
+    if content_length is None:
+        # No Content-Length header - could be chunked encoding.
+        # We'll rely on Starlette's internal limits for streaming bodies.
+        return await call_next(request)
+
+    try:
+        length = int(content_length)
+    except ValueError:
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid Content-Length header"}
+        )
+
+    limit = _get_size_limit(request.url.path)
+    if length > limit:
+        return JSONResponse(
+            status_code=413,
+            content={"error": f"Request body too large (limit: {limit} bytes)"},
+        )
+
     return await call_next(request)
 
 
