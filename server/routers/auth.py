@@ -28,6 +28,7 @@ from services.auth import (
     create_session,
     create_verification_token,
     get_current_user,
+    get_user_by_id,
     hash_password,
     list_active_sessions,
     normalize_email,
@@ -38,6 +39,7 @@ from services.auth import (
     validate_password_strength,
     verify_password,
 )
+from services.authorization import require_admin
 from services.mail import dispatch_verification_email, dispatch_password_reset_email
 
 router = APIRouter()
@@ -394,3 +396,138 @@ async def resend_verification(
 @router.get("/auth/me", response_model=UserOut)
 async def me(current_user: dict = Depends(get_current_user)):
     return _user_out(current_user)
+
+
+# Admin endpoints - require admin role
+@router.get("/admin/users")
+async def admin_list_users(
+    current_user: dict = Depends(get_current_user),
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List all users (admin only)."""
+    require_admin(current_user)
+    from db.mongo import get_db
+
+    db = get_db()
+    cursor = db.users.find({}).skip(offset).limit(limit).sort("created_at", -1)
+    users = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        # Never expose sensitive fields
+        doc.pop("password_hash", None)
+        users.append({
+            "id": doc["_id"],
+            "email": doc.get("email"),
+            "email_verified": doc.get("email_verified", False),
+            "role": doc.get("role", "user"),
+            "status": doc.get("status", "active"),
+            "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else "",
+        })
+    return {"users": users, "limit": limit, "offset": offset}
+
+
+@router.get("/admin/users/{user_id}")
+async def admin_get_user(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get user details (admin only)."""
+    require_admin(current_user)
+    from db.mongo import get_user_by_id
+
+    user = await get_user_by_id(user_id)
+    if user is None:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    user.pop("password_hash", None)
+    return _user_out(user)
+
+
+@router.post("/admin/users/{user_id}/disable")
+async def admin_disable_user(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Disable a user account (admin only). Revokes all sessions."""
+    require_admin(current_user)
+    from db.mongo import get_db, revoke_all_sessions_for_user as revoke_sessions
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    try:
+        object_id = ObjectId(user_id)
+    except InvalidId:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    db = get_db()
+    result = await db.users.update_one(
+        {"_id": object_id},
+        {"$set": {"status": "disabled", "updated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc)}},
+    )
+    if result.matched_count == 0:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    # Revoke all sessions
+    await revoke_sessions(user_id)
+
+    return {"status": "ok", "disabled": True}
+
+
+@router.post("/admin/users/{user_id}/enable")
+async def admin_enable_user(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Re-enable a disabled user account (admin only)."""
+    require_admin(current_user)
+    from db.mongo import get_db
+    from bson.errors import InvalidId
+    from bson import ObjectId
+
+    try:
+        object_id = ObjectId(user_id)
+    except InvalidId:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    db = get_db()
+    result = await db.users.update_one(
+        {"_id": object_id},
+        {"$set": {"status": "active", "updated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc)}},
+    )
+    if result.matched_count == 0:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    return {"status": "ok", "enabled": True}
+
+
+@router.post("/admin/users/{user_id}/revoke-sessions")
+async def admin_revoke_user_sessions(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Revoke all sessions for a target user (admin only)."""
+    require_admin(current_user)
+    from db.mongo import revoke_all_sessions_for_user
+
+    count = await revoke_all_sessions_for_user(user_id)
+    return {"status": "ok", "revoked_count": count}
+
+
+@router.get("/admin/stats")
+async def admin_stats(
+    current_user: dict = Depends(get_current_user),
+):
+    """System-wide stats (admin only)."""
+    require_admin(current_user)
+    from db.mongo import get_db
+
+    db = get_db()
+    user_count = await db.users.count_documents({})
+    project_count = await db.projects.count_documents({})
+    session_count = await db.sessions.count_documents({"revoked_at": None})
+
+    return {
+        "users": user_count,
+        "projects": project_count,
+        "active_sessions": session_count,
+    }

@@ -378,6 +378,13 @@ async def update_user_password(user_id: str, password_hash: str) -> bool:
     return await mongo_update_password(user_id, password_hash)
 
 
+async def get_user_by_id(user_id: str):
+    """Get user by ID (safe wrapper)."""
+    from db.mongo import get_user_by_id as mongo_get_user_by_id
+
+    return await mongo_get_user_by_id(user_id)
+
+
 async def change_user_email(user_id: str, current_password: str, new_email_normalized: str) -> dict:
     """
     Change user's email address.

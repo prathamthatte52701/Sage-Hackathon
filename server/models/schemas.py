@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 Language = Literal["javascript", "python", "java", "cpp", "typescript"]
 Severity = Literal["critical", "high", "medium", "low"]
@@ -250,11 +250,13 @@ class DownloadProjectRequest(BaseModel):
 
 
 class SignupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     email: str = Field(..., min_length=3, max_length=254)
     password: str = Field(..., min_length=1, max_length=200)
 
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     email: str = Field(..., min_length=1, max_length=254)
     password: str = Field(..., min_length=1, max_length=200)
 
