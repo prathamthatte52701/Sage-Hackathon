@@ -258,6 +258,7 @@ async def diagnose_deployment_logs(raw_logs: str) -> dict:
     diagnosis["evidence"] = diagnosis.get("evidence") or evidence
     diagnosis["source_scope"] = "Log-based likely cause only; not proof of root cause."
     diagnosis["logs_redacted"] = True
+    diagnosis["redacted_log_excerpt"] = logs
     return diagnosis
 
 

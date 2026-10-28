@@ -64,11 +64,15 @@ async def inspect(payload: InspectRequest, user: dict = Depends(get_request_user
     result["inspection_id"] = __import__("uuid").uuid4().hex
     result["persistence"] = "in_memory"
     owner_id = str(user.get("_id", "demo-user"))
-    _history.setdefault(owner_id, []).insert(0, deepcopy(result))
+    stored_result = deepcopy(result)
+    if stored_result.get("log_diagnosis"):
+        stored_result["log_diagnosis"].pop("redacted_log_excerpt", None)
+    _history.setdefault(owner_id, []).insert(0, stored_result)
     del _history[owner_id][20:]
     if MONGO_URL:
         try:
-            await get_db().website_inspections.insert_one({**deepcopy(result), "owner_user_id": owner_id})
+            stored_result["persistence"] = "mongodb"
+            await get_db().website_inspections.insert_one({**deepcopy(stored_result), "owner_user_id": owner_id})
             result["persistence"] = "mongodb"
             _history[owner_id][0]["persistence"] = "mongodb"
         except Exception as exc:
