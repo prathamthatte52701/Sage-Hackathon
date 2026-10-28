@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import AUTH_ENABLED, CORS_ORIGINS, SESSION_SECRET, MONGO_URL, MAX_JSON_SIZE, MAX_UPLOAD_SIZE
-from routers import auth, explain, projects, review
+from routers import auth, explain, projects, review, workflows, website_inspector
 from services.rate_limit import check_rate_limit
 
 @asynccontextmanager
@@ -192,6 +192,8 @@ if AUTH_ENABLED:
 app.include_router(review.router, prefix="/api")
 app.include_router(explain.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
+app.include_router(workflows.router, prefix="/api")
+app.include_router(website_inspector.router, prefix="/api")
 
 
 @app.exception_handler(RequestValidationError)

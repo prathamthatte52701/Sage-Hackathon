@@ -19,6 +19,8 @@ import {
   GitPullRequest,
   Monitor,
   User,
+  Activity,
+  Globe,
 } from "lucide-react";
 import { getAuthoritativeScore } from "../utils/postFixResult";
 import { getSecurityFindings } from "../utils/securityFindings";
@@ -44,6 +46,8 @@ export default function Sidebar({
       badge: healthScore !== null ? `${Math.round(healthScore)}/100` : null,
       badgeColor: healthScore > 75 ? "text-[#36D399]" : "text-[#F4C95D]",
     },
+    { id: "self_healing", label: "Self-Healing Demo", icon: Activity },
+    { id: "website_inspector", label: "Website Inspector", icon: Globe },
     {
       id: "findings",
       label: "Findings",

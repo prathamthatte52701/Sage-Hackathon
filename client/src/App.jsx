@@ -28,6 +28,8 @@ import HistoryPanel from "./components/HistoryPanel";
 import ToastNotification from "./components/ToastNotification";
 import AmbientBackground from "./components/AmbientBackground";
 import CodeEditor from "./components/CodeEditor";
+import SelfHealingWorkspace from "./components/SelfHealingWorkspace";
+import WebsiteInspector from "./components/WebsiteInspector";
 import { buildPostFixResult, getAuthoritativeScore } from "./utils/postFixResult";
 import { getSecurityFindings } from "./utils/securityFindings";
 import {
@@ -562,6 +564,8 @@ export default function App() {
         {/* Content View Switcher */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
           {/* View: Overview */}
+          {activeTab === "self_healing" && <SelfHealingWorkspace />}
+          {activeTab === "website_inspector" && <WebsiteInspector project={projectBundle} />}
           {activeTab === "overview" && (
             projectBundle ? (
               <ProjectOverview
