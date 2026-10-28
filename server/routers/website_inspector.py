@@ -2,6 +2,7 @@ from copy import deepcopy
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from config import MONGO_URL
@@ -41,7 +42,7 @@ async def inspect(payload: InspectRequest, user: dict = Depends(get_request_user
     try:
         result = await inspect_website(payload.url)
     except InspectionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(status_code=400, content={"detail": str(exc), "inspection_trace": [{"stage": exc.stage, "status": "failed", "message": str(exc)}]})
     except Exception as exc:
         print(f"[website-inspector] inspection failed: {type(exc).__name__}")
         raise HTTPException(status_code=502, detail="Website inspection failed. Check the URL and try again.") from exc

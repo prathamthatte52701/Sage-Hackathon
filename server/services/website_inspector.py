@@ -7,6 +7,7 @@ import json
 import re
 import socket
 import ssl
+import time
 from html.parser import HTMLParser
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
@@ -21,32 +22,34 @@ TIMEOUT = 5
 
 
 class InspectionError(ValueError):
-    pass
+    def __init__(self, message: str, stage: str = "inspection"):
+        super().__init__(message)
+        self.stage = stage
 
 
 def _normalize_url(raw: str) -> str:
     if len(raw) > 2048:
-        raise InspectionError("URL is too long (maximum 2048 characters).")
+        raise InspectionError("URL is too long (maximum 2048 characters).", "input_validation")
     try:
         parts = urlsplit(raw.strip())
         port = parts.port
     except ValueError as exc:
-        raise InspectionError("Enter a valid website URL.") from exc
+        raise InspectionError("Enter a valid website URL.", "input_validation") from exc
     if parts.scheme.lower() not in {"http", "https"}:
-        raise InspectionError("Only HTTP and HTTPS website URLs are supported.")
+        raise InspectionError("Only HTTP and HTTPS website URLs are supported.", "input_validation")
     if not parts.hostname or parts.username or parts.password:
-        raise InspectionError("Enter a public website URL without embedded credentials.")
+        raise InspectionError("Enter a public website URL without embedded credentials.", "input_validation")
     if port not in (None, 80, 443):
-        raise InspectionError("Only standard HTTP and HTTPS ports are supported.")
+        raise InspectionError("Only standard HTTP and HTTPS ports are supported.", "input_validation")
     if port is not None and port != (443 if parts.scheme.lower() == "https" else 80):
-        raise InspectionError("The URL port must match its HTTP or HTTPS scheme.")
+        raise InspectionError("The URL port must match its HTTP or HTTPS scheme.", "input_validation")
     host = parts.hostname.rstrip(".").lower()
     if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
-        raise InspectionError("Local and private network hosts cannot be inspected.")
+        raise InspectionError("Local and private network hosts cannot be inspected.", "ssrf_safety_check")
     try:
         ascii_host = host.encode("idna").decode("ascii")
     except UnicodeError as exc:
-        raise InspectionError("The website hostname is invalid.") from exc
+        raise InspectionError("The website hostname is invalid.", "input_validation") from exc
     netloc = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
     if port is not None:
         netloc += f":{port}"
@@ -64,17 +67,17 @@ async def _resolve_public(host: str, port: int) -> list[str]:
             records = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM), timeout=3)
             addresses = list(dict.fromkeys(record[4][0] for record in records))
         except (OSError, asyncio.TimeoutError) as exc:
-            raise InspectionError("The website hostname could not be resolved.") from exc
+            raise InspectionError("The website hostname could not be resolved.", "dns_resolution") from exc
     if not addresses:
-        raise InspectionError("The website hostname has no address.")
+        raise InspectionError("The website hostname has no address.", "dns_resolution")
     parsed = []
     for value in addresses:
         try:
             ip = ipaddress.ip_address(value.split("%", 1)[0])
         except ValueError as exc:
-            raise InspectionError("The website resolved to an invalid network address.") from exc
+            raise InspectionError("The website resolved to an invalid network address.", "dns_resolution") from exc
         if not ip.is_global:
-            raise InspectionError("Private, loopback, link-local, and reserved network addresses are blocked.")
+            raise InspectionError("Private, loopback, link-local, and reserved network addresses are blocked.", "ssrf_safety_check")
         parsed.append(str(ip))
     return parsed
 
@@ -110,12 +113,12 @@ async def _read_response(url: str) -> tuple[int, dict[str, str], bytes, str]:
         await asyncio.wait_for(writer.drain(), timeout=TIMEOUT)
         raw_headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=TIMEOUT)
         if len(raw_headers) > 32768:
-            raise InspectionError("The website response headers are too large.")
+            raise InspectionError("The website response headers are too large.", "response_validation")
         lines = raw_headers[:-4].split(b"\r\n")
         try:
             status = int(lines[0].split(b" ", 2)[1])
         except (IndexError, ValueError) as exc:
-            raise InspectionError("The website returned an invalid HTTP response.") from exc
+            raise InspectionError("The website returned an invalid HTTP response.", "http_response") from exc
         headers: dict[str, str] = {}
         for line in lines[1:]:
             if b":" in line:
@@ -125,7 +128,7 @@ async def _read_response(url: str) -> tuple[int, dict[str, str], bytes, str]:
         if content_length:
             try:
                 if int(content_length) > MAX_BYTES:
-                    raise InspectionError("The page is larger than the 1 MB inspection limit.")
+                    raise InspectionError("The page is larger than the 1 MB inspection limit.", "response_size_limit")
             except ValueError:
                 pass
         if "chunked" in headers.get("transfer-encoding", "").lower():
@@ -139,12 +142,16 @@ async def _read_response(url: str) -> tuple[int, dict[str, str], bytes, str]:
                 body_buffer.extend(chunk)
             body = bytes(body_buffer)
         if len(body) > MAX_BYTES:
-            raise InspectionError("The page is larger than the 1 MB inspection limit.")
+            raise InspectionError("The page is larger than the 1 MB inspection limit.", "response_size_limit")
         return status, headers, body, address
     except InspectionError:
         raise
-    except (OSError, asyncio.TimeoutError, ssl.SSLError, asyncio.IncompleteReadError) as exc:
-        raise InspectionError("The website could not be reached or timed out.") from exc
+    except asyncio.TimeoutError as exc:
+        raise InspectionError("The website connection or response timed out.", "timeout") from exc
+    except ssl.SSLError as exc:
+        raise InspectionError("TLS certificate verification or handshake failed.", "tls") from exc
+    except (OSError, asyncio.IncompleteReadError) as exc:
+        raise InspectionError("The website connection failed or closed unexpectedly.", "connection") from exc
     finally:
         if writer is not None:
             writer.close()
@@ -162,11 +169,11 @@ async def _read_chunked(reader) -> bytes:
         try:
             size = int(size_token, 16)
         except ValueError as exc:
-            raise InspectionError("The website returned malformed chunked data.") from exc
+            raise InspectionError("The website returned malformed chunked data.", "http_response") from exc
         if size == 0:
             break
         if size < 0 or len(data) + size > MAX_BYTES:
-            raise InspectionError("The page is larger than the 1 MB inspection limit.")
+            raise InspectionError("The page is larger than the 1 MB inspection limit.", "response_size_limit")
         data.extend(await asyncio.wait_for(reader.readexactly(size), timeout=TIMEOUT))
         await reader.readexactly(2)
     return bytes(data)
@@ -263,15 +270,21 @@ async def diagnose_deployment_logs(raw_logs: str) -> dict:
 
 
 async def inspect_website(raw_url: str) -> dict:
+    inspection_started = time.perf_counter()
     url = _normalize_url(raw_url)
     current = url
     redirects = []
+    redirect_steps = []
+    trace = []
     status = 0
     headers: dict[str, str] = {}
     body = b""
     resolved_ip = ""
     for _ in range(MAX_REDIRECTS + 1):
+        requested_url = current
+        request_started = time.perf_counter()
         status, headers, body, resolved_ip = await _read_response(current)
+        trace.append({"stage": "http_request", "method": "GET", "url": requested_url, "http_status": status, "resolved_public_ip": resolved_ip, "elapsed_ms": round((time.perf_counter() - request_started) * 1000)})
         if status not in {301, 302, 303, 307, 308}:
             break
         location = headers.get("location")
@@ -279,6 +292,8 @@ async def inspect_website(raw_url: str) -> dict:
             break
         current = _normalize_url(urljoin(current, location))
         redirects.append(current)
+        redirect_steps.append({"from": requested_url, "to": current, "http_status": status})
+        trace.append({"stage": "redirect", "from": requested_url, "to": current, "http_status": status})
     else:
         raise InspectionError("The website exceeded the 5-redirect limit.")
 
@@ -299,6 +314,7 @@ async def inspect_website(raw_url: str) -> dict:
             issues.append(_issue("low", "Meta description is missing", "No description metadata was found.", "No <meta name=\"description\"> element was present.", "Add a concise description meta tag."))
         if not page.viewport:
             issues.append(_issue("medium", "Responsive viewport metadata is missing", "The HTML has no viewport meta tag; mobile layout may render at desktop width.", "No <meta name=\"viewport\"> element was present.", "Add a viewport meta tag and verify the layout at narrow widths."))
+    trace.append({"stage": "html_inspection", "content_type": content_type, "html_inspected": is_html, "page_title_found": bool(page.title) if is_html else None, "links_discovered": len(page.links) if is_html else 0, "response_bytes": len(body)})
 
     internal_links = []
     base_host = urlsplit(current).hostname
@@ -314,13 +330,16 @@ async def inspect_website(raw_url: str) -> dict:
     checked_links = []
     if is_html:
         for target in internal_links[:MAX_LINK_CHECKS]:
+            link_started = time.perf_counter()
             try:
-                link_status, _, _, _ = await _read_response(target)
+                link_status, _, _, link_ip = await _read_response(target)
                 checked_links.append({"url": target, "status": link_status})
+                trace.append({"stage": "internal_link_check", "method": "GET", "url": target, "http_status": link_status, "resolved_public_ip": link_ip, "elapsed_ms": round((time.perf_counter() - link_started) * 1000)})
                 if link_status >= 400:
                     issues.append(_issue("medium", "Internal link returned an error", f"An internal link responded with HTTP {link_status}.", f"GET {target} → HTTP {link_status}", "Fix the route or update the link target."))
             except InspectionError as exc:
                 checked_links.append({"url": target, "error": str(exc)})
+                trace.append({"stage": "internal_link_check", "method": "GET", "url": target, "status": "failed", "message": str(exc), "failure_stage": exc.stage})
     if not issues:
         issues.append(_issue("info", "No inspected metadata issues found", "The bounded HTTP inspection did not find the checked title, description, viewport, or sampled internal-link problems.", "Inspection checks completed for the returned response.", "Continue with browser-based functional and visual testing for deeper coverage."))
 
@@ -332,6 +351,8 @@ async def inspect_website(raw_url: str) -> dict:
         "response_bytes": len(body), "forms_observed": page.forms if is_html else None,
         "buttons_observed": page.buttons if is_html else None,
         "links_checked": checked_links, "links_skipped": max(0, len(internal_links) - len(checked_links)),
+        "redirect_steps": redirect_steps, "inspection_trace": trace,
+        "inspection_duration_ms": round((time.perf_counter() - inspection_started) * 1000),
         "issues": issues, "inspection_scope": "HTTP response and bounded HTML metadata/link inspection; no JavaScript execution, browser rendering, clicks, or form submission.",
     }
 
